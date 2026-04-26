@@ -28,14 +28,14 @@ document.addEventListener('DOMContentLoaded', () => {
             title: 'Coop Design: The Split-Floor System',
             html: `
                 <div class="kb-media-header">
-                    <img src="Coop Media/20260322_174218.jpg" alt="Split Floor System" class="kb-img">
+                    <img src="assets/Coop Media/20260322_174218.jpg" alt="Split Floor System" class="kb-img">
                 </div>
                 <h2>Coop Design: The Split-Floor System</h2>
                 <p>This design is adapted from a working Kenyan poultry farm. It splits the coop floor into two distinct zones for maximum hygiene and minimal maintenance.</p>
                 
                 <div class="kb-video-container">
-                    <video width="100%" controls poster="Coop Media/20260322_174210.jpg">
-                        <source src="Coop Media/20260322_174223.mp4" type="video/mp4">
+                    <video width="100%" controls poster="assets/Coop Media/20260322_174210.jpg">
+                        <source src="assets/Coop Media/20260322_174223.mp4" type="video/mp4">
                         Your browser does not support the video tag.
                     </video>
                     <p class="media-caption">Live View: Birds transitioning between deep litter and slatted areas.</p>
@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <h3>Zero-Spill Watering</h3>
                 <div class="kb-media-row">
-                    <img src="Coop Media/20260322_174007.jpg" alt="Zero Spill Watering" class="kb-img">
+                    <img src="assets/Coop Media/20260322_174007.jpg" alt="Zero Spill Watering" class="kb-img">
                 </div>
                 <ul>
                     <li>Waterers (20L yellow jerrycans cut in half) are mounted <strong>outside</strong> the mesh wall adjacent to Zone B.</li>
@@ -677,7 +677,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             <h2>2. Infrastructure & Operations</h2>
             <div class="media-preview-box">
-                <img src="Coop Media/20260322_174218.jpg" style="width:100%; border-radius:8px; margin-bottom:10px;">
+                <img src="assets/Coop Media/20260322_174218.jpg" style="width:100%; border-radius:8px; margin-bottom:10px;">
                 <p style="font-size:12px; color:#666; text-align:center;">Site Evidence: Validated split-floor coop configuration.</p>
             </div>
             <p><strong>Housing System:</strong> ${housingName}</p>
