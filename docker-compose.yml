@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  poultry-dss:
+    build: .
+    container_name: poultry-dss
+    ports:
+      - "8089:80"
+    restart: always
+    volumes:
+      # Mount the current directory into the nginx html directory for live development
+      # Uses the :z flag to label the selinux context to allow the container to read it
+      - .:/usr/share/nginx/html:z

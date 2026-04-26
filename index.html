@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Poultry DSS | Decision Support System</title>
+    <meta name="description" content="A knowledge-based decision support system for poultry farmers to model infrastructure, financials, and ROI.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Overlay (Mobile) -->
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i data-lucide="feather" class="logo-icon"></i>
+                <span class="logo-text">Poultry<span>DSS</span></span>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" id="nav-dashboard">
+                    <i data-lucide="layout-dashboard"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" id="nav-generator">
+                    <i data-lucide="calculator"></i>
+                    <span>Decision Support</span>
+                </a>
+                <a href="#" class="nav-item" id="nav-batches">
+                    <i data-lucide="layers"></i>
+                    <span>Active Batches</span>
+                </a>
+                <a href="#" class="nav-item" id="nav-docs">
+                    <i data-lucide="book-open"></i>
+                    <span>Knowledge Base</span>
+                </a>
+                <a href="#" class="nav-item" id="nav-analytics">
+                    <i data-lucide="bar-chart-3"></i>
+                    <span>Analytics</span>
+                </a>
+                <a href="#" class="nav-item" id="nav-settings">
+                    <i data-lucide="settings"></i>
+                    <span>Farm Settings</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-profile">
+                    <div class="avatar">K</div>
+                    <div class="user-info">
+                        <p class="user-name">Kelvitz</p>
+                        <p class="user-role">Project Lead</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <header class="top-bar">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button class="hamburger" id="btn-hamburger" title="Menu">
+                        <i data-lucide="menu"></i>
+                    </button>
+                    <div class="search-box">
+                        <i data-lucide="search"></i>
+                        <input type="text" placeholder="Search projects or docs...">
+                    </div>
+                </div>
+                <div class="top-actions">
+                    <button class="btn-icon" id="btn-theme-toggle" title="Toggle Dark/Light Mode">
+                        <i data-lucide="moon" id="theme-icon"></i>
+                    </button>
+                    <div style="position: relative;">
+                        <button class="btn-icon" title="Notifications" id="btn-notifications">
+                            <i data-lucide="bell"></i>
+                        </button>
+                        <div id="notifications-dropdown" style="display:none; position:absolute; top:calc(100% + 8px); right:0; width:300px; background:var(--bg-main); border:1px solid var(--border-color); border-radius:8px; padding:16px; z-index:100; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                                <h4 style="margin:0; color:var(--text-dark);">Notifications</h4>
+                            </div>
+                            <p style="margin:0; font-size:13px; color:var(--text-muted); text-align:center; padding:12px 0;">No new alerts for your active batches.</p>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="btn-new-project">
+                        <i data-lucide="play-circle"></i>
+                        <span>Run New Analysis</span>
+                    </button>
+                </div>
+            </header>
+
+            <div id="content-view" class="view-container">
+
+                <!-- ======================== DASHBOARD VIEW ======================== -->
+                <div id="view-dashboard" class="view active">
+                    <div class="welcome-banner">
+                        <div class="banner-text">
+                            <h1>Poultry <span class="highlight">Decision Support</span></h1>
+                            <p id="dashboard-subtitle">Knowledge-based modelling for sustainable farm growth.</p>
+                        </div>
+                        <div class="banner-stats">
+                            <div class="stat-card">
+                                <span class="stat-label">Saved Proposals</span>
+                                <span class="stat-value" id="dash-count">0</span>
+                            </div>
+                            <div class="stat-card">
+                                <span class="stat-label">Total Birds</span>
+                                <span class="stat-value" id="dash-birds">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-grid">
+                        <div class="card projects-card">
+                            <div class="card-header">
+                                <h3>Saved Proposals</h3>
+                                <button class="btn btn-secondary btn-sm" id="btn-clear-all">Clear All</button>
+                            </div>
+                            <div class="projects-list" id="saved-proposals-list">
+                                <div class="empty-state" id="empty-proposals">
+                                    <i data-lucide="inbox"></i>
+                                    <p>No modelled scenarios yet.</p>
+                                    <button class="btn btn-primary btn-sm" id="btn-first-proposal">Run Your First Analysis</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card quick-ref-card">
+                            <div class="card-header">
+                                <h3>Quick Reference (KES)</h3>
+                                <i data-lucide="info" class="header-icon"></i>
+                            </div>
+                            <div class="quick-ref-list">
+                                <div class="ref-item">
+                                    <span>Kenchic DOC (Layer)</span>
+                                    <span class="ref-value">KES 130</span>
+                                </div>
+                                <div class="ref-item">
+                                    <span>Chick Starter (50kg bag)</span>
+                                    <span class="ref-value">KES 4,200</span>
+                                </div>
+                                <div class="ref-item">
+                                    <span>Grower Mash (50kg bag)</span>
+                                    <span class="ref-value">KES 3,800</span>
+                                </div>
+                                <div class="ref-item">
+                                    <span>Layer Mash (50kg bag)</span>
+                                    <span class="ref-value">KES 3,500</span>
+                                </div>
+                                <div class="ref-item">
+                                    <span>Feed to POL (per bird)</span>
+                                    <span class="ref-value">~KES 1,000</span>
+                                </div>
+                                <div class="ref-item highlight-row">
+                                    <span>100-Bird Budget (Feed Only)</span>
+                                    <span class="ref-value">KES 100,000</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ======================== GENERATOR VIEW ======================== -->
+                <div id="view-generator" class="view">
+                    <div class="wizard-header">
+                        <h2>Decision Support Tool</h2>
+                        <div class="wizard-steps">
+                            <div class="step active" data-idx="1"><span class="step-num">1</span> <span>Configuration</span></div>
+                            <div class="step" data-idx="2"><span class="step-num">2</span> <span>Technical</span></div>
+                            <div class="step" data-idx="3"><span class="step-num">3</span> <span>Financials</span></div>
+                            <div class="step" data-idx="4"><span class="step-num">4</span> <span>Analysis</span></div>
+                        </div>
+                    </div>
+                    <div class="wizard-body">
+                        <form id="proposal-form">
+                            <!-- Step 1: Project Basics -->
+                            <div class="form-step active" data-step="1">
+                                <div class="step-title">
+                                    <h3>Project Basics</h3>
+                                    <p>Tell us about the core of your poultry project.</p>
+                                    <div class="template-actions" style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                                        <button type="button" id="btn-template-100" class="btn btn-secondary btn-sm">
+                                            <i data-lucide="zap" style="width:14px; height:14px;"></i> Use 100-Bird Template
+                                        </button>
+                                        <button type="button" id="btn-load-snapshot" class="btn btn-accent btn-sm" style="background: var(--primary-soft); color: var(--primary); border: 1px dashed var(--primary);">
+                                            <i data-lucide="upload-cloud" style="width:14px; height:14px;"></i> Load Success Snapshot
+                                        </button>
+                                    </div>
+                                    <div id="snapshot-note" style="margin-top: 12px; display: none; padding: 10px; background: var(--primary-soft); border-left: 4px solid var(--primary); border-radius: 4px; font-size: 13px; color: var(--primary); font-weight: 500;">
+                                        <!-- Contextual note injected here -->
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label for="prop-name">Project Name</label>
+                                    <input type="text" id="prop-name" placeholder="e.g. Green Valley Broiler Farm">
+                                </div>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label for="prop-type">Poultry Type</label>
+                                        <select id="prop-type">
+                                            <option value="broiler">Broilers (Meat Production)</option>
+                                            <option value="layer" selected>Layers (Egg Production)</option>
+                                            <option value="dual">Dual Purpose</option>
+                                        </select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="prop-batch-mode">Batch Configuration</label>
+                                        <select id="prop-batch-mode">
+                                            <option value="setup">Batch 1: Initial Setup (Full CAPEX)</option>
+                                            <option value="repeat">Batch 2+: Subsequent Cycle (Reuse Assets)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label for="prop-size">Target Flock Size</label>
+                                    <input type="number" id="prop-size" placeholder="e.g. 100" min="1">
+                                </div>
+                                <div class="input-group">
+                                    <label for="prop-location">Location / Site Address</label>
+                                    <textarea id="prop-location" rows="2" placeholder="Where will the farm be located?"></textarea>
+                                </div>
+                                <div class="input-group">
+                                    <label for="prop-owner">Owner / Applicant Name</label>
+                                    <input type="text" id="prop-owner" placeholder="Your full name">
+                                </div>
+                            </div>
+
+                            <!-- Step 2: Technical Plan -->
+                            <div class="form-step" data-step="2">
+                                <div class="step-title">
+                                    <h3>Technical & Operations</h3>
+                                    <p>Housing, biosecurity, and management details.</p>
+                                </div>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label for="prop-housing">Housing System</label>
+                                        <select id="prop-housing">
+                                            <option value="split-floor">Split Floor (75% Deep Litter / 25% Slatted)</option>
+                                            <option value="deep-litter">Deep Litter System</option>
+                                            <option value="battery-cage">Battery Cage System</option>
+                                            <option value="free-range">Free Range / Pasture Raised</option>
+                                        </select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="prop-nesting">Nesting Box Type</label>
+                                        <select id="prop-nesting">
+                                            <option value="rollaway">Roll-Away (External Collection)</option>
+                                            <option value="standard">Standard Internal</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label for="prop-feed-strategy">Feed Management Strategy</label>
+                                    <textarea id="prop-feed-strategy" rows="3" placeholder="e.g. 100% commercial feeds (Starter → Grower → Layer Mash). Budget: KES 100,000 to Point of Lay."></textarea>
+                                </div>
+                                <div class="input-group">
+                                    <label for="prop-water-strategy">Watering Strategy</label>
+                                    <textarea id="prop-water-strategy" rows="2" placeholder="e.g. External jerrycan waterers mounted on slatted-floor mesh wall to ensure zero spill on deep litter."></textarea>
+                                </div>
+                                <div class="checkbox-group">
+                                    <label class="checkbox-item"><input type="checkbox" id="chk-footbath" checked><span>Biosecurity Footbath at Entrance</span></label>
+                                    <label class="checkbox-item"><input type="checkbox" id="chk-lighting" checked><span>Supplemental Lighting (14-16 hrs/day)</span></label>
+                                    <label class="checkbox-item"><input type="checkbox" id="chk-concrete"><span>Concrete Floor Base</span></label>
+                                </div>
+                            </div>
+
+                            <!-- Step 3: Financials -->
+                            <div class="form-step" data-step="3">
+                                <div class="step-title">
+                                    <h3>Financial Projections</h3>
+                                    <p>Enter your costs. Fields auto-calculate where possible.</p>
+                                </div>
+                                <div class="financial-inputs">
+                                    <h4 class="section-label">Market Variance Inputs (Prices)</h4>
+                                    <div class="input-row">
+                                        <div class="input-group">
+                                            <label for="prop-cost-bird">Cost per Day-Old-Chick</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-cost-bird" value="130" step="1"></div>
+                                        </div>
+                                        <div class="input-group" id="feed-chick">
+                                            <label for="prop-price-chickmash">Chick Mash (per 50kg bag)</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-price-chickmash" value="3800"></div>
+                                        </div>
+                                    </div>
+                                    <div class="input-row" id="feed-layer-bags">
+                                        <div class="input-group">
+                                            <label for="prop-price-growermash">Growers Mash (per 50kg bag)</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-price-growermash" value="3400"></div>
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="prop-price-layermash">Layer Mash (per 50kg bag)</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-price-layermash" value="3600"></div>
+                                        </div>
+                                    </div>
+                                    <div class="input-row" id="feed-broiler-bags" style="display: none;">
+                                        <div class="input-group">
+                                            <label for="prop-price-broilerstarter">Broiler Starter (per 50kg bag)</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-price-broilerstarter" value="4000"></div>
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="prop-price-broilerfinisher">Broiler Finisher (per 50kg bag)</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-price-broilerfinisher" value="3800"></div>
+                                        </div>
+                                    </div>
+                                    
+                                    <h4 class="section-label" style="margin-top: 32px;">Operational Management Parameters</h4>
+                                    <div class="input-row">
+                                        <div class="input-group">
+                                            <label for="prop-mortality">Target Mortality Tolerance (%)</label>
+                                            <input type="number" id="prop-mortality" value="5" min="0" max="25" step="0.5">
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="prop-time-horizon">Simulation Horizon (Weeks)</label>
+                                            <input type="number" id="prop-time-horizon" value="72" min="4" max="104" step="1">
+                                        </div>
+                                    </div>
+                                    
+                                    <h4 class="section-label" style="margin-top: 32px;">Fixed Infrastructure (CAPEX)</h4>
+                                    <div class="input-row">
+                                        <div class="input-group">
+                                            <label for="prop-cost-housing">Housing / Coop Cost</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-cost-housing" value="0" placeholder="Optional"></div>
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="prop-cost-equipment">Equipment (Feeders, Drinkers)</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-cost-equipment" value="0" placeholder="Optional"></div>
+                                        </div>
+                                    </div>
+
+                                    <h4 class="section-label" style="margin-top: 32px;">Revenue Assumptions</h4>
+                                    <div class="input-row" id="revenue-layer-fields">
+                                        <div class="input-group">
+                                            <label for="prop-egg-price">Price per Egg (KES)</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-egg-price" value="15" step="1"></div>
+                                        </div>
+                                        <div class="input-group">
+                                            <label for="prop-eggs-month">Eggs per Bird per Month</label>
+                                            <input type="number" id="prop-eggs-month" value="25" step="1">
+                                        </div>
+                                    </div>
+                                    <div class="input-row" id="revenue-broiler-fields" style="display: none;">
+                                        <div class="input-group">
+                                            <label for="prop-broiler-price">Sale Price per Broiler (KES)</label>
+                                            <div class="input-with-prefix"><span>KES</span><input type="number" id="prop-broiler-price" value="800" step="1"></div>
+                                        </div>
+                                    </div>
+
+                                    <div class="summary-box">
+                                        <div class="summary-item"><span>Target Flock</span><span id="calc-birds">0</span></div>
+                                        <div class="summary-item"><span>Day-Old Chicks</span><span id="calc-doc-cost">KES 0</span></div>
+                                        <div class="summary-item"><span>Housing & Equip</span><span id="calc-infra-cost">KES 0</span></div>
+                                        <div class="summary-item subtotal"><span>Total CAPEX</span><span id="calc-capex">KES 0</span></div>
+                                        <div class="summary-item" style="color: var(--danger); font-size: 12px;"><span id="calc-weekly-opex-label">Weekly OPEX (Avg)</span><span id="calc-weekly-opex">KES 0</span></div>
+                                        <div class="summary-item" style="color: var(--danger); font-size: 12px;"><span id="calc-6m-opex-label">Cumulative OPEX</span><span id="calc-6m-opex">KES 0</span></div>
+                                        <div class="summary-item"><span id="calc-6m-rev-label">Cumulative Revenue</span><span id="calc-6m-rev">KES 0</span></div>
+                                        <div class="summary-item total"><span id="calc-profit-label">Net Lifetime Profit</span><span id="calc-profit">KES 0</span></div>
+                                        <div class="summary-item"><span>Break-Even</span><span id="calc-breakeven">—</span></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Step 4: Preview -->
+                            <div class="form-step" data-step="4">
+                                <div class="step-title">
+                                    <h3>Proposal Preview</h3>
+                                    <p>Review your complete proposal document before saving or exporting.</p>
+                                </div>
+                                <div class="preview-actions">
+                                    <button type="button" class="btn btn-secondary" id="btn-generate-preview">
+                                        <i data-lucide="eye" style="width:16px; height:16px;"></i> Generate Preview
+                                    </button>
+                                    <button type="button" class="btn btn-primary" id="btn-export-pdf" style="display: none;">
+                                        <i data-lucide="download" style="width:16px; height:16px;"></i> Export as PDF
+                                    </button>
+                                </div>
+                                <div class="preview-document" id="proposal-preview">
+                                    <div class="preview-placeholder">
+                                        <i data-lucide="file-text"></i>
+                                        <p>Click "Generate Preview" to see your full proposal.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="wizard-footer">
+                        <button type="button" class="btn btn-secondary" id="wizard-prev" disabled>Back</button>
+                        <div class="wizard-footer-right">
+                            <button type="button" class="btn btn-secondary" id="wizard-save" style="display: none;">
+                                <i data-lucide="save" style="width:16px; height:16px;"></i> Save Draft
+                            </button>
+                            <button type="button" class="btn btn-primary" id="wizard-next">Continue</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ======================== KNOWLEDGE BASE VIEW ======================== -->
+                <div id="view-docs" class="view">
+                    <div class="step-title" style="margin-bottom: 32px;">
+                        <h2>Knowledge Base</h2>
+                        <p>Standard Operating Procedures and Best Practices for Your Farm</p>
+                    </div>
+                    <div class="docs-grid">
+                        <div class="doc-card" data-doc="coop-design">
+                            <div class="doc-icon"><i data-lucide="home"></i></div>
+                            <h4>Coop Design (Split-Floor)</h4>
+                            <p>The farmer's proven 75/25 deep litter and slatted floor system.</p>
+                            <span class="doc-tag">Housing</span>
+                        </div>
+                        <div class="doc-card" data-doc="feed-schedule">
+                            <div class="doc-icon"><i data-lucide="utensils"></i></div>
+                            <h4>Feed Schedule</h4>
+                            <p>Week-by-week feeding plan from DOC to Point of Lay.</p>
+                            <span class="doc-tag">Nutrition</span>
+                        </div>
+                        <div class="doc-card" data-doc="vaccination">
+                            <div class="doc-icon"><i data-lucide="syringe"></i></div>
+                            <h4>Vaccination Schedule</h4>
+                            <p>Critical vaccines and their timing for Kenyan poultry.</p>
+                            <span class="doc-tag">Health</span>
+                        </div>
+                        <div class="doc-card" data-doc="biosecurity">
+                            <div class="doc-icon"><i data-lucide="shield-check"></i></div>
+                            <h4>Biosecurity 101</h4>
+                            <p>Footbaths, visitor protocols, and quarantine procedures.</p>
+                            <span class="doc-tag">Safety</span>
+                        </div>
+                        <div class="doc-card" data-doc="egg-handling">
+                            <div class="doc-icon"><i data-lucide="egg"></i></div>
+                            <h4>Egg Handling & Sales</h4>
+                            <p>Grading, storage, and marketing channels for your eggs.</p>
+                            <span class="doc-tag">Revenue</span>
+                        </div>
+                        <div class="doc-card" data-doc="manure">
+                            <div class="doc-icon"><i data-lucide="leaf"></i></div>
+                            <h4>Manure Management</h4>
+                            <p>Composting, selling, and using poultry manure as fertilizer.</p>
+                            <span class="doc-tag">Secondary Income</span>
+                        </div>
+                    </div>
+
+                    <!-- Document Detail Panel -->
+                    <div id="doc-detail" class="doc-detail" style="display: none;">
+                        <button class="btn btn-secondary btn-sm" id="btn-back-to-docs">
+                            <i data-lucide="arrow-left" style="width:14px; height:14px;"></i> Back to Knowledge Base
+                        </button>
+                        <div id="doc-detail-content"></div>
+                    </div>
+                </div>
+
+                <!-- ======================== BATCH LIST VIEW ======================== -->
+                <div id="view-batches" class="view">
+                    <div class="welcome-banner">
+                        <div class="banner-text">
+                            <h1>Farm <span class="highlight">Operations</span></h1>
+                            <p>Track live bird performance, feed inventory, and cash profitability.</p>
+                        </div>
+                        <button class="btn btn-primary" id="btn-goto-generator">
+                            <i data-lucide="play-circle"></i>
+                            <span>Model New Batch</span>
+                        </button>
+                    </div>
+                    <div class="batches-grid" id="batches-list">
+                        <div class="empty-state">
+                            <i data-lucide="clipboard-list"></i>
+                            <p>No active batches. Start one from an Analysis report.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ======================== BATCH COCKPIT VIEW ======================== -->
+                <div id="view-batch-cockpit" class="view">
+                    <!-- Dynamic content injected by app.js -->
+                </div>
+
+            <section id="view-analytics" class="view">
+                <div class="view-container" style="padding-top: 32px;">
+                    <div class="welcome-banner" style="margin-bottom: 24px; padding: 24px; background: var(--bg-white); color: var(--text-dark); flex-direction: column; align-items: flex-start; gap: 16px;">
+                        <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+                            <div>
+                                <h1 style="color: var(--text-dark); font-size: 24px; margin: 0;">Portfolio Analytics</h1>
+                                <p style="color: var(--text-muted); font-size: 14px;">Aggregated metrics across all your saved models</p>
+                            </div>
+                        </div>
+                        
+                        <div class="banner-stats" style="width: 100%;">
+                            <div class="stat-card" style="background: var(--bg-main); border: 1px solid var(--border-color); flex: 1;">
+                                <span class="stat-label">Total Est. Capital Required</span>
+                                <span class="stat-value text-accent" id="kpi-total-capex" style="color: var(--primary);">KES 0</span>
+                            </div>
+                            <div class="stat-card" style="background: var(--bg-main); border: 1px solid var(--border-color); flex: 1;">
+                                <span class="stat-label">Avg Projected Profit after Break-Even Point</span>
+                                <span class="stat-value text-danger" id="kpi-avg-profit">KES 0</span>
+                            </div>
+                            <div class="stat-card" style="background: var(--bg-main); border: 1px solid var(--border-color); flex: 1;">
+                                <span class="stat-label">Avg Break-Even Point</span>
+                                <span class="stat-value" id="kpi-avg-breakeven">0 Months</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="analytics-content">
+                        <div class="analytics-grid">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h3>CAPEX Allocation (Averages)</h3>
+                                    <i data-lucide="pie-chart" class="header-icon"></i>
+                                </div>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="capexChart"></canvas>
+                                </div>
+                            </div>
+                            
+                            <div class="card">
+                                <div class="card-header">
+                                    <h3>Projected Returns (Per Cycle)</h3>
+                                    <i data-lucide="trending-up" class="header-icon"></i>
+                                </div>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="revenueChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Batch Learning & Recommendations (§5.3) -->
+                        <div class="card learning-card" style="margin-top: 24px;">
+                            <div class="card-header">
+                                <h3><i data-lucide="sparkles" class="text-accent" style="width:18px;height:18px;"></i> Batch Learning & Recommendations</h3>
+                            </div>
+                            <div id="batch-learning-content" class="learning-body">
+                                <div class="empty-state">
+                                    <i data-lucide="brain-circuit"></i>
+                                    <p>Finish your first batch to unlock data-driven recommendations.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="analytics-empty" class="state-container" style="display: none; text-align: center; padding: 48px;">
+                        <i data-lucide="bar-chart-2" style="width: 48px; height: 48px; color: var(--text-muted); margin-bottom: 16px;"></i>
+                        <p style="color: var(--text-muted); margin-bottom: 20px;">Save at least one analysis scenario to view aggregated modelling analytics.</p>
+                        <button class="btn btn-primary" onclick="document.getElementById('btn-new-project').click()">Run New DSS Analysis</button>
+                    </div>
+                </div>
+            </section>
+            
+            <section id="view-settings" class="view">
+                <div class="view-container" style="padding-top: 32px; max-width: 800px; margin: 0 auto;">
+                    <div class="step-title" style="margin-bottom: 32px;">
+                        <h2>Farm Settings</h2>
+                        <p>Configure global parameters and alert thresholds for your DSS.</p>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>General Configuration</h3>
+                        </div>
+                        <div class="card-body" style="padding: 24px;">
+                            <form id="settings-form" style="display: flex; flex-direction: column; gap: 24px;">
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label>Default Flock Size</label>
+                                        <input type="number" id="set-flock-size" value="49">
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Default Feed Price (KES/Bag)</label>
+                                        <input type="number" id="set-feed-price" value="3000">
+                                    </div>
+                                </div>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label>Standard Sack Weight (kg)</label>
+                                        <input type="number" id="set-sack-weight" value="50">
+                                    </div>
+                                </div>
+                                
+                                <h4 class="section-label" style="border-top: 1px solid var(--border-color); padding-top: 24px; margin-top: 8px;">Alert & KPI Thresholds</h4>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label>Minimum Lay Rate (%)</label>
+                                        <input type="number" id="set-min-layrate" value="40">
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Max Feed Conversion (kg/doz)</label>
+                                        <input type="number" id="set-max-fc" value="2.5" step="0.1">
+                                    </div>
+                                </div>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label>Low Inventory Warning (Days)</label>
+                                        <input type="number" id="set-low-inv" value="2">
+                                    </div>
+                                    <div class="input-group">
+                                        <label>Production Drop Trigger (%)</label>
+                                        <input type="number" id="set-prod-drop" value="15">
+                                    </div>
+                                </div>
+                                
+                                <div style="display: flex; gap: 12px; margin-top: 16px;">
+                                    <button type="submit" class="btn btn-primary" style="flex: 1;">Save Farm Profile</button>
+                                    <button type="button" class="btn btn-secondary" id="btn-export-data">Export All Data (JSON)</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <div id="modal-start-batch" class="state-container" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; padding: 20px;">
+                <div class="card" style="width: 100%; max-width: 500px; max-height: 80vh; overflow-y: auto;">
+                    <div class="card-header">
+                        <h3>Model New Batch</h3>
+                        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('modal-start-batch').style.display='none'">Close</button>
+                    </div>
+                    <div style="padding: 16px;">
+                        <p style="color: var(--text-muted); margin-bottom: 16px;">Select an unused DSS Analysis Report to start operating a live batch.</p>
+                        <div id="modal-start-batch-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
