@@ -9,8 +9,8 @@
 
 ## Module 1 — Biological Foundations & Lifecycle Synchronization
 
-- `[ ]` **ISA Brown performance constants** — embed target liveability (>93.2%) and peak production (>95%) as system-level constants used for deviation alerts
-- `[ ]` **Lifecycle milestone table** — implement the following reference data per bird age:
+- `[x]` **ISA Brown performance constants** — embed target liveability (>93.2%) and peak production (>95%) as system-level constants used for deviation alerts
+- `[x]` **Lifecycle milestone table** — implement the following reference data per bird age:
 
   | Production Metric     | Target / Value                  |
   |-----------------------|---------------------------------|
@@ -20,24 +20,24 @@
   | Manure Production     | Continuous · KSh 150–600/bag    |
   | Liveability (100 wks) | 91.40%                          |
 
-- `[ ]` **Growth-delay early warning** — flag any weight/feed deviation at weeks 4–5 that correlates with reduced laying capacity; generate a remediation prompt
-- `[ ]` **Skeletal readiness check prompt** — detect the pre-lay "squat response" window (~1 week before first egg) and prompt the farmer to perform a skeletal check before transitioning from grower to layer mash
-- `[ ]` **Kitale climate baseline** — store ambient range of 16–26 °C (daytime) / 12–14 °C (nights) as regional defaults; use these in all deviation calculations instead of generic tropical values
+- `[x]` **Growth-delay early warning** — flag any weight/feed deviation at weeks 4–5 that correlates with reduced laying capacity; generate a remediation prompt
+- `[x]` **Skeletal readiness check prompt** — detect the pre-lay "squat response" window (~1 week before first egg) and prompt the farmer to perform a skeletal check before transitioning from grower to layer mash
+- `[x]` **Kitale climate baseline** — store ambient range of 16–26 °C (daytime) / 12–14 °C (nights) as regional defaults; use these in all deviation calculations instead of generic tropical values
 
 ---
 
 ## Module 2 — Environmental Engineering & Seasonal Proactive Logic
 
-- `[ ]` **Seasonal calendar engine** — integrate system datetime to determine active season (Dry: Dec–Mar; Long Rains: Apr–Oct) and modulate alert thresholds accordingly
-- `[ ]` **Rainy-season disease alert** (Apr–Oct):
-  - `[ ]` Trigger aggressive **coccidiosis** risk alert when humidity > 75% or rainy days > 20/month
-  - `[ ]` Trigger **respiratory disease** (CRD/IB) alert under same conditions
-- `[ ]` **Evening cold-stress curtain alert** — at 18:00 local time, push a daily reminder to close house curtains / check brooder heating when night temp forecast is < 14 °C
-- `[ ]` **Atmospheric quality limits** — store Kenchic protocol thresholds and monitor inputs:
+- `[x]` **Seasonal calendar engine** — integrate system datetime to determine active season (Dry: Dec–Mar; Long Rains: Apr–Oct) and modulate alert thresholds accordingly
+- `[x]` **Rainy-season disease alert** (Apr–Oct):
+  - `[x]` Trigger aggressive **coccidiosis** risk alert when humidity > 75% or rainy days > 20/month
+  - `[x]` Trigger **respiratory disease** (CRD/IB) alert under same conditions
+- `[x]` **Evening cold-stress curtain alert** — at 18:00 local time, push a daily reminder to close house curtains / check brooder heating when night temp forecast is < 14 °C
+- `[x]` **Atmospheric quality limits** — store Kenchic protocol thresholds and monitor inputs:
   - NH₃ < 20 ppm
   - CO₂ < 3,000 ppm
-- `[ ]` **Wet-litter humidity alert** — when relative humidity reading > 70%, trigger a litter inspection/replacement reminder; enforce a 4–6 week litter rotation schedule
-- `[ ]` **Litter replacement SOP prompt** — guide farmer through mixing or replacing litter (wood shavings / rice hulls) to prevent mucosal irritation
+- `[x]` **Wet-litter humidity alert** — when relative humidity reading > 70%, trigger a litter inspection/replacement reminder; enforce a 4–6 week litter rotation schedule
+- `[x]` **Litter replacement SOP prompt** — guide farmer through mixing or replacing litter (wood shavings / rice hulls) to prevent mucosal irritation
 
 ---
 

@@ -1,9 +1,9 @@
 # Poultry DSS – Technical Handover & Backlog
 
 ## Overview
-The Poultry Decision Support System (DSS) is extremely stable, thoroughly tested, and aligned structurally with the "North Star" specification. Its source code has been thoroughly vetted, structured logically into a static Single Page Application (SPA), and placed under git version control.
+The Poultry Decision Support System (DSS) is extremely stable, thoroughly tested, and aligned structurally with the "North Star" specification. Its source code has been thoroughly vetted, structured logically into a Single Page Application (SPA) driven by a Node.js Express backend and a persistent SQLite database, and placed under git version control.
 
-All primary operating features—including lifecycle generation, algorithmic flock mortality calculations, dynamic "Pricing Assistant" OPEX computations, full inventory flow logic, and real-time analytical KPIs—are fully active.
+All primary operating features—including lifecycle generation, algorithmic flock mortality calculations, dynamic "Pricing Assistant" OPEX computations, full inventory flow logic, and real-time analytical KPIs—are fully active and backed by persistent server-side storage.
 
 ---
 
@@ -22,7 +22,7 @@ All primary operating features—including lifecycle generation, algorithmic flo
 ### 3. The "Batch Learning" Engine 
 * **Context**: Deep analytical architecture handles real-time computations effectively, but historical macro-learning remains scoped out of the active v1 prototype. 
 * **Result**: Farm planning parameters (via the Proposal Wizard) remain fully manual or based on initial constants rather than learning from actual operational metrics over past flock lifecycles.
-* **Proposed Fix**: Construct the "Batch Learning" matrix that queries finished "Snapshot" batch datasets within `localStorage`, isolating averages like true `avgDailyFeedPerBird` and peak mortality periods. This data can later be used to autonomously modify predicted financial inputs for consecutive new proposals inside `farmProfile`.
+* **Proposed Fix**: Construct the "Batch Learning" matrix that queries finished "Snapshot" batch datasets from the SQLite backend, isolating averages like true `avgDailyFeedPerBird` and peak mortality periods. This data can later be used to autonomously modify predicted financial inputs for consecutive new proposals inside `farmProfile`.
 
 ---
 

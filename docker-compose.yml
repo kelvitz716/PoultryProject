@@ -8,6 +8,9 @@ services:
       - "8089:80"
     restart: always
     volumes:
-      # Mount the current directory into the nginx html directory for live development
-      # Uses the :z flag to label the selinux context to allow the container to read it
-      - .:/usr/share/nginx/html:z
+      # Mount the static files for rapid dev
+      - .:/app:z
+      # Specifically persist the SQLite database volume securely
+      - ./data:/app/data:z
+      # Prevent host empty node_modules from overwriting docker node_modules
+      - /app/node_modules

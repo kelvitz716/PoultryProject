@@ -1,9 +1,68 @@
 const $ = id => document.getElementById(id);
 
-document.addEventListener('DOMContentLoaded', () => {
+const api = {
+    async getEntity(key, def) { try { const r = await fetch('/api/entities/'+key); return r.ok ? ((await r.json()) ?? def) : def; } catch(e){return def;} },
+    async setEntity(key, val) { await fetch('/api/entities/'+key, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({value:val})}); },
+    async getProposals() { try { const r = await fetch('/api/proposals'); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveProposal(p) { await fetch('/api/proposals', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)}); },
+    async deleteProposal(id) { await fetch('/api/proposals/'+id, {method:'DELETE'}); },
+    async getBatches() { try { const r = await fetch('/api/batches'); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveBatch(b) { await fetch('/api/batches', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)}); },
+    async deleteBatch(id) { await fetch('/api/batches/'+id, {method:'DELETE'}); },
+    async getLogs(bId) { try { const r = await fetch('/api/logs/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveLog(bId, l) { await fetch('/api/logs/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(l)}); },
+    async getTransactions(bId) { try { const r = await fetch('/api/transactions/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveTransaction(bId, tx) { await fetch('/api/transactions/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(tx)}); },
+    async deleteTransaction(bId, id) { await fetch('/api/transactions/'+bId+'/'+id, {method:'DELETE'}); },
+    async getSnapshots() { try { const r = await fetch('/api/snapshots'); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveSnapshot(s) { await fetch('/api/snapshots', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(s)}); },
+    
+    // Fallback for UI settings
+    getTheme() { return localStorage.getItem('poultryTheme') || 'system'; },
+    setTheme(t) { localStorage.setItem('poultryTheme', t); }
+};
+
+document.addEventListener('DOMContentLoaded', async () => {
     lucide.createIcons();
+    farmProfile = await loadFarmProfile();
+
 
     // ===================== DATA MODELS =====================
+    const ISA_BROWN_CONSTANTS = {
+        targetLiveability: 93.2,
+        targetPeakProduction: 95.0,
+        pointOfLayWeeks: [18, 20],
+        spentCullingWeeks: [72, 78]
+    };
+
+    const KITALE_CLIMATE_BASELINE = {
+        ambientDayMin: 16,
+        ambientDayMax: 26,
+        ambientNightMin: 12,
+        ambientNightMax: 14
+    };
+
+    const KENCHIC_SCHEDULE = [
+        { name: 'Newcastle (HB1/La Sota)', dayRange: [5, 7], boosterDays: 75 },
+        { name: 'Gumboro (IBD)', dayRange: [10, 14], boosterDays: 14 },
+        { name: 'Fowl Pox', dayRange: [35, 42], boosterDays: null }
+    ];
+
+    const DRUG_WITHDRAWAL_TABLE = {
+        'Aliseryl WS': { egg: 1, meat: 7 },
+        'Oxytetracycline': { egg: 3, meat: 3 },
+        'Amoxicillin': { egg: 3, meat: 3 },
+        'Tylosin': { egg: 3, meat: 1 },
+        'Levamisole': { egg: 14, meat: 14 }
+    };
+
+    function getKitaleSeason(date) {
+        const month = date.getMonth(); // 0-11
+        if ([11, 0, 1, 2].includes(month)) return { season: 'dry', riskLevel: 'low' };
+        if (month >= 3 && month <= 9) return { season: 'rains', riskLevel: 'high' };
+        return { season: 'short-rains', riskLevel: 'medium' };
+    }
+
     const FEED_SCHEDULE = [
         { phase: 'Chick Mash', weeks: '0 – 8', type: 'High Protein Crumbs', kgPerBird: 2.0, bagCost: 4200 },
         { phase: 'Growers Mash',   weeks: '9 – 18', type: 'Grower Mash',        kgPerBird: 5.5, bagCost: 3800 },
@@ -24,6 +83,26 @@ document.addEventListener('DOMContentLoaded', () => {
     ];
 
     const KB_CONTENT = {
+        'lifecycle-milestones': {
+            title: 'Lifecycle Milestones (ISA Brown)',
+            html: `
+                <h2>Lifecycle Milestones & Production Targets</h2>
+                <p>These performance constants are embedded in the Poultry DSS alert engine to track genetic potential deviations for the <strong>ISA Brown</strong> commercial layer.</p>
+                <table>
+                    <tr><th>Production Metric</th><th>Target / Value</th></tr>
+                    <tr><td>Point of Lay</td><td>18–20 Weeks</td></tr>
+                    <tr><td>Peak Production</td><td>> 95%</td></tr>
+                    <tr><td>Spent Layer Culling</td><td>72–78 Weeks (KSh 400–600/bird)</td></tr>
+                    <tr><td>Manure Production</td><td>Continuous (KSh 150–600/bag)</td></tr>
+                    <tr><td>Liveability (100 wks)</td><td>91.40%</td></tr>
+                </table>
+                <h3>Deviation Management</h3>
+                <ul>
+                    <li>If feed consumption drops below target during the critical weeks 4–5, skeletal development is delayed.</li>
+                    <li>Skeletal checks (the "squat response") must be monitored around week 17.</li>
+                </ul>
+            `
+        },
         'coop-design': {
             title: 'Coop Design: The Split-Floor System',
             html: `
@@ -214,32 +293,32 @@ document.addEventListener('DOMContentLoaded', () => {
             lowInventoryDays: 2,
             productionDropPercent: 15,
             consecutiveLowDays: 3
-        }
+        },
+        litterLastChanged: new Date().toISOString()
     };
 
-    function loadFarmProfile() {
-        const stored = localStorage.getItem('poultryFarmProfile');
+    async function loadFarmProfile() {
+        const stored = await api.getEntity('poultryFarmProfile', null);
         if (stored) {
-            const parsed = JSON.parse(stored);
-            return { ...DEFAULT_FARM_PROFILE, ...parsed, alertThresholds: { ...DEFAULT_FARM_PROFILE.alertThresholds, ...(parsed.alertThresholds || {}) } };
+            return { ...DEFAULT_FARM_PROFILE, ...stored, alertThresholds: { ...DEFAULT_FARM_PROFILE.alertThresholds, ...(stored.alertThresholds || {}) } };
         }
         return { ...DEFAULT_FARM_PROFILE };
     }
 
-    function saveFarmProfile(profile) {
-        localStorage.setItem('poultryFarmProfile', JSON.stringify(profile));
+    async function saveFarmProfile(profile) {
+        await api.setEntity('poultryFarmProfile', profile);
     }
 
     let farmProfile = loadFarmProfile();
 
-    function loadAggregates() {
-        const stored = localStorage.getItem('poultryAggregates');
-        if (stored) return JSON.parse(stored);
+    async function loadAggregates() {
+        const stored = await api.getEntity('poultryAggregates', null);
+        if (stored) return stored;
         return { avgLayRateByMonth: {}, avgFeedConversion: 0, avgMortalityCurve: [], seasonalFactor: {}, batchCount: 0 };
     }
 
-    function saveAggregates(agg) {
-        localStorage.setItem('poultryAggregates', JSON.stringify(agg));
+    async function saveAggregates(agg) {
+        await api.setEntity('poultryAggregates', agg);
     }
 
     // Sack → kg backfill algorithm (§3.3 Rule)
@@ -365,14 +444,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     navItems.forEach(item => {
-        item.addEventListener('click', e => { e.preventDefault(); switchView(item.id.replace('nav-', '')); });
+        item.addEventListener('click', async (e) => { e.preventDefault(); switchView(item.id.replace('nav-', '')); });
     });
 
-    document.getElementById('btn-new-project')?.addEventListener('click', () => { resetWizard(); switchView('generator'); });
-    document.getElementById('btn-first-proposal')?.addEventListener('click', () => { resetWizard(); switchView('generator'); });
+    document.getElementById('btn-new-project')?.addEventListener('click', async () => { resetWizard(); switchView('generator'); });
+    document.getElementById('btn-first-proposal')?.addEventListener('click', async () => { resetWizard(); switchView('generator'); });
     
     // Model New Batch triggers the bridge modal instead of blindly starting from scratch
-    document.getElementById('btn-goto-generator')?.addEventListener('click', () => { showStartBatchModal(); });
+    document.getElementById('btn-goto-generator')?.addEventListener('click', async () => { showStartBatchModal(); });
 
     // ===================== WIZARD & PROPOSAL STATE =====================
     const formSteps = document.querySelectorAll('.form-step');
@@ -547,7 +626,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // ===================== TEMPLATE =====================
-    $('btn-template-100')?.addEventListener('click', () => {
+    $('btn-template-100')?.addEventListener('click', async () => {
         $('prop-name').value = '100-Bird Kenchic Layer Farm';
         $('prop-type').value = 'layer';
         $('prop-size').value = '100';
@@ -570,8 +649,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ===================== SNAPSHOT LOADING =====================
-    $('btn-load-snapshot')?.addEventListener('click', () => {
-        const snapshots = JSON.parse(localStorage.getItem('poultrySnapshots') || '[]');
+    $('btn-load-snapshot')?.addEventListener('click', async () => {
+        const snapshots = await api.getSnapshots();
         if (snapshots.length === 0) {
             const noteEl = $('snapshot-note');
             if (noteEl) {
@@ -758,7 +837,7 @@ document.addEventListener('DOMContentLoaded', () => {
         $('btn-export-pdf').style.display = 'inline-flex';
         lucide.createIcons();
         
-        $('btn-start-batch')?.addEventListener('click', () => {
+        $('btn-start-batch')?.addEventListener('click', async () => {
             if (!currentProposalId) {
                 alert('Please Save & Finish this analysis before starting the batch!');
                 return;
@@ -768,7 +847,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ===================== PDF EXPORT =====================
-    $('btn-export-pdf')?.addEventListener('click', () => {
+    $('btn-export-pdf')?.addEventListener('click', async () => {
         const proposalHTML = $('proposal-preview').innerHTML;
         // Load inlined CSS from all stylesheets
         let inlinedStyles = '';
@@ -816,8 +895,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    function saveProposal() {
-        const proposals = JSON.parse(localStorage.getItem('poultryProposals') || '[]');
+    async function saveProposal() {
+        const proposals = await api.getProposals();
         
         let targetId = currentProposalId;
         if (!targetId) {
@@ -870,8 +949,8 @@ document.addEventListener('DOMContentLoaded', () => {
         renderAnalytics();
     }
 
-    window.instantiateBatch = function(proposalId) {
-        const proposals = JSON.parse(localStorage.getItem('poultryProposals') || '[]');
+    window.instantiateBatch = async function(proposalId) {
+        const proposals = await api.getProposals();
         const proposal = proposals.find(p => p.id === proposalId);
         
         if (!proposal) {
@@ -903,8 +982,8 @@ document.addEventListener('DOMContentLoaded', () => {
         openBatchCockpit(batch.id);
     };
 
-    window.showStartBatchModal = function() {
-        const proposals = JSON.parse(localStorage.getItem('poultryProposals') || '[]');
+    window.showStartBatchModal = async function() {
+        const proposals = await api.getProposals();
         const batches = getBatches().filter(b => b.status === 'active');
         
         const listEl = $('modal-start-batch-list');
@@ -934,8 +1013,8 @@ document.addEventListener('DOMContentLoaded', () => {
         $('modal-start-batch').style.display = 'none';
     };
 
-    window.loadProposal = function(id) {
-        const proposals = JSON.parse(localStorage.getItem('poultryProposals') || '[]');
+    window.loadProposal = async function(id) {
+        const proposals = await api.getProposals();
         const p = proposals.find(p => p.id === id);
         if (!p) return;
 
@@ -961,8 +1040,8 @@ document.addEventListener('DOMContentLoaded', () => {
         switchView('generator');
     };
 
-    function refreshDashboard() {
-        const proposals = JSON.parse(localStorage.getItem('poultryProposals') || '[]');
+    async function refreshDashboard() {
+        const proposals = await api.getProposals();
         const batches = getBatches().filter(b => b.status === 'active');
         
         const list = $('saved-proposals-list');
@@ -1017,8 +1096,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     }
 
-    window.deleteProposal = function(id) {
-        const proposals = JSON.parse(localStorage.getItem('poultryProposals') || '[]');
+    window.deleteProposal = async function(id) {
+        const proposals = await api.getProposals();
         const filtered = proposals.filter(p => p.id !== id);
         localStorage.setItem('poultryProposals', JSON.stringify(filtered));
         refreshDashboard();
@@ -1026,7 +1105,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    function refreshBatches() {
+    async function refreshBatches() {
         const batches = getBatches();
         const list = $('batches-list');
         
@@ -1055,12 +1134,47 @@ document.addEventListener('DOMContentLoaded', () => {
         lucide.createIcons();
     }
 
-    window.openBatchCockpit = function(id) {
+    function getActiveWithdrawal(batchId) {
+        const meds = JSON.parse(localStorage.getItem(`poultryHealth_${batchId}`) || '[]');
+        let maxEggDate = null;
+        let maxMeatDate = null;
+        
+        meds.forEach(m => {
+            if (m.type !== 'meds') return;
+            const date = new Date(m.date);
+            const eggDays = m.offLabel ? 14 : (DRUG_WITHDRAWAL_TABLE[m.drug]?.egg || 0);
+            const meatDays = m.offLabel ? 28 : (DRUG_WITHDRAWAL_TABLE[m.drug]?.meat || 0);
+            
+            const eggClear = new Date(date.getTime() + eggDays * 86400000);
+            const meatClear = new Date(date.getTime() + meatDays * 86400000);
+            
+            if (!maxEggDate || eggClear > maxEggDate) maxEggDate = eggClear;
+            if (!maxMeatDate || meatClear > maxMeatDate) maxMeatDate = meatClear;
+        });
+        
+        const now = new Date();
+        return {
+            eggsUnderWithdrawal: maxEggDate && maxEggDate > now,
+            meatUnderWithdrawal: maxMeatDate && maxMeatDate > now,
+            eggClearDate: maxEggDate,
+            meatClearDate: maxMeatDate
+        };
+    }
+
+    window.markLitterChanged = function() {
+        farmProfile.litterLastChanged = new Date().toISOString();
+        saveFarmProfile(farmProfile);
+        const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
+        if (batch) refreshCockpitData(batch);
+    };
+
+    window.openBatchCockpit = async function(id) {
         const batch = getBatches().find(b => b.id === id);
         if (!batch) return;
         currentBatchId = id;
+        window.currentHistoryLimit = 30;
         
-        const logs = JSON.parse(localStorage.getItem(`poultryLogs_${batch.id}`) || '[]');
+        const logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
         const dayCount = logs.length;
         const targetDays = batch.type === 'layer' ? 504 : 42;
         const progressPercent = Math.min(100, (dayCount / targetDays) * 100);
@@ -1097,6 +1211,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         </button>
                         <button class="btn btn-secondary btn-sm" onclick="openBackfillModal(${batch.id})">
                             <i data-lucide="calendar-plus" style="width:14px; height:14px;"></i> Backfill
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="markLitterChanged()">
+                            <i data-lucide="leaf" style="width:14px; height:14px;"></i> Litter Done
                         </button>
                         <button class="btn btn-secondary btn-sm" onclick="simulateLifecycle(${batch.id})" style="border-color:var(--accent); color:var(--text-dark);">
                             <i data-lucide="zap" style="width:14px; height:14px; color:var(--accent);"></i> Skip 60d
@@ -1145,6 +1262,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="info-chip"><i data-lucide="package" style="width:14px;height:14px;"></i> Feed: <strong id="info-feed">0 kg</strong></div>
                 <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash: <strong id="info-cash">KES 0</strong></div>
                 <div class="info-chip"><i data-lucide="egg" style="width:14px;height:14px;"></i> Total: <strong id="info-totaleggs">0</strong> eggs</div>
+                <div class="info-chip" id="info-discard-container" style="display:none; background:#fee2e2; color:#dc2626; border:1px solid #fca5a5;">
+                    <i data-lucide="trash-2" style="width:14px;height:14px;"></i> Discard: <strong id="info-discard">0 days</strong>
+                </div>
             </div>
 
             <!-- Main Cockpit Grid: matches spec §5.1, perfectly symmetric rows -->
@@ -1178,6 +1298,18 @@ document.addEventListener('DOMContentLoaded', () => {
                             <label>Deaths Today</label>
                             <input type="number" id="log-mortality" value="0" min="0" class="input-md" style="color:var(--danger); font-weight:bold;" onfocus="this.select()">
                             <input type="hidden" id="log-birds" value="${hens}">
+                        </div>
+                        <div class="log-field">
+                            <label>NH₃ (ppm)</label>
+                            <input type="number" id="log-nh3" placeholder="Optional" class="input-md" onfocus="this.select()">
+                        </div>
+                        <div class="log-field">
+                            <label>CO₂ (ppm)</label>
+                            <input type="number" id="log-co2" placeholder="Optional" class="input-md" onfocus="this.select()">
+                        </div>
+                        <div class="log-field">
+                            <label>Humidity (%)</label>
+                            <input type="number" id="log-humidity" placeholder="Optional" class="input-md" min="0" max="100" onfocus="this.select()">
                         </div>
                     </div>
                     <div class="log-notes-row" style="margin-top:auto;">
@@ -1249,6 +1381,18 @@ document.addEventListener('DOMContentLoaded', () => {
                         <p style="text-align:center; padding:20px; color:var(--text-muted);">Syncing transactions...</p>
                     </div>
                 </div>
+
+                <!-- ROW 4 -->
+                <div class="card" style="height:100%; display:flex; flex-direction:column; grid-column: 1 / -1;">
+                    <div class="card-header">
+                        <h3><i data-lucide="activity" style="width:16px;height:16px;"></i> Health & Immunization Log</h3>
+                        <div>
+                            <button class="btn btn-primary btn-sm" onclick="openHealthModal('vaccine')"><i data-lucide="syringe" style="width:14px; height:14px;"></i> Log Vaccine</button>
+                            <button class="btn btn-secondary btn-sm" onclick="openHealthModal('meds')"><i data-lucide="pill" style="width:14px; height:14px;"></i> Log Meds</button>
+                        </div>
+                    </div>
+                    <div id="health-log-table" style="flex:1; overflow-y:auto; overflow-x:auto; width:100%; min-height:150px;"></div>
+                </div>
             </div>
         `;
         lucide.createIcons();
@@ -1258,7 +1402,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 
-    window.simulateLifecycle = function(batchId) {
+    window.simulateLifecycle = async function(batchId) {
         const batch = getBatches().find(b => b.id === batchId);
         if (!batch) return;
 
@@ -1266,7 +1410,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!confirmSim) return;
 
         let logs = [];
-        const txs = JSON.parse(localStorage.getItem(`poultryTx_${batchId}`) || '[]');
+        const txs = await api.getTransactions(batchId || batch.id || currentBatchId || id);
         
         // Ensure starting inventory and cash
         if (txs.length === 0) {
@@ -1349,11 +1493,12 @@ document.addEventListener('DOMContentLoaded', () => {
         $('log-eggs-other').value = '';
     };
 
-    window.submitDailyLog = function(event) {
+    window.submitDailyLog = async function(event) {
         if (event) event.preventDefault();
         const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
         if (!batch) return;
 
+        $('log-date').blur();
         const date = $('log-date').value;
         const eggs = parseInt($('log-eggs').value) || 0;
         const morning = parseInt($('log-eggs-morning').value) || 0;
@@ -1362,11 +1507,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const sacks = parseInt($('log-sacks').value) || 0;
         const feedGiven = parseFloat($('log-feed').value) || 0;
         const mortality = parseInt($('log-mortality').value) || 0;
+        const nh3 = parseFloat($('log-nh3').value) || null;
+        const co2 = parseFloat($('log-co2').value) || null;
+        const humidity = parseFloat($('log-humidity').value) || null;
         const notes = $('log-notes').value;
 
         if (!date) { alert("Please select a date."); return; }
 
-        let logs = JSON.parse(localStorage.getItem(`poultryLogs_${batch.id}`) || '[]');
+        let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
         
         if (mortality > 0) {
             batch.stats.birdsAlive = Math.max(0, batch.stats.birdsAlive - mortality);
@@ -1376,7 +1524,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const newEntry = {
             date, eggs, morning, evening, other,
-            sacks, feedGiven, notes,
+            sacks, feedGiven, nh3, co2, humidity, notes,
             birds: batch.stats.birdsAlive,
             mortality,
             feed: feedGiven 
@@ -1391,7 +1539,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Reset UI — preserve the date for consecutive same-day edits
         const savedDate = $('log-date').value;
-        ['log-eggs', 'log-eggs-morning', 'log-eggs-evening', 'log-eggs-other', 'log-feed', 'log-notes'].forEach(id => {
+        ['log-eggs', 'log-eggs-morning', 'log-eggs-evening', 'log-eggs-other', 'log-feed', 'log-notes', 'log-nh3', 'log-co2', 'log-humidity'].forEach(id => {
             const el = $(id);
             if (el) el.value = '';
         });
@@ -1404,9 +1552,9 @@ document.addEventListener('DOMContentLoaded', () => {
         refreshCockpitData(batch);
     };
 
-    function refreshCockpitData(batch) {
+    async function refreshCockpitData(batch) {
         if (!batch) return;
-        let logs = JSON.parse(localStorage.getItem(`poultryLogs_${batch.id}`) || '[]');
+        let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
         logs.sort((a, b) => new Date(b.date) - new Date(a.date));
 
         const kpis = computeKPIs(logs, batch.size, farmProfile);
@@ -1431,7 +1579,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if($('info-birds')) $('info-birds').innerText = kpis.currentBirds;
         if($('info-totaleggs')) $('info-totaleggs').innerText = kpis.totalEggs.toLocaleString();
 
-        const txs = JSON.parse(localStorage.getItem(`poultryTx_${batch.id}`) || '[]');
+        const txs = await api.getTransactions(batchId || batch.id || currentBatchId || id);
         const revenue = txs.filter(t => t.type === 'sale').reduce((s, t) => s + parseFloat(t.amount || 0), 0);
         const expenses = txs.filter(t => t.type === 'purchase').reduce((s, t) => s + parseFloat(t.amount || 0), 0);
         const initialCash = (batch.assumptions && batch.assumptions.workingCapital) ? batch.assumptions.workingCapital : 0;
@@ -1532,10 +1680,21 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        const withdrawal = getActiveWithdrawal(batch.id);
+        const discardContainer = $('info-discard-container');
+        if (withdrawal.eggsUnderWithdrawal && discardContainer) {
+            discardContainer.style.display = 'inline-flex';
+            const daysLeft = Math.ceil((withdrawal.eggClearDate - new Date()) / 86400000);
+            $('info-discard').innerText = daysLeft + ' days';
+        } else if (discardContainer) {
+            discardContainer.style.display = 'none';
+        }
+
         updateCockpitAlerts(batch, kpis, currentInventory, breakEvenPrice, cashBalance);
         renderCockpitChart(kpis.recent30);
         renderHistoryTable(logs, txs);
         renderCockpitTransactions(txs, initialCash);
+        renderHealthTable(batch.id);
     }
 
     function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash) {
@@ -1554,6 +1713,79 @@ document.addEventListener('DOMContentLoaded', () => {
         if (dailyNeed > 0 && (inventory / dailyNeed) < t.lowInventoryDays) alerts.push({ type: 'danger', icon: 'package', text: `Low Feed: < ${t.lowInventoryDays} days left!` });
         if (cash < 5000) alerts.push({ type: 'warning', icon: 'wallet', text: `Low Cash: KES ${cash.toLocaleString()}` });
 
+        // --- NEW ALERTS ---
+        const now = new Date();
+        const seasonInfo = getKitaleSeason(now);
+        const latestLog = kpis.recent7[0] || {};
+        const currentHumidity = latestLog.humidity || 0;
+
+        if (currentHumidity > 75 || seasonInfo.season === 'rains') {
+            alerts.push({ type: 'warning', icon: 'cloud-rain', text: `Disease Risk: ${currentHumidity > 75 ? 'High humidity (>75%)' : 'Long Rains season'} detected. Elevated coccidiosis & respiratory (CRD/IB) risk. Check litter.` });
+        }
+        const hour = now.getHours();
+        if (hour >= 17 && hour <= 19) {
+            alerts.push({ type: 'info', icon: 'moon', text: 'Evening check: Close house curtains / verify brooder heating. Kitale nights drop to 12–14 °C.' });
+        }
+        const litterDate = new Date(farmProfile.litterLastChanged || now);
+        const litterDays = (now - litterDate) / 86400000;
+        if (litterDays > 28 || currentHumidity > 70) {
+            alerts.push({ type: 'warning', icon: 'leaf', text: `Litter Risk: ${currentHumidity > 70 ? 'Humidity > 70%.' : `Rotation due (>${Math.floor(litterDays)} days).`} Replace or mix to prevent mucosal irritation.` });
+        }
+
+        if (latestLog) {
+            if (latestLog.nh3 > 20) alerts.push({ type: 'danger', icon: 'wind', text: `High NH₃ detected (${latestLog.nh3} ppm). Limit is 20 ppm!` });
+            if (latestLog.co2 > 3000) alerts.push({ type: 'danger', icon: 'wind', text: `High CO₂ detected (${latestLog.co2} ppm). Limit is 3000 ppm!` });
+        }
+
+        const withdrawal = getActiveWithdrawal(batch.id);
+        if (withdrawal.eggsUnderWithdrawal) {
+            alerts.push({ type: 'danger', icon: 'alert-triangle', text: `⚠️ Eggs under withdrawal — discard until ${withdrawal.eggClearDate.toLocaleDateString()}` });
+        }
+
+        const batchAgeDays = Math.floor((now - new Date(batch.startDate)) / 86400000);
+        const batchAgeWeeks = batchAgeDays / 7;
+
+        // Module 1 Biological Alerts
+        const initialSize = parseInt(batch.size) || 100;
+        const currentLiveability = batch.stats.birdsAlive / initialSize;
+        if (currentLiveability < (ISA_BROWN_CONSTANTS.targetLiveability / 100)) {
+            const mortalityPercent = ((1 - currentLiveability) * 100).toFixed(1);
+            alerts.push({ type: 'danger', icon: 'alert-octagon', text: `Liveability Crisis: Cumulative mortality at ${mortalityPercent}% (exceeds ISA Brown target of ${(100 - ISA_BROWN_CONSTANTS.targetLiveability).toFixed(1)}% limit).` });
+        }
+
+        if (batch.type !== 'broiler') {
+            if (batchAgeWeeks >= 4 && batchAgeWeeks <= 5 && kpis.avgDailyFeedPerBird < 0.035) {
+                alerts.push({ type: 'warning', icon: 'scale', text: `Growth-delay risk (Week ${Math.floor(batchAgeWeeks)}): Feed intake low (${(kpis.avgDailyFeedPerBird*1000).toFixed(0)}g/bird). Target >35g.`});
+            }
+            if (batchAgeWeeks >= 16.5 && batchAgeWeeks < 18) {
+                alerts.push({ type: 'info', icon: 'bone', text: `Skeletal check required: Monitor 'squat response' prior to Point of Lay.`});
+            }
+        }
+        const healthLogs = JSON.parse(localStorage.getItem(`poultryHealth_${batch.id}`) || '[]');
+        
+        KENCHIC_SCHEDULE.forEach(vax => {
+            const lastAdmin = healthLogs.filter(h => h.type === 'vaccine' && h.drug === vax.name)
+                .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+                
+            let nextDue = null;
+            if (!lastAdmin && vax.dayRange[0] <= batchAgeDays + 7) {
+                nextDue = new Date(batch.startDate);
+                nextDue.setDate(nextDue.getDate() + vax.dayRange[1]);
+            } else if (lastAdmin && vax.boosterDays) {
+                nextDue = new Date(lastAdmin.date);
+                nextDue.setDate(nextDue.getDate() + vax.boosterDays);
+            }
+            
+            if (nextDue) {
+                const daysToDue = Math.floor((nextDue - now) / 86400000);
+                if (daysToDue <= 7 && daysToDue > 0) {
+                    alerts.push({ type: 'warning', icon: 'syringe', text: `Upcoming: ${vax.name} vaccine due in ${daysToDue} days.` });
+                } else if (daysToDue <= 0) {
+                    alerts.push({ type: 'danger', icon: 'syringe', text: `Overdue: ${vax.name} vaccine was due ${Math.abs(daysToDue)} days ago!` });
+                }
+            }
+        });
+
         if (alerts.length === 0) {
             tray.innerHTML = `<div class="alert-item success"><i data-lucide="check-circle"></i> Systems optimal.</div>`;
         } else {
@@ -1567,7 +1799,7 @@ document.addEventListener('DOMContentLoaded', () => {
         lucide.createIcons();
     }
 
-    function renderCockpitChart(recentLogs) {
+    async function renderCockpitChart(recentLogs) {
         const ctx = $('cockpit-layrate-chart')?.getContext('2d');
         if (!ctx) return;
         if (_cockpitChartInstance) _cockpitChartInstance.destroy();
@@ -1596,6 +1828,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     backgroundColor: fillColor,
                     fill: true, tension: 0.4, borderWidth: 2.5, pointRadius: 3,
                     pointBackgroundColor: lineColor
+                }, {
+                    label: 'Target Peak',
+                    data: sorted.map(() => ISA_BROWN_CONSTANTS.targetPeakProduction),
+                    borderColor: 'rgba(255, 165, 0, 0.5)',
+                    borderDash: [5, 5],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false
                 }]
             },
             options: {
@@ -1631,6 +1871,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }));
         events.sort((a,b) => new Date(b.date) - new Date(a.date));
         
+        window.currentHistoryLimit = window.currentHistoryLimit || 30;
+        const slicedEvents = events.slice(0, window.currentHistoryLimit);
+
         container.innerHTML = events.length === 0 ? '<p style="text-align:center; padding:20px; color:var(--text-muted);">No logs yet.</p>' : `
             <table style="width:100%; border-collapse:collapse;">
                 <thead><tr>
@@ -1638,7 +1881,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Event Details</th>
                 </tr></thead>
                 <tbody>
-                    ${events.slice(0, 30).map(e => {
+                    ${slicedEvents.map(e => {
                         // Fix UTC date-shift: append noon time so local timezone renders correct day
                         const displayDate = new Date(e.date + 'T12:00:00').toLocaleDateString(undefined, {month:'short', day:'numeric'});
                         const amountStr = (typeof e.amount === 'number' && !isNaN(e.amount)) ? e.amount.toLocaleString() : '0';
@@ -1662,6 +1905,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 </tbody>
             </table>
         `;
+        
+        if (events.length > window.currentHistoryLimit) {
+            const remaining = events.length - window.currentHistoryLimit;
+            container.innerHTML += `<div style="padding:12px; text-align:center;"><button class="btn btn-secondary btn-sm" onclick="window.currentHistoryLimit += 30; const b = getBatches().find(x => x.id === currentBatchId); if(b) refreshCockpitData(b);">Load More (${remaining} remaining)</button></div>`;
+        }
     }
 
     function renderCockpitTransactions(txs, initialCash = 0) {
@@ -1727,7 +1975,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    window.openCSVImportModal = function(batchId) {
+    window.openCSVImportModal = async function(batchId) {
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
         modal.innerHTML = `
@@ -1759,7 +2007,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 preview.innerHTML = `<strong>Found ${records.length} days of data.</strong><br>First date: ${records[0].date}<br>Last date: ${records[records.length-1].date}`;
                 $('btn-confirm-import').disabled = false;
                 $('btn-confirm-import').onclick = function() {
-                    let logs = JSON.parse(localStorage.getItem(`poultryLogs_${batchId}`) || '[]');
+                    let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
                     // Merge logic: prefer CSV for the same date
                     records.forEach(r => {
                         const idx = logs.findIndex(l => l.date === r.date);
@@ -1777,7 +2025,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
-    window.openBackfillModal = function(batchId) {
+    window.openBackfillModal = async function(batchId) {
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
         modal.innerHTML = `
@@ -1814,7 +2062,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const eggsPerDay = Math.floor(totalEggs / days.length);
-            let logs = JSON.parse(localStorage.getItem(`poultryLogs_${batchId}`) || '[]');
+            let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
             
             days.forEach((d, i) => {
                 const idx = logs.findIndex(l => l.date === d);
@@ -1833,7 +2081,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // Modal logic for transactions
-    window.openTxModal = function(type) {
+    window.openTxModal = async function(type) {
         const title = type === 'purchase' ? 'Log Purchase' : 'Log Sale';
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
@@ -1904,7 +2152,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         $('tx-form').addEventListener('submit', (e) => {
             e.preventDefault();
-            const txs = JSON.parse(localStorage.getItem(`poultryTx_${currentBatchId}`) || '[]');
+            const txs = await api.getTransactions(batchId || batch.id || currentBatchId || id);
             const amount = parseFloat($('tx-amount').value);
             let rawQty = parseFloat($('tx-qty') ? $('tx-qty').value : 0);
             let unit = $('tx-unit') ? $('tx-unit').value : null;
@@ -1936,15 +2184,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Logic handled by window.submitDailyLog in cockpit view
 
-    window.finishBatch = function(id) {
+    window.finishBatch = async function(id) {
         if (!confirm('This will close the batch and generate a Success Snapshot for future modelling. Proceed?')) return;
         
         const batches = getBatches();
         const batchIndex = batches.findIndex(b => b.id === id);
         const batch = batches[batchIndex];
         
-        const logs = JSON.parse(localStorage.getItem(`poultryLogs_${id}`) || '[]');
-        const txs = JSON.parse(localStorage.getItem(`poultryTx_${id}`) || '[]');
+        const logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
+        const txs = await api.getTransactions(batchId || batch.id || currentBatchId || id);
 
         const kpis = computeKPIs(logs, batch.size, farmProfile);
         
@@ -1975,7 +2223,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateAggregates(batch, logs, txs, kpis);
 
         // Save Snapshot
-        const snapshots = JSON.parse(localStorage.getItem('poultrySnapshots') || '[]');
+        const snapshots = await api.getSnapshots();
         snapshots.unshift(snapshot);
         localStorage.setItem('poultrySnapshots', JSON.stringify(snapshots));
 
@@ -2006,7 +2254,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
 
-    $('btn-clear-all')?.addEventListener('click', () => {
+    $('btn-clear-all')?.addEventListener('click', async () => {
         if (confirm('Delete all saved proposals?')) {
             localStorage.removeItem('poultryProposals');
             refreshDashboard();
@@ -2025,7 +2273,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     docsGrid?.querySelectorAll('.doc-card').forEach(card => {
-        card.addEventListener('click', () => {
+        card.addEventListener('click', async () => {
             const key = card.dataset.doc;
             if (KB_CONTENT[key]) {
                 docContent.innerHTML = KB_CONTENT[key].html;
@@ -2036,7 +2284,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    $('btn-back-to-docs')?.addEventListener('click', () => {
+    $('btn-back-to-docs')?.addEventListener('click', async () => {
         docsGrid.style.display = 'grid';
         docDetail.style.display = 'none';
     });
@@ -2062,7 +2310,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTheme('dark');
     }
 
-    themeToggle?.addEventListener('click', () => {
+    themeToggle?.addEventListener('click', async () => {
         const current = document.documentElement.getAttribute('data-theme');
         setTheme(current === 'dark' ? 'light' : 'dark');
     });
@@ -2082,7 +2330,7 @@ document.addEventListener('DOMContentLoaded', () => {
         overlay.classList.remove('active');
     }
 
-    hamburger?.addEventListener('click', () => {
+    hamburger?.addEventListener('click', async () => {
         if (sidebar.classList.contains('open')) closeSidebar();
         else openSidebar();
     });
@@ -2118,9 +2366,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let _capexChartInstance = null;
     let _revenueChartInstance = null;
     
-    function renderAnalytics() {
-        const proposals = JSON.parse(localStorage.getItem('poultryProposals') || '[]');
-        const snapshots = JSON.parse(localStorage.getItem('poultrySnapshots') || '[]');
+    async function renderAnalytics() {
+        const proposals = await api.getProposals();
+        const snapshots = await api.getSnapshots();
         
         if (proposals.length === 0 && snapshots.length === 0) {
             $('analytics-content').style.display = 'none';
@@ -2285,7 +2533,7 @@ document.addEventListener('DOMContentLoaded', () => {
         alert('Farm profile updated successfully!');
     });
 
-    $('btn-export-data')?.addEventListener('click', () => {
+    $('btn-export-data')?.addEventListener('click', async () => {
         const keys = ['poultryFarmProfile', 'poultryAggregates', 'poultryProposals', 'poultryBatches', 'poultrySnapshots'];
         const data = {};
         keys.forEach(k => data[k] = JSON.parse(localStorage.getItem(k) || 'null'));
@@ -2336,6 +2584,127 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         lucide.createIcons();
     }
+
+    window.openHealthModal = function(type) {
+        const isVaccine = type === 'vaccine';
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay active';
+        modal.innerHTML = `
+            <div class="modal-content card" style="max-width:400px; padding:24px; position:relative;">
+                <button type="button" class="btn btn-secondary btn-sm" style="position:absolute; top:16px; right:16px;" onclick="document.body.removeChild(this.closest('.modal-overlay'))"><i data-lucide="x" style="width:14px;height:14px;"></i></button>
+                <h3>${isVaccine ? 'Log Vaccination' : 'Log Medication'}</h3>
+                <form id="health-form" style="display:flex; flex-direction:column; gap:12px; margin-top:16px;">
+                    <div class="input-group">
+                        <label>Date</label>
+                        <input type="date" id="h-date" value="${new Date().toISOString().split('T')[0]}" required class="input-md">
+                    </div>
+                    <div class="input-group">
+                        <label>${isVaccine ? 'Vaccine Name' : 'Drug Name'}</label>
+                        ${isVaccine ? `
+                        <select id="h-name" required class="input-md">
+                            <option value="Marek\\'s Disease">Marek\\'s Disease</option>
+                            <option value="Newcastle (HB1/La Sota)">Newcastle (HB1/La Sota)</option>
+                            <option value="Gumboro (IBD)">Gumboro (IBD)</option>
+                            <option value="Fowl Pox">Fowl Pox</option>
+                            <option value="Fowl Typhoid">Fowl Typhoid</option>
+                            <option value="Deworming">Deworming</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        ` : `
+                        <select id="h-name" required class="input-md">
+                            ${Object.keys(DRUG_WITHDRAWAL_TABLE).map(d => `<option value="${d}">${d}</option>`).join('')}
+                            <option value="Other">Other</option>
+                        </select>
+                        `}
+                    </div>
+                    <div class="input-group" id="h-name-other-group" style="display:none;">
+                        <label>Specify Name</label>
+                        <input type="text" id="h-name-other" class="input-md">
+                    </div>
+                    <div class="input-group">
+                        <label>Dosage</label>
+                        <input type="text" id="h-dosage" placeholder="e.g. 1 vial / 200L water" required class="input-md">
+                    </div>
+                    <div class="input-group">
+                        <label>Administrator / Vet</label>
+                        <input type="text" id="h-admin" placeholder="Name" required class="input-md">
+                    </div>
+                    ${!isVaccine ? `
+                    <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+                        <input type="checkbox" id="h-offlabel" style="width:auto; height:auto;">
+                        <label for="h-offlabel" style="margin:0; cursor:pointer;">Off-label use (forces 14-day egg withdrawal)</label>
+                    </div>
+                    ` : ''}
+                    <div style="display:flex; gap:12px; margin-top:16px;">
+                        <button type="submit" class="btn btn-primary" style="flex:1;">Save Record</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        lucide.createIcons();
+        
+        $('h-name').addEventListener('change', (e) => {
+            $('h-name-other-group').style.display = e.target.value === 'Other' ? 'block' : 'none';
+        });
+
+        $('health-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            let drugName = $('h-name').value;
+            if (drugName === 'Other') drugName = $('h-name-other').value || 'Unknown';
+            
+            const logs = JSON.parse(localStorage.getItem(`poultryHealth_${currentBatchId}`) || '[]');
+            logs.unshift({
+                id: Date.now(),
+                type: type,
+                date: $('h-date').value,
+                drug: drugName,
+                dosage: $('h-dosage').value,
+                admin: $('h-admin').value,
+                offLabel: $('h-offlabel') ? $('h-offlabel').checked : false
+            });
+            localStorage.setItem(`poultryHealth_${currentBatchId}`, JSON.stringify(logs));
+            document.body.removeChild(modal);
+            const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
+            if (batch) refreshCockpitData(batch);
+        });
+    };
+
+    window.renderHealthTable = function(batchId) {
+        const container = $('health-log-table');
+        if (!container) return;
+        const logs = JSON.parse(localStorage.getItem(`poultryHealth_${batchId}`) || '[]');
+        
+        container.innerHTML = logs.length === 0 ? '<p style="text-align:center; padding:20px; color:var(--text-muted);">No health records yet.</p>' : `
+            <table style="width:100%; border-collapse:collapse;">
+                <thead><tr>
+                    <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Date</th>
+                    <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Event</th>
+                    <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Dosage</th>
+                    <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Admin</th>
+                </tr></thead>
+                <tbody>
+                    ${logs.map(l => {
+                        const icon = l.type === 'vaccine' ? 'syringe' : 'pill';
+                        const color = l.type === 'vaccine' ? 'var(--primary)' : 'var(--accent)';
+                        const bg = l.type === 'vaccine' ? 'var(--primary-soft)' : '#fef3c7'; // amber-100
+                        return \`
+                        <tr style="border-bottom:1px solid var(--border-color); font-size:13px;">
+                            <td style="padding:8px 12px; color:var(--text-muted);">\${l.date}</td>
+                            <td style="padding:8px 12px;">
+                                <span class="pill" style="background:\${bg}; color:\${color}; margin-right:6px;"><i data-lucide="\${icon}" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i>\${l.type.toUpperCase()}</span>
+                                <strong>\${l.drug}</strong>
+                                \${l.offLabel ? '<span style="color:#dc2626; font-size:10px; margin-left:4px;">(Off-label)</span>' : ''}
+                            </td>
+                            <td style="padding:8px 12px;">\${l.dosage}</td>
+                            <td style="padding:8px 12px; color:var(--text-muted);">\${l.admin}</td>
+                        </tr>\`;
+                    }).join('')}
+                </tbody>
+            </table>
+        `;
+        lucide.createIcons();
+    };
 
     // ===================== INIT =====================
     document.querySelectorAll('input[type="number"]').forEach(input => {

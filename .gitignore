@@ -24,3 +24,8 @@ package-lock.json
 dist/
 build/
 .env
+
+# Database
+data/
+*.sqlite
+*.db

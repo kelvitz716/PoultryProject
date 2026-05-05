@@ -1,10 +1,17 @@
-FROM nginx:alpine
+FROM node:20-alpine
 
-# Copy the static web files into the standard Nginx hosting directory
-COPY . /usr/share/nginx/html
+WORKDIR /app
 
-# Expose port 80 internally
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm install --production
+
+# Copy application files
+COPY . .
+
+# Create data directory for SQLite
+RUN mkdir -p data
+
 EXPOSE 80
 
-# Start Nginx in the foreground
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server.js"]
