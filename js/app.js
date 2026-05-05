@@ -1690,19 +1690,28 @@ document.addEventListener('DOMContentLoaded', async () => {
             discardContainer.style.display = 'none';
         }
 
-        updateCockpitAlerts(batch, kpis, currentInventory, breakEvenPrice, cashBalance);
+        updateCockpitAlerts(batch, kpis, currentInventory, breakEvenPrice, cashBalance, txs);
         renderCockpitChart(kpis.recent30);
         renderHistoryTable(logs, txs);
         renderCockpitTransactions(txs, initialCash);
         renderHealthTable(batch.id);
     }
 
-    function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash) {
+    function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash, txs) {
         const tray = $('cockpit-alerts');
         if (!tray) return;
         tray.innerHTML = '';
         const alerts = [];
         const t = farmProfile.alertThresholds;
+
+        // Feed Budget Guard
+        if (txs && txs.length > 0) {
+            const feedSpend = txs.filter(x => x.type === 'purchase' && x.category === 'feed').reduce((s, x) => s + parseFloat(x.amount || 0), 0);
+            const totalOpex = txs.filter(x => x.type === 'purchase' && x.category !== 'infrastructure').reduce((s, x) => s + parseFloat(x.amount || 0), 0);
+            if (totalOpex > 0 && (feedSpend / totalOpex) > 0.75) {
+                alerts.push({ type: 'warning', icon: 'pie-chart', text: `Feed Budget Alert: Feed spend (${Math.round((feedSpend/totalOpex)*100)}%) exceeds 75% of total OPEX.` });
+            }
+        }
 
         const recent3 = kpis.recent7.slice(0, 3);
         const lowLayCount = recent3.filter(l => (l.eggs / (l.birds || batch.size)) < (t.minLayRatePercent/100)).length;
@@ -1934,11 +1943,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         ).join('');
 
         const profitColor = net >= 0 ? 'var(--primary)' : 'var(--danger)';
-        const statusBadge = txs.length === 0
-            ? '<div class="price-advisory" style="text-align:center; margin-top:12px;">No transactions yet.</div>'
-            : net < 0
-                ? '<div class="price-advisory" style="text-align:center; margin-top:12px; background:#fee2e2; color:#dc2626;">Below break-even — track sales to recover.</div>'
-                : '<div class="price-advisory" style="text-align:center; margin-top:12px; background:var(--primary-soft); color:var(--primary);">Profitable batch!</div>';
+        let statusBadge = '';
+        if (txs.length === 0) {
+            statusBadge = '<div class="price-advisory" style="text-align:center; margin-top:12px;">No transactions yet.</div>';
+        } else if (net < 0) {
+            statusBadge = '<div class="price-advisory" style="text-align:center; margin-top:12px; background:#fee2e2; color:#dc2626;">Below break-even — track sales to recover.</div>';
+        } else {
+            const marginPct = revenue > 0 ? (net / revenue) * 100 : 0;
+            if (marginPct < 25) {
+                statusBadge = `<div class="price-advisory" style="text-align:center; margin-top:12px; background:#fef9c3; color:#92400e;">Margin at ${marginPct.toFixed(1)}%. Target is 25-35%.</div>`;
+            } else if (marginPct > 35) {
+                statusBadge = `<div class="price-advisory" style="text-align:center; margin-top:12px; background:var(--primary-soft); color:var(--primary);">Exceptional Margin (${marginPct.toFixed(1)}%)!</div>`;
+            } else {
+                statusBadge = `<div class="price-advisory" style="text-align:center; margin-top:12px; background:var(--primary-soft); color:var(--primary);">On Target! Margin at ${marginPct.toFixed(1)}%.</div>`;
+            }
+        }
 
         container.innerHTML = `
             <div style="padding:16px;">
@@ -2006,7 +2025,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 preview.style.display = 'block';
                 preview.innerHTML = `<strong>Found ${records.length} days of data.</strong><br>First date: ${records[0].date}<br>Last date: ${records[records.length-1].date}`;
                 $('btn-confirm-import').disabled = false;
-                $('btn-confirm-import').onclick = function() {
+                $('btn-confirm-import').onclick = async function() {
                     let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
                     // Merge logic: prefer CSV for the same date
                     records.forEach(r => {
@@ -2048,7 +2067,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
         document.body.appendChild(modal);
 
-        $('btn-do-backfill').onclick = function() {
+        $('btn-do-backfill').onclick = async function() {
             const start = new Date($('bf-start').value);
             const end = new Date($('bf-end').value);
             const totalEggs = parseInt($('bf-eggs').value) || 0;
@@ -2093,9 +2112,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             <option value="manure">Manure</option>
         `;
         const purchaseOptions = `
+            <option value="chicks">Chicks (Initial Stock)</option>
             <option value="feed">Feed</option>
             <option value="meds">Vaccines / Medication</option>
-            <option value="labour">Labour / Transport</option>
+            <option value="electricity">Electricity</option>
+            <option value="water">Water</option>
+            <option value="labour">Labour</option>
+            <option value="infrastructure">Infrastructure</option>
             <option value="other">Other Supplies</option>
         `;
 
@@ -2142,6 +2165,10 @@ document.addEventListener('DOMContentLoaded', async () => {
              } else {
                   if (cat === 'feed') {
                        html += `<div class="input-group"><label>Quantity (kg)</label><input type="number" id="tx-qty" required></div>`;
+                  } else if (cat === 'labour') {
+                       html += `<div class="input-group"><label>Farmhand Name</label><input type="text" id="tx-farmhand" placeholder="e.g. John Doe"></div>`;
+                  } else if (cat === 'electricity' || cat === 'water') {
+                       html += `<div class="input-group"><label>Billing Month</label><input type="month" id="tx-billing-month"></div>`;
                   }
              }
              $('tx-dynamic-inputs').innerHTML = html;
@@ -2150,19 +2177,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('tx-category').addEventListener('change', renderInputs);
         renderInputs();
 
-        $('tx-form').addEventListener('submit', (e) => {
+        $('tx-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const txs = await api.getTransactions(batchId || batch.id || currentBatchId || id);
+            const bid = window.currentBatchId || (typeof batchId !== 'undefined' ? batchId : null);
+            if (!bid) { alert("Batch context missing."); return; }
+
+            const txs = await api.getTransactions(bid);
             const amount = parseFloat($('tx-amount').value);
             let rawQty = parseFloat($('tx-qty') ? $('tx-qty').value : 0);
             let unit = $('tx-unit') ? $('tx-unit').value : null;
+            let farmhandName = $('tx-farmhand') ? $('tx-farmhand').value : null;
+            let billingMonth = $('tx-billing-month') ? $('tx-billing-month').value : null;
             let normalizedQty = rawQty;
 
             if (type === 'sale' && $('tx-category').value === 'eggs' && unit === 'trays') {
                 normalizedQty = rawQty * 30; // convert to individual eggs
             }
 
-            txs.unshift({
+            const newTx = {
                 id: Date.now(),
                 type,
                 category: $('tx-category').value,
@@ -2170,14 +2202,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 qty: normalizedQty,
                 rawUnit: unit,
                 rawQty: rawQty,
+                farmhandName,
+                billingMonth,
                 unitPrice: normalizedQty > 0 ? (amount / normalizedQty) : 0,
                 notes: $('tx-notes') ? $('tx-notes').value.trim() : '',
                 date: new Date().toISOString()
-            });
-
-            localStorage.setItem(`poultryTx_${currentBatchId}`, JSON.stringify(txs));
+            };
+            
+            txs.unshift(newTx);
+            localStorage.setItem(`poultryTx_${bid}`, JSON.stringify(txs));
+            await api.saveTransaction(bid, newTx);
+            
             document.body.removeChild(modal);
-            const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
+            const batch = getBatches().find(b => String(b.id) === String(bid));
             if (batch) refreshCockpitData(batch);
         });
     }
@@ -2688,17 +2725,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                         const icon = l.type === 'vaccine' ? 'syringe' : 'pill';
                         const color = l.type === 'vaccine' ? 'var(--primary)' : 'var(--accent)';
                         const bg = l.type === 'vaccine' ? 'var(--primary-soft)' : '#fef3c7'; // amber-100
-                        return \`
+                        return `
                         <tr style="border-bottom:1px solid var(--border-color); font-size:13px;">
-                            <td style="padding:8px 12px; color:var(--text-muted);">\${l.date}</td>
+                            <td style="padding:8px 12px; color:var(--text-muted);">${l.date}</td>
                             <td style="padding:8px 12px;">
-                                <span class="pill" style="background:\${bg}; color:\${color}; margin-right:6px;"><i data-lucide="\${icon}" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i>\${l.type.toUpperCase()}</span>
-                                <strong>\${l.drug}</strong>
-                                \${l.offLabel ? '<span style="color:#dc2626; font-size:10px; margin-left:4px;">(Off-label)</span>' : ''}
+                                <span class="pill" style="background:${bg}; color:${color}; margin-right:6px;"><i data-lucide="${icon}" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i>${l.type.toUpperCase()}</span>
+                                <strong>${l.drug}</strong>
+                                ${l.offLabel ? '<span style="color:#dc2626; font-size:10px; margin-left:4px;">(Off-label)</span>' : ''}
                             </td>
-                            <td style="padding:8px 12px;">\${l.dosage}</td>
-                            <td style="padding:8px 12px; color:var(--text-muted);">\${l.admin}</td>
-                        </tr>\`;
+                            <td style="padding:8px 12px;">${l.dosage}</td>
+                            <td style="padding:8px 12px; color:var(--text-muted);">${l.admin}</td>
+                        </tr>`;
                     }).join('')}
                 </tbody>
             </table>

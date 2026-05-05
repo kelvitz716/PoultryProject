@@ -66,7 +66,7 @@
 
 ## Module 4 — Expense Tracking & Financial Records
 
-- `[ ]` **Cost category schema** — implement structured expense logging with these categories:
+- `[x]` **Cost category schema** — implement structured expense logging with these categories:
   - Chicks · KSh 100–150/bird
   - Feed (target: 65–75% of total budget)
   - Vaccines & medications
@@ -74,10 +74,10 @@
   - Water (KITWASCO: KSh 210–250/m³)
   - Labor (KSh 10,000–20,000/month per farmhand)
   - Infrastructure (semi-permanent housing budget: < KSh 150,000 per 1,000 birds)
-- `[ ]` **Profit margin calculator** — compute realized margin per batch against the 25–35% target; surface variance from target prominently on cockpit
-- `[ ]` **Feed budget guard** — alert when feed spend exceeds 75% of total OPEX for the period
-- `[ ]` **Labor cost entry** — support logging multiple farmhands with individual monthly wage records
-- `[ ]` **Utility bill import** — allow manual entry of monthly electricity and water bills; auto-attribute to active batch
+- `[x]` **Profit margin calculator** — compute realized margin per batch against the 25–35% target; surface variance from target prominently on cockpit
+- `[x]` **Feed budget guard** — alert when feed spend exceeds 75% of total OPEX for the period
+- `[x]` **Labor cost entry** — support logging multiple farmhands with individual monthly wage records
+- `[x]` **Utility bill import** — allow manual entry of monthly electricity and water bills; auto-attribute to active batch
 
 ---
 
