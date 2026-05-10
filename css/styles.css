@@ -197,6 +197,26 @@ body {
     transition: all 0.2s ease;
 }
 .btn-icon:hover { background-color: var(--primary-soft); color: var(--primary); }
+.btn-icon { position: relative; }
+.badge {
+    position: absolute; top: 4px; right: 4px;
+    width: 10px; height: 10px; background: var(--danger);
+    border-radius: 50%; display: none; border: 2px solid var(--bg-white);
+}
+
+.notification-item {
+    display: flex; gap: 12px; padding: 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px; transition: background 0.2s;
+    cursor: pointer;
+}
+.notification-item:last-child { border-bottom: none; }
+.notification-item:hover { background: var(--bg-main); }
+.notification-item svg { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; }
+.notification-item.warning svg { color: var(--accent); }
+.notification-item.danger svg { color: var(--danger); }
+.notification-item.info svg { color: var(--primary); }
+
 
 /* ===================== VIEW CONTAINER ===================== */
 .view-container { padding: 32px; max-width: 1100px; margin: 0 auto; width: 100%; }

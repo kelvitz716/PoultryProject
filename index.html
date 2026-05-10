@@ -82,6 +82,7 @@
                     <div style="position: relative;">
                         <button class="btn-icon" title="Notifications" id="btn-notifications">
                             <i data-lucide="bell"></i>
+                            <span class="badge" id="notification-badge"></span>
                         </button>
                         <div id="notifications-dropdown" style="display:none; position:absolute; top:calc(100% + 8px); right:0; width:300px; background:var(--bg-main); border:1px solid var(--border-color); border-radius:8px; padding:16px; z-index:100; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -165,7 +166,18 @@
                                 </div>
                             </div>
                         </div>
+                        
+                        <div class="card ar-card" style="grid-column: 1 / -1;">
+                            <div class="card-header">
+                                <h3>Accounts Receivable (Outstanding Credit Sales)</h3>
+                                <i data-lucide="file-clock" class="header-icon"></i>
+                            </div>
+                            <div class="card-body" id="ar-list" style="padding: 16px;">
+                                <!-- Injected via JS -->
+                            </div>
+                        </div>
                     </div>
+
                 </div>
 
                 <!-- ======================== GENERATOR VIEW ======================== -->
@@ -380,6 +392,9 @@
                                     <button type="button" class="btn btn-primary" id="btn-export-pdf" style="display: none;">
                                         <i data-lucide="download" style="width:16px; height:16px;"></i> Export as PDF
                                     </button>
+                                    <button type="button" class="btn btn-accent" id="btn-start-batch" style="display: none; background: var(--primary-soft); color: var(--primary); border: 1px dashed var(--primary);">
+                                        <i data-lucide="play-circle" style="width:16px; height:16px;"></i> Start Batch
+                                    </button>
                                 </div>
                                 <div class="preview-document" id="proposal-preview">
                                     <div class="preview-placeholder">
@@ -462,10 +477,11 @@
                             <h1>Farm <span class="highlight">Operations</span></h1>
                             <p>Track live bird performance, feed inventory, and cash profitability.</p>
                         </div>
-                        <button class="btn btn-primary" id="btn-goto-generator">
+                        <div style="display: flex; gap: 8px;"><button class="btn btn-secondary" id="btn-clear-all-batches">Clear All</button><button class="btn btn-primary" id="btn-goto-generator">
                             <i data-lucide="play-circle"></i>
                             <span>Model New Batch</span>
                         </button>
+                        </div>
                     </div>
                     <div class="batches-grid" id="batches-list">
                         <div class="empty-state">
@@ -579,6 +595,13 @@
                                         <label>Standard Sack Weight (kg)</label>
                                         <input type="number" id="set-sack-weight" value="50">
                                     </div>
+                                    <div class="input-group">
+                                        <label>Egg Storage Condition</label>
+                                        <select id="set-storage-type">
+                                            <option value="room">Room Temp (~28°C) - 12 days</option>
+                                            <option value="refrigerated">Refrigerated (10-15°C) - 35 days</option>
+                                        </select>
+                                    </div>
                                 </div>
                                 
                                 <h4 class="section-label" style="border-top: 1px solid var(--border-color); padding-top: 24px; margin-top: 8px;">Alert & KPI Thresholds</h4>
@@ -607,6 +630,31 @@
                                     <button type="submit" class="btn btn-primary" style="flex: 1;">Save Farm Profile</button>
                                     <button type="button" class="btn btn-secondary" id="btn-export-data">Export All Data (JSON)</button>
                                 </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <h3>Buyer Registry (CRM)</h3>
+                        </div>
+                        <div class="card-body" style="padding: 24px;">
+                            <div id="buyers-list" style="margin-bottom: 16px;"></div>
+                            <form id="add-buyer-form" style="display: flex; gap: 12px; align-items: flex-end;">
+                                <div class="input-group" style="flex: 2;">
+                                    <label>Buyer Name</label>
+                                    <input type="text" id="buyer-name" required placeholder="e.g. Banoli Farm">
+                                </div>
+                                <div class="input-group" style="flex: 1;">
+                                    <label>Payment Terms</label>
+                                    <select id="buyer-terms" required>
+                                        <option value="COD">Cash on Delivery</option>
+                                        <option value="Net 7">Net 7</option>
+                                        <option value="Net 14">Net 14</option>
+                                        <option value="Net 30">Net 30</option>
+                                    </select>
+                                </div>
+                                <button type="submit" class="btn btn-secondary">Add Buyer</button>
                             </form>
                         </div>
                     </div>

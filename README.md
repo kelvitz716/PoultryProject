@@ -27,7 +27,7 @@ Poultry DSS is a knowledge-based Decision Support System (DSS) designed to help 
    ```bash
    docker-compose up -d
    ```
-4. Access the web interface at `http://localhost:3000` (or whatever port you mapped in the `docker-compose.yml`).
+4. Access the web interface at `http://localhost:8089`.
 
 ### Using Node.js directly
 
@@ -40,7 +40,7 @@ Poultry DSS is a knowledge-based Decision Support System (DSS) designed to help 
    ```bash
    npm start
    ```
-4. Access the web interface at `http://localhost`.
+4. Access the web interface at `http://localhost:8089` (default behavior might depend on environment variables, but Docker sets it up here).
 
 ## Project Structure
 

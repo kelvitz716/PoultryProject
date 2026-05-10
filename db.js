@@ -69,6 +69,15 @@ function initializeDatabase() {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         `);
+
+        db.run(`
+            CREATE TABLE IF NOT EXISTS health_logs (
+                id TEXT PRIMARY KEY,
+                batch_id TEXT NOT NULL,
+                data TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
         console.log('Database schema initialized.');
     });
 }

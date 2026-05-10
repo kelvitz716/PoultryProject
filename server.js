@@ -11,6 +11,8 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname, { index: 'index.html' }));
 
+const normalizeId = (id) => id ? String(id).replace(/\.0$/, '') : id;
+
 // ENTITIES (Farm Profile, Aggregates)
 app.get('/api/entities/:key', async (req, res) => {
     try {
@@ -41,7 +43,8 @@ app.post('/api/proposals', async (req, res) => {
 });
 app.delete('/api/proposals/:id', async (req, res) => {
     try {
-        await runQuery('DELETE FROM proposals WHERE id = ?', [req.params.id]);
+        const id = normalizeId(req.params.id);
+        await runQuery('DELETE FROM proposals WHERE id = ? OR id = ?', [id, id + '.0']);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -56,13 +59,20 @@ app.get('/api/batches', async (req, res) => {
 app.post('/api/batches', async (req, res) => {
     try {
         const batch = req.body;
-        await runQuery('INSERT INTO batches (id, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [batch.id, JSON.stringify(batch)]);
+        const id = normalizeId(batch.id);
+        batch.id = id;
+        await runQuery('INSERT INTO batches (id, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [id, JSON.stringify(batch)]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.delete('/api/batches/:id', async (req, res) => {
     try {
-        await runQuery('DELETE FROM batches WHERE id = ?', [req.params.id]);
+        const id = normalizeId(req.params.id);
+        await runQuery('DELETE FROM batches WHERE id = ? OR id = ?', [id, id + '.0']);
+        // Also cleanup logs, transactions, and health logs for this batch
+        await runQuery('DELETE FROM logs WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
+        await runQuery('DELETE FROM transactions WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
+        await runQuery('DELETE FROM health_logs WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -130,6 +140,23 @@ app.post('/api/transactions/:batchId', async (req, res) => {
 app.delete('/api/transactions/:batchId/:id', async (req, res) => {
     try {
         await runQuery('DELETE FROM transactions WHERE batch_id = ? AND id = ?', [req.params.batchId, req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// HEALTH LOGS
+app.get('/api/health/:batchId', async (req, res) => {
+    try {
+        const rows = await allQuery('SELECT data FROM health_logs WHERE batch_id = ? ORDER BY updated_at DESC', [req.params.batchId]);
+        res.json(rows.map(r => JSON.parse(r.data)));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/health/:batchId', async (req, res) => {
+    try {
+        const log = req.body;
+        const id = log.id || `${req.params.batchId}_h_${Date.now()}`;
+        log.id = id;
+        await runQuery('INSERT INTO health_logs (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [id, req.params.batchId, JSON.stringify(log)]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });

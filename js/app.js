@@ -1,4 +1,9 @@
-const $ = id => document.getElementById(id);
+let farmProfile; // Global farm profile, will be loaded on DOMContentLoaded
+let currentBatchId = null;
+let _cockpitChartInstance = null;
+let allBatches = []; // Cache for batches
+
+
 
 const api = {
     async getEntity(key, def) { try { const r = await fetch('/api/entities/'+key); return r.ok ? ((await r.json()) ?? def) : def; } catch(e){return def;} },
@@ -16,15 +21,19 @@ const api = {
     async deleteTransaction(bId, id) { await fetch('/api/transactions/'+bId+'/'+id, {method:'DELETE'}); },
     async getSnapshots() { try { const r = await fetch('/api/snapshots'); return r.ok ? await r.json() : []; } catch(e){return [];} },
     async saveSnapshot(s) { await fetch('/api/snapshots', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(s)}); },
+    async getHealthLogs(bId) { try { const r = await fetch('/api/health/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveHealthLog(bId, log) { await fetch('/api/health/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(log)}); },
     
     // Fallback for UI settings
     getTheme() { return localStorage.getItem('poultryTheme') || 'system'; },
     setTheme(t) { localStorage.setItem('poultryTheme', t); }
 };
 
+const $ = id => document.getElementById(id);
+
 document.addEventListener('DOMContentLoaded', async () => {
     lucide.createIcons();
-    farmProfile = await loadFarmProfile();
+
 
 
     // ===================== DATA MODELS =====================
@@ -294,7 +303,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             productionDropPercent: 15,
             consecutiveLowDays: 3
         },
-        litterLastChanged: new Date().toISOString()
+        litterLastChanged: new Date().toISOString(),
+        eggStorageType: 'room',
+        buyers: []
     };
 
     async function loadFarmProfile() {
@@ -309,7 +320,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         await api.setEntity('poultryFarmProfile', profile);
     }
 
-    let farmProfile = loadFarmProfile();
+    // Initialize farmProfile AFTER DEFAULT_FARM_PROFILE is defined
+    farmProfile = await loadFarmProfile();
+
+    window.syncBatches = async function() {
+        allBatches = await api.getBatches();
+    }
+    await syncBatches();
+
+
 
     async function loadAggregates() {
         const stored = await api.getEntity('poultryAggregates', null);
@@ -382,12 +401,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Utility: compute KPIs from log data
-    function computeKPIs(logs, batchSize, profile) {
-        const hens = batchSize || profile.flockSize;
+    function computeKPIs(logs, batch, profile) {
+        const batchSize = batch.size || profile.flockSize;
+        const liveBirds = batch.stats && batch.stats.birdsAlive !== undefined ? batch.stats.birdsAlive : batchSize;
+        
         const recent7 = logs.slice(0, 7);
         const recent30 = logs.slice(0, 30);
-        const latestLog = logs[0] || { eggs: 0, feed: 0, birds: hens };
-        const currentBirds = latestLog.birds || hens;
+        const latestLog = logs[0] || { eggs: 0, feed: 0, birds: liveBirds };
+        const currentBirds = liveBirds;
 
         // Today's lay rate
         const todayLayRate = currentBirds > 0 ? (latestLog.eggs / currentBirds) : 0;
@@ -406,7 +427,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const totalFeed7 = recent7.reduce((s, l) => s + (parseFloat(l.feed) || 0), 0);
         const totalEggs7 = recent7.reduce((s, l) => s + (l.eggs || 0), 0);
         const feedConversion = totalEggs7 > 0 ? totalFeed7 / (totalEggs7 / 12) : 0;
-
+        
         // Projected eggs this month
         const now = new Date();
         const daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
@@ -416,7 +437,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const totalEggs = logs.reduce((s, l) => s + (l.eggs || 0), 0);
         const totalFeed = logs.reduce((s, l) => s + (parseFloat(l.feed) || 0), 0);
 
-        // Avg daily feed per bird
         const avgDailyFeedPerBird = recent7.length > 0 ? (totalFeed7 / recent7.length) / currentBirds : 0.12;
 
         return {
@@ -426,14 +446,46 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
     }
 
-    let currentBatchId = null;
-    let _cockpitChartInstance = null;
+    // Module 6a: FIFO Egg Aging Engine
+    function computeEggInventoryAging(logs, txs) {
+        // 1. Calculate total eggs sold (outflows)
+        const totalEggsSold = txs.filter(t => t.type === 'sale' && t.category === 'eggs').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
+        
+        // 2. Iterate through logs chronologically (oldest first) to find unsold stock
+        const sortedLogs = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+        
+        let eggsToDeduct = totalEggsSold;
+        let unsoldBatches = [];
+        let totalUnsold = 0;
+        
+        for (const log of sortedLogs) {
+            const eggsProduced = parseInt(log.eggs) || 0;
+            if (eggsProduced === 0) continue;
+            
+            if (eggsToDeduct >= eggsProduced) {
+                // This entire day's production is sold
+                eggsToDeduct -= eggsProduced;
+            } else {
+                // Partial or zero sales for this day's production
+                const remainingInLog = eggsProduced - eggsToDeduct;
+                eggsToDeduct = 0; // All sales accounted for
+                
+                const daysOld = Math.floor((new Date() - new Date(log.date)) / 86400000);
+                unsoldBatches.push({ date: log.date, qty: remainingInLog, ageDays: daysOld });
+                totalUnsold += remainingInLog;
+            }
+        }
+        
+        return { totalUnsold, unsoldBatches };
+    }
+
+    // Navigation logic
 
     // ===================== NAVIGATION =====================
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view');
 
-    function switchView(viewId) {
+    window.switchView = function(viewId) {
         navItems.forEach(item => item.classList.toggle('active', item.id === `nav-${viewId}`));
         views.forEach(view => view.classList.toggle('active', view.id === `view-${viewId}`));
         if (viewId === 'dashboard') refreshDashboard();
@@ -740,12 +792,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             <div class="dss-badge">${isRepeat ? 'RECURRING CYCLE ANALYSIS' : 'INITIAL SETUP ANALYSIS'}</div>
 
-            <div class="report-actions" style="margin-top: 15px; display: flex; gap: 10px;">
-                <button class="btn btn-primary btn-sm" id="btn-start-batch" data-id="${isRepeat ? 'repeat' : 'setup'}">
-                    <i data-lucide="play"></i> Start This Batch Now
-                </button>
-            </div>
-
             <h2>1. Strategic Overview</h2>
             <p>This decision support analysis models the <strong>${isRepeat ? 'subsequent operational cycle' : 'initial establishment'}</strong> of a <strong>${typeName}</strong> farm with <strong>${size} birds</strong> at <strong>${location}</strong>.</p>
             
@@ -835,15 +881,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         $('proposal-preview').innerHTML = html;
         $('btn-export-pdf').style.display = 'inline-flex';
-        lucide.createIcons();
         
-        $('btn-start-batch')?.addEventListener('click', async () => {
-            if (!currentProposalId) {
-                alert('Please Save & Finish this analysis before starting the batch!');
-                return;
-            }
-            instantiateBatch(currentProposalId);
-        });
+        const btnStartBatch = document.getElementById('btn-start-batch');
+        if (btnStartBatch) {
+            btnStartBatch.style.display = 'inline-flex';
+            btnStartBatch.onclick = async () => {
+                await saveProposal();
+                instantiateBatch(currentProposalId);
+            };
+        }
+        
+        lucide.createIcons();
     }
 
     // ===================== PDF EXPORT =====================
@@ -877,22 +925,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // ===================== LOCAL STORAGE =====================
+
+
     function parseValue(id) {
         const val = $(id).textContent.replace(/[^0-9.-]+/g, '');
         return parseFloat(val) || 0;
     }
 
-    function getBatches() {
-        return JSON.parse(localStorage.getItem('poultryBatches') || '[]');
+    window.getBatches = function() {
+        return allBatches;
     }
 
-    window.updateBatch = function(batch) {
-        const batches = getBatches();
-        const index = batches.findIndex(b => String(b.id) === String(batch.id));
+    window.updateBatch = async function(batch) {
+        const index = allBatches.findIndex(b => String(b.id) === String(batch.id));
         if (index >= 0) {
-            batches[index] = batch;
-            localStorage.setItem('poultryBatches', JSON.stringify(batches));
+            allBatches[index] = batch;
+            await api.saveBatch(batch);
         }
+    };
+
+    window.saveBatch = async function(batch) {
+        allBatches.push(batch);
+        await api.saveBatch(batch);
     };
 
     async function saveProposal() {
@@ -944,7 +998,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             proposals.unshift(proposal); // Insert new
         }
 
-        localStorage.setItem('poultryProposals', JSON.stringify(proposals));
+        await api.saveProposal(proposal);
         refreshDashboard();
         renderAnalytics();
     }
@@ -971,12 +1025,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             stats: { birdsAlive: parseInt(proposal.size) || 0, totalEggs: 0, mortality: 0 },
             assumptions: {
                 eggPrice: proposal.inputs && proposal.inputs['prop-egg-price'] ? parseFloat(proposal.inputs['prop-egg-price']) : 15,
-                feedPrice: 70
+                feedPrice: proposal.type === 'layer' ? (parseFloat(proposal.inputs['prop-price-layermash']) || 3600) : (parseFloat(proposal.inputs['prop-price-broilerfinisher']) || 3800)
             }
         };
 
-        batches.unshift(batch);
-        localStorage.setItem('poultryBatches', JSON.stringify(batches));
+        // Update farm profile default feed price based on proposal
+        if (batch.assumptions.feedPrice) {
+            farmProfile.defaultFeedPrice = batch.assumptions.feedPrice;
+            saveFarmProfile(farmProfile);
+        }
+
+        allBatches.unshift(batch);
+        await api.saveBatch(batch);
         refreshBatches();
         refreshDashboard();
         openBatchCockpit(batch.id);
@@ -986,15 +1046,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         const proposals = await api.getProposals();
         const batches = getBatches().filter(b => b.status === 'active');
         
+        // 14-Day Downtime Enforcer
+        const snapshots = await api.getSnapshots();
+        let downtimeWarning = '';
+        if (snapshots.length > 0) {
+            const mostRecent = snapshots.sort((a,b) => new Date(b.date) - new Date(a.date))[0];
+            const daysSinceClose = Math.floor((new Date() - new Date(mostRecent.date)) / 86400000);
+            if (daysSinceClose < 14) {
+                downtimeWarning = `
+                    <div style="background:#fee2e2; border:1px solid #fca5a5; color:#dc2626; padding:12px; border-radius:8px; margin-bottom:16px; font-size:13px;">
+                        <i data-lucide="shield-alert" style="vertical-align:middle; width:16px; height:16px; margin-right:4px;"></i>
+                        <strong>Biosecurity Alert:</strong> A flock was closed ${daysSinceClose} days ago. Mandatory 14-day downtime is recommended to prevent disease carryover. Proceed only if using a separate house.
+                    </div>
+                `;
+            }
+        }
+        
         const listEl = $('modal-start-batch-list');
-        listEl.innerHTML = '';
+        listEl.innerHTML = downtimeWarning;
         
         const available = proposals.filter(p => !batches.some(b => b.proposalId === p.id));
         
         if (available.length === 0) {
-            listEl.innerHTML = `<p style="text-align:center; color:var(--text-muted); padding:20px;">No unused models available. <br><br><a href="#" onclick="document.getElementById('modal-start-batch').style.display='none'; switchView('generator'); return false;" style="color:var(--primary); font-weight:500;">Run a New DSS Analysis instead.</a></p>`;
+            listEl.innerHTML += `<p style="text-align:center; color:var(--text-muted); padding:20px;">No unused models available. <br><br><a href="#" onclick="document.getElementById('modal-start-batch').style.display='none'; switchView('generator'); return false;" style="color:var(--primary); font-weight:500;">Run a New DSS Analysis instead.</a></p>`;
         } else {
-            listEl.innerHTML = available.map(p => `
+            listEl.innerHTML += available.map(p => `
                 <div class="project-item" style="cursor:pointer; border:1px solid var(--border-color); padding: 12px; border-radius: 8px; margin-bottom: 8px;" onclick="closeStartBatchModal(); instantiateBatch(${p.id});">
                     <div class="project-icon ${p.type}"><i data-lucide="${p.type === 'layer' ? 'egg' : 'bird'}"></i></div>
                     <div class="project-info">
@@ -1040,6 +1116,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         switchView('generator');
     };
 
+    window.cloneProposal = async function(id) {
+        await window.loadProposal(id);
+        currentProposalId = null; // Clear ID so it saves as new
+        const nameEl = document.getElementById('prop-name');
+        if (nameEl) nameEl.value = nameEl.value + ' (Copy)';
+    };
+
     async function refreshDashboard() {
         const proposals = await api.getProposals();
         const batches = getBatches().filter(b => b.status === 'active');
@@ -1068,9 +1151,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <h4>${p.name}</h4>
                         <p>${p.size} birds • ${p.capex}</p>
                     </div>
-                    <button class="project-delete" onclick="event.stopPropagation(); deleteProposal(${p.id})" title="Delete">
-                        <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
-                    </button>
+                    <div class="project-actions" style="display:flex; gap:4px;">
+                        <button class="project-delete" onclick="event.stopPropagation(); window.cloneProposal(${p.id})" title="Clone Proposal">
+                            <i data-lucide="copy" style="width:14px;height:14px;"></i>
+                        </button>
+                        <button class="project-delete" onclick="event.stopPropagation(); deleteProposal(${p.id})" title="Delete">
+                            <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+                        </button>
+                    </div>
                 </div>
             `).join('');
         }
@@ -1092,21 +1180,78 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
+        // Accounts Receivable (Outstanding Credit Sales)
+        const arListEl = $('ar-list');
+        if (arListEl) {
+            let allUnpaid = [];
+            for (const b of batches) {
+                const txs = await api.getTransactions(b.id);
+                const unpaid = txs.filter(t => t.status === 'unpaid' && t.type === 'sale');
+                unpaid.forEach(t => { t.batchName = b.name; t.batchId = b.id; });
+                allUnpaid = allUnpaid.concat(unpaid);
+            }
+            
+            if (allUnpaid.length === 0) {
+                arListEl.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">No outstanding credit invoices.</p>';
+            } else {
+                // Sort by date oldest first
+                allUnpaid.sort((a, b) => new Date(a.date) - new Date(b.date));
+                arListEl.innerHTML = allUnpaid.map(t => {
+                    const txDate = new Date(t.date);
+                    const termsDays = parseInt((t.buyerTerms || '').replace('Net ', '')) || 0;
+                    const dueDate = new Date(txDate.getTime() + termsDays * 86400000);
+                    const daysOverdue = Math.floor((new Date() - dueDate) / 86400000);
+                    
+                    const statusHtml = daysOverdue > 0 
+                        ? `<span style="color:var(--danger); font-weight:bold;">${daysOverdue} days overdue</span>` 
+                        : `<span style="color:var(--text-muted);">Due in ${Math.abs(daysOverdue)} days</span>`;
+                        
+                    return `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border-color); font-size:13px;">
+                        <div>
+                            <strong>${t.buyerName || 'Unknown Buyer'}</strong> <span style="color:var(--text-muted); font-size:11px;">(${t.batchName})</span><br>
+                            <span style="color:var(--text-muted);">${new Date(t.date).toLocaleDateString()} • ${t.qty} eggs</span>
+                        </div>
+                        <div style="text-align:right;">
+                            <strong>KES ${t.amount.toLocaleString()}</strong><br>
+                            ${statusHtml}
+                            <button class="btn btn-sm" style="padding:2px 6px; margin-top:4px;" onclick="markInvoicePaid(${t.batchId}, ${t.id})">Mark Paid</button>
+                        </div>
+                    </div>
+                `}).join('');
+            }
+        }
+
         lucide.createIcons();
 
     }
 
+    window.markInvoicePaid = async function(batchId, txId) {
+        if (!confirm('Mark this invoice as paid?')) return;
+        const txs = await api.getTransactions(batchId);
+        const idx = txs.findIndex(t => t.id === txId);
+        if (idx >= 0) {
+            txs[idx].status = 'paid';
+            await api.saveTransaction(batchId, txs[idx]); // Wait, saveTransaction appends. 
+            // We need a way to update an existing transaction.
+            // Since we are using an append-only system or rewriting the whole array?
+            // api.js uses `saveTransaction` which appends. We don't have `updateTransaction`.
+            // Let's implement updateTransaction.
+        }
+    };
+
     window.deleteProposal = async function(id) {
         const proposals = await api.getProposals();
         const filtered = proposals.filter(p => p.id !== id);
-        localStorage.setItem('poultryProposals', JSON.stringify(filtered));
+        await api.deleteProposal(id);
         refreshDashboard();
         renderAnalytics();
     };
 
 
-    async function refreshBatches() {
-        const batches = getBatches();
+    window.refreshBatches = async function() {
+        console.log('Refreshing batches view...');
+        const batches = window.getBatches();
         const list = $('batches-list');
         
         if (batches.length === 0) {
@@ -1115,29 +1260,48 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        list.innerHTML = batches.map(b => `
+        list.innerHTML = batches.map(b => {
+            const isCompleted = b.status === 'completed';
+            let sopHtml = '';
+            if (isCompleted) {
+                if (b.cleanoutSOP) {
+                    sopHtml = `<div style="margin-top:12px; font-size:12px; color:var(--success); font-weight:600; text-align:center;"><i data-lucide="check-circle" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>Cleanout SOP Audited</div>`;
+                } else {
+                    sopHtml = `<button class="btn btn-primary btn-sm" style="margin-top:12px; width:100%;" onclick="event.stopPropagation(); window.openCleanoutSOP('${b.id}')"><i data-lucide="clipboard-list" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;"></i>Run Cleanout SOP</button>`;
+                }
+            }
+            return `
             <div class="batch-card" onclick="openBatchCockpit(${b.id})">
                 <div class="batch-header">
                     <span class="batch-badge ${b.status}">${b.status.toUpperCase()}</span>
-                    <h4>${b.name}</h4>
+                    <button class="project-delete" onclick="event.stopPropagation(); window.deleteBatchUI(${b.id})" title="Delete Batch">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                </div>
+                <div style="margin-top: 8px;">
+                    <h4 style="margin: 0;">${b.name}</h4>
                 </div>
                 <div class="batch-metrics">
-                    <div class="m-item"><span>Birds</span><strong>${b.stats.birdsAlive}</strong></div>
-                    <div class="m-item"><span>Status</span><strong>${b.stats.totalEggs > 0 ? 'Laying' : 'Growing'}</strong></div>
+                    <div class="m-item"><span>Birds</span><strong>${b.stats?.birdsAlive || b.size}</strong></div>
+                    <div class="m-item"><span>Status</span><strong>${(b.stats?.totalEggs || 0) > 0 ? 'Laying' : 'Growing'}</strong></div>
                 </div>
+                ${sopHtml}
                 <div class="batch-footer">
                     <span>Started: ${new Date(b.startDate).toLocaleDateString()}</span>
                     <i data-lucide="chevron-right"></i>
                 </div>
             </div>
-        `).join('');
+            `;
+        }).join('');
         lucide.createIcons();
     }
 
-    function getActiveWithdrawal(batchId) {
-        const meds = JSON.parse(localStorage.getItem(`poultryHealth_${batchId}`) || '[]');
+    function getActiveWithdrawal(healthLogs, logs) {
+        const meds = healthLogs || [];
+        const dailyLogs = logs || [];
         let maxEggDate = null;
         let maxMeatDate = null;
+        let discardedEggs = 0;
         
         meds.forEach(m => {
             if (m.type !== 'meds') return;
@@ -1153,11 +1317,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         
         const now = new Date();
+        const eggsUnderWithdrawal = maxEggDate && maxEggDate > now;
+        const meatUnderWithdrawal = maxMeatDate && maxMeatDate > now;
+        
+        if (eggsUnderWithdrawal && maxEggDate) {
+            let earliestActiveStart = null;
+            meds.forEach(m => {
+                if (m.type !== 'meds') return;
+                const date = new Date(m.date);
+                const eggDays = m.offLabel ? 14 : (DRUG_WITHDRAWAL_TABLE[m.drug]?.egg || 0);
+                const eggClear = new Date(date.getTime() + eggDays * 86400000);
+                if (eggClear > now) {
+                    if (!earliestActiveStart || date < earliestActiveStart) earliestActiveStart = date;
+                }
+            });
+            
+            if (earliestActiveStart) {
+                dailyLogs.forEach(l => {
+                    const lDate = new Date(l.date);
+                    if (lDate >= earliestActiveStart && lDate <= maxEggDate) {
+                        discardedEggs += (parseInt(l.eggs) || 0);
+                    }
+                });
+            }
+        }
+        
+
         return {
-            eggsUnderWithdrawal: maxEggDate && maxEggDate > now,
-            meatUnderWithdrawal: maxMeatDate && maxMeatDate > now,
+            eggsUnderWithdrawal,
+            meatUnderWithdrawal,
             eggClearDate: maxEggDate,
-            meatClearDate: maxMeatDate
+            meatClearDate: maxMeatDate,
+            discardedEggs
         };
     }
 
@@ -1169,12 +1360,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     window.openBatchCockpit = async function(id) {
-        const batch = getBatches().find(b => b.id === id);
+        const batch = getBatches().find(b => String(b.id) === String(id));
         if (!batch) return;
         currentBatchId = id;
         window.currentHistoryLimit = 30;
         
-        const logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
+        const logs = await api.getLogs(id);
         const dayCount = logs.length;
         const targetDays = batch.type === 'layer' ? 504 : 42;
         const progressPercent = Math.min(100, (dayCount / targetDays) * 100);
@@ -1206,19 +1397,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                     
                     <div class="cockpit-actions" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                        <button class="btn btn-secondary btn-sm" onclick="openCSVImportModal(${batch.id})">
+                        <button class="btn btn-secondary btn-sm" onclick="window.openCSVImportModal(${batch.id})">
                             <i data-lucide="upload" style="width:14px; height:14px;"></i> Import
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="openBackfillModal(${batch.id})">
+                        <button class="btn btn-secondary btn-sm" onclick="window.openBackfillModal(${batch.id})">
                             <i data-lucide="calendar-plus" style="width:14px; height:14px;"></i> Backfill
                         </button>
                         <button class="btn btn-secondary btn-sm" onclick="markLitterChanged()">
                             <i data-lucide="leaf" style="width:14px; height:14px;"></i> Litter Done
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="simulateLifecycle(${batch.id})" style="border-color:var(--accent); color:var(--text-dark);">
+                        <button class="btn btn-secondary btn-sm" onclick="window.simulateLifecycle(${batch.id})" style="border-color:var(--accent); color:var(--text-dark);">
                             <i data-lucide="zap" style="width:14px; height:14px; color:var(--accent);"></i> Skip 60d
                         </button>
-                        <button class="btn btn-primary btn-sm" onclick="finishBatch(${batch.id})" style="margin-left:8px;">
+                        <button class="btn btn-primary btn-sm" onclick="window.finishBatch(${batch.id})" style="margin-left:8px;">
                             <i data-lucide="flag" style="width:14px; height:14px;"></i> Snapshot
                         </button>
                     </div>
@@ -1228,9 +1419,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div style="height:100%; background:var(--primary); width:${progressPercent}%; transition:width 0.5s ease-out; border-radius:8px;"></div>
                 </div>
             </div>
-
-            <!-- Alert Tray -->
-            <div class="alert-tray" id="cockpit-alerts"></div>
 
             <!-- KPI Row: Spec §4.2 -->
             <div class="kpi-row">
@@ -1261,9 +1449,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="info-chip"><i data-lucide="bird" style="width:14px;height:14px;"></i> <strong id="info-birds">${hens}</strong> birds alive</div>
                 <div class="info-chip"><i data-lucide="package" style="width:14px;height:14px;"></i> Feed: <strong id="info-feed">0 kg</strong></div>
                 <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash: <strong id="info-cash">KES 0</strong></div>
-                <div class="info-chip"><i data-lucide="egg" style="width:14px;height:14px;"></i> Total: <strong id="info-totaleggs">0</strong> eggs</div>
+                <div class="info-chip"><i data-lucide="egg" style="width:14px;height:14px;"></i> Total: <strong id="info-totaleggs">0</strong> <span id="info-unsoldeggs" style="font-size:11px; margin-left:4px;">(0 in stock)</span></div>
                 <div class="info-chip" id="info-discard-container" style="display:none; background:#fee2e2; color:#dc2626; border:1px solid #fca5a5;">
                     <i data-lucide="trash-2" style="width:14px;height:14px;"></i> Discard: <strong id="info-discard">0 days</strong>
+                </div>
+                <div class="info-chip" id="info-shelflife-container" style="display:none; border:1px solid var(--accent); color:var(--text-dark);">
+                    <i data-lucide="clock" style="width:14px;height:14px;color:var(--accent);"></i> Expiring: <strong id="info-shelflife">0 eggs</strong>
                 </div>
             </div>
 
@@ -1278,11 +1469,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="log-form-grid" style="flex:1;">
                         <div class="log-field">
                             <label>Eggs Collected</label>
-                            <input type="number" id="log-eggs" placeholder="Total" class="input-lg" style="font-size:24px; font-weight:800; text-align:center;" onfocus="this.select()" oninput="distributeEggs()">
+                            <input type="number" id="log-eggs" placeholder="Total" class="input-lg" style="font-size:24px; font-weight:800; text-align:center;" onfocus="this.select()" oninput="window.distributeEggs()">
                             <div class="egg-subtotals">
-                                <div class="sub-input"><label>Morning</label><input type="number" id="log-eggs-morning" placeholder="0" oninput="autoSumEggs()" onfocus="this.select()"></div>
-                                <div class="sub-input"><label>Evening</label><input type="number" id="log-eggs-evening" placeholder="0" oninput="autoSumEggs()" onfocus="this.select()"></div>
-                                <div class="sub-input"><label>Other</label><input type="number" id="log-eggs-other" placeholder="0" oninput="autoSumEggs()" onfocus="this.select()"></div>
+                                <div class="sub-input"><label>Morning</label><input type="number" id="log-eggs-morning" placeholder="0" oninput="window.autoSumEggs()" onfocus="this.select()"></div>
+                                <div class="sub-input"><label>Evening</label><input type="number" id="log-eggs-evening" placeholder="0" oninput="window.autoSumEggs()" onfocus="this.select()"></div>
+                                <div class="sub-input"><label>Other</label><input type="number" id="log-eggs-other" placeholder="0" oninput="window.autoSumEggs()" onfocus="this.select()"></div>
                             </div>
                         </div>
                         <div class="log-field">
@@ -1314,7 +1505,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                     <div class="log-notes-row" style="margin-top:auto;">
                         <textarea id="log-notes" placeholder="Any observations (health, weather, customer walk-in)..." rows="2" style="min-height:60px;"></textarea>
-                        <button class="btn btn-primary btn-save-log" onclick="submitDailyLog(event)" style="align-self:flex-start; white-space:nowrap;">
+                        <button class="btn btn-primary btn-save-log" onclick="window.submitDailyLog(event)" style="align-self:flex-start; white-space:nowrap;">
                             <i data-lucide="save"></i> Save Log
                         </button>
                     </div>
@@ -1410,12 +1601,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!confirmSim) return;
 
         let logs = [];
-        const txs = await api.getTransactions(batchId || batch.id || currentBatchId || id);
+        const txs = await api.getTransactions(batchId);
         
         // Ensure starting inventory and cash
         if (txs.length === 0) {
-            txs.push({ id: Date.now(), date: new Date(Date.now() - 61 * 86400000).toISOString(), type: 'purchase', category: 'feed', qty: 1000, unitPrice: 70, amount: 70000, notes: 'Initial Simulation Feed Stock' });
-            localStorage.setItem(`poultryTx_${batchId}`, JSON.stringify(txs));
+            await api.saveTransaction(batchId, { id: Date.now(), date: new Date(Date.now() - 61 * 86400000).toISOString(), type: 'purchase', category: 'feed', qty: 1000, unitPrice: 70, amount: 70000, notes: 'Initial Simulation Feed Stock' });
         }
 
         const now = new Date();
@@ -1459,16 +1649,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             }
         }
-
-        logs = sackBackfill(logs, farmProfile.sackWeightKg);
-        localStorage.setItem(`poultryLogs_${batchId}`, JSON.stringify(logs.reverse()));
-
-        // Also add initial feed stock if empty
-        if (txs.filter(t => t.category === 'feed').length === 0) {
-            txs.push({ id: Date.now() + 999, date: new Date(now.getTime() - 65 * 86400000).toISOString(), type: 'purchase', category: 'feed', qty: 1000, amount: 70000, notes: 'Initial Feed' });
+        for (let l of logs) {
+            await api.saveLog(batchId, l);
         }
 
-        localStorage.setItem(`poultryTx_${batchId}`, JSON.stringify(txs));
+        // Also add initial feed stock if empty
+        const currentTxs = await api.getTransactions(batchId);
+        if (currentTxs.filter(t => t.category === 'feed').length === 0) {
+            await api.saveTransaction(batchId, { id: Date.now() + 999, date: new Date(now.getTime() - 65 * 86400000).toISOString(), type: 'purchase', category: 'feed', qty: 1000, amount: 70000, notes: 'Initial Feed' });
+        }
 
         batch.stats.birdsAlive = birdCount;
         updateBatch(batch);
@@ -1514,11 +1703,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (!date) { alert("Please select a date."); return; }
 
-        let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
+        let logs = await api.getLogs(batch.id);
+        const existingLog = logs.find(l => l.date === date);
+        const previousMortality = existingLog ? (parseInt(existingLog.mortality) || 0) : 0;
+        const mortalityDiff = mortality - previousMortality;
         
-        if (mortality > 0) {
-            batch.stats.birdsAlive = Math.max(0, batch.stats.birdsAlive - mortality);
-            batch.stats.totalMortality = (batch.stats.totalMortality || 0) + mortality;
+        if (mortalityDiff !== 0) {
+            batch.stats.birdsAlive = Math.max(0, batch.stats.birdsAlive - mortalityDiff);
+            batch.stats.totalMortality = (batch.stats.totalMortality || 0) + mortalityDiff;
             updateBatch(batch);
         }
 
@@ -1530,12 +1722,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             feed: feedGiven 
         };
 
-        const existingIdx = logs.findIndex(l => l.date === date);
-        if (existingIdx >= 0) logs[existingIdx] = newEntry;
-        else logs.unshift(newEntry);
-
-        logs = sackBackfill(logs, farmProfile.sackWeightKg);
-        localStorage.setItem(`poultryLogs_${batch.id}`, JSON.stringify(logs));
+        await api.saveLog(batch.id, newEntry);
 
         // Reset UI — preserve the date for consecutive same-day edits
         const savedDate = $('log-date').value;
@@ -1552,12 +1739,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         refreshCockpitData(batch);
     };
 
-    async function refreshCockpitData(batch) {
+    window.refreshCockpitData = async function(batch) {
         if (!batch) return;
-        let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
-        logs.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-        const kpis = computeKPIs(logs, batch.size, farmProfile);
+        const logs = await api.getLogs(batch.id);
+        const txs = await api.getTransactions(batch.id);
+        const healthLogs = await api.getHealthLogs(batch.id);
+        
+        const kpis = computeKPIs(logs, batch, farmProfile);
         
         // Update KPIs
         if($('kpi-layrate')) $('kpi-layrate').innerText = (kpis.todayLayRate * 100).toFixed(1) + '%';
@@ -1579,7 +1767,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if($('info-birds')) $('info-birds').innerText = kpis.currentBirds;
         if($('info-totaleggs')) $('info-totaleggs').innerText = kpis.totalEggs.toLocaleString();
 
-        const txs = await api.getTransactions(batchId || batch.id || currentBatchId || id);
         const revenue = txs.filter(t => t.type === 'sale').reduce((s, t) => s + parseFloat(t.amount || 0), 0);
         const expenses = txs.filter(t => t.type === 'purchase').reduce((s, t) => s + parseFloat(t.amount || 0), 0);
         const initialCash = (batch.assumptions && batch.assumptions.workingCapital) ? batch.assumptions.workingCapital : 0;
@@ -1680,27 +1867,46 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        const withdrawal = getActiveWithdrawal(batch.id);
+        const withdrawal = getActiveWithdrawal(healthLogs, logs);
         const discardContainer = $('info-discard-container');
         if (withdrawal.eggsUnderWithdrawal && discardContainer) {
             discardContainer.style.display = 'inline-flex';
             const daysLeft = Math.ceil((withdrawal.eggClearDate - new Date()) / 86400000);
-            $('info-discard').innerText = daysLeft + ' days';
+            $('info-discard').innerText = `${daysLeft} days (${withdrawal.discardedEggs.toLocaleString()} eggs)`;
         } else if (discardContainer) {
             discardContainer.style.display = 'none';
         }
 
-        updateCockpitAlerts(batch, kpis, currentInventory, breakEvenPrice, cashBalance, txs);
+        // Module 6a: Egg Inventory Aging
+        const inventoryAging = computeEggInventoryAging(logs, txs);
+        if($('info-unsoldeggs')) $('info-unsoldeggs').innerText = `(${inventoryAging.totalUnsold.toLocaleString()} in stock)`;
+        
+        const maxAgeDays = farmProfile.eggStorageType === 'refrigerated' ? 35 : 12;
+        const warningThreshold = maxAgeDays - 3;
+        const expiringEggs = inventoryAging.unsoldBatches
+            .filter(b => b.ageDays >= warningThreshold)
+            .reduce((sum, b) => sum + b.qty, 0);
+            
+        if($('info-shelflife-container')) {
+            if (expiringEggs > 0) {
+                $('info-shelflife-container').style.display = 'inline-flex';
+                $('info-shelflife-container').style.background = '#fef08a';
+                $('info-shelflife-container').style.borderColor = '#facc15';
+                $('info-shelflife').innerText = expiringEggs.toLocaleString() + ' eggs';
+                $('info-shelflife').style.color = '#854d0e';
+            } else {
+                $('info-shelflife-container').style.display = 'none';
+            }
+        }
+
+        updateCockpitAlerts(batch, kpis, currentInventory, breakEvenPrice, cashBalance, txs, healthLogs);
         renderCockpitChart(kpis.recent30);
         renderHistoryTable(logs, txs);
         renderCockpitTransactions(txs, initialCash);
-        renderHealthTable(batch.id);
+        await renderHealthTable(batch.id);
     }
 
-    function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash, txs) {
-        const tray = $('cockpit-alerts');
-        if (!tray) return;
-        tray.innerHTML = '';
+    function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash, txs, healthLogs) {
         const alerts = [];
         const t = farmProfile.alertThresholds;
 
@@ -1746,7 +1952,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (latestLog.co2 > 3000) alerts.push({ type: 'danger', icon: 'wind', text: `High CO₂ detected (${latestLog.co2} ppm). Limit is 3000 ppm!` });
         }
 
-        const withdrawal = getActiveWithdrawal(batch.id);
+        const withdrawal = getActiveWithdrawal(healthLogs);
         if (withdrawal.eggsUnderWithdrawal) {
             alerts.push({ type: 'danger', icon: 'alert-triangle', text: `⚠️ Eggs under withdrawal — discard until ${withdrawal.eggClearDate.toLocaleDateString()}` });
         }
@@ -1770,8 +1976,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 alerts.push({ type: 'info', icon: 'bone', text: `Skeletal check required: Monitor 'squat response' prior to Point of Lay.`});
             }
         }
-        const healthLogs = JSON.parse(localStorage.getItem(`poultryHealth_${batch.id}`) || '[]');
-        
         KENCHIC_SCHEDULE.forEach(vax => {
             const lastAdmin = healthLogs.filter(h => h.type === 'vaccine' && h.drug === vax.name)
                 .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
@@ -1795,17 +1999,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
-        if (alerts.length === 0) {
-            tray.innerHTML = `<div class="alert-item success"><i data-lucide="check-circle"></i> Systems optimal.</div>`;
-        } else {
-            alerts.forEach(a => {
-                const div = document.createElement('div');
-                div.className = `alert-item ${a.type}`;
-                div.innerHTML = `<i data-lucide="${a.icon}"></i> <span>${a.text}</span>`;
-                tray.appendChild(div);
-            });
-        }
-        lucide.createIcons();
+        updateGlobalNotifications(alerts);
     }
 
     async function renderCockpitChart(recentLogs) {
@@ -2026,15 +2220,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 preview.innerHTML = `<strong>Found ${records.length} days of data.</strong><br>First date: ${records[0].date}<br>Last date: ${records[records.length-1].date}`;
                 $('btn-confirm-import').disabled = false;
                 $('btn-confirm-import').onclick = async function() {
-                    let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
-                    // Merge logic: prefer CSV for the same date
-                    records.forEach(r => {
-                        const idx = logs.findIndex(l => l.date === r.date);
-                        if (idx >= 0) logs[idx] = { ...logs[idx], ...r };
-                        else logs.push(r);
-                    });
-                    logs = sackBackfill(logs, farmProfile.sackWeightKg);
-                    localStorage.setItem(`poultryLogs_${batchId}`, JSON.stringify(logs));
+                    for (const l of records) {
+                        await api.saveLog(batchId, l);
+                    }
                     document.body.removeChild(modal);
                     const batch = getBatches().find(b => b.id === batchId);
                     refreshCockpitData(batch);
@@ -2081,17 +2269,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             const eggsPerDay = Math.floor(totalEggs / days.length);
-            let logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
-            
-            days.forEach((d, i) => {
-                const idx = logs.findIndex(l => l.date === d);
+            for (const d of days) {
+                const i = days.indexOf(d);
                 const entry = { date: d, eggs: eggsPerDay, sacks: (i === days.length - 1 ? totalSacks : 0), feedGiven: 0 };
-                if (idx >= 0) logs[idx] = { ...logs[idx], ...entry };
-                else logs.push(entry);
-            });
-
-            logs = sackBackfill(logs, farmProfile.sackWeightKg);
-            localStorage.setItem(`poultryLogs_${batchId}`, JSON.stringify(logs));
+                await api.saveLog(batchId, entry);
+            }
             try { document.body.removeChild(modal); } catch(e){}
             const batch = getBatches().find(b => String(b.id) === String(batchId));
             if (batch) refreshCockpitData(batch);
@@ -2101,7 +2283,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Modal logic for transactions
     window.openTxModal = async function(type) {
-        const title = type === 'purchase' ? 'Log Purchase' : 'Log Sale';
+        const title = type === 'purchase' ? 'Log Purchase' : type === 'return' ? 'Log Egg Return' : 'Log Sale';
+        const bid = currentBatchId;
+        if (!bid) return;
+        const logs = await api.getLogs(bid);
+        const txs = await api.getTransactions(bid);
+        
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
         modal.id = 'tx-modal';
@@ -2111,6 +2298,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <option value="spent">Spent Layers</option>
             <option value="manure">Manure</option>
         `;
+        const returnOptions = `<option value="eggs">Rejected / Returned Eggs</option>`;
         const purchaseOptions = `
             <option value="chicks">Chicks (Initial Stock)</option>
             <option value="feed">Feed</option>
@@ -2129,7 +2317,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="input-group">
                         <label>Category</label>
                         <select id="tx-category">
-                            ${type === 'purchase' ? purchaseOptions : saleOptions}
+                            ${type === 'purchase' ? purchaseOptions : type === 'return' ? returnOptions : saleOptions}
                         </select>
                     </div>
                     <div class="input-grid" id="tx-dynamic-inputs" style="display:flex; flex-direction:column; gap:12px;">
@@ -2150,18 +2338,102 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const renderInputs = () => {
              const cat = $('tx-category').value;
-             let html = `<div class="input-group"><label>Total Amount (KES)</label><input type="number" id="tx-amount" required></div>`;
-             
+             let html = '';
              if (type === 'sale') {
                   if (cat === 'eggs') {
-                       html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"><div class="input-group"><label>Unit</label><select id="tx-unit"><option value="trays">Trays (30 pcs)</option><option value="pcs">Individual Eggs</option></select></div>`;
-                       html += `<div class="input-group"><label>Quantity</label><input type="number" id="tx-qty" value="1" required></div></div>`;
+                       const inventoryAging = computeEggInventoryAging(logs, txs);
+                       const oldestBatch = inventoryAging.unsoldBatches.length > 0 ? inventoryAging.unsoldBatches[0].ageDays : 0;
+                       
+                       const buyers = farmProfile.buyers || [];
+                       const buyerOptions = buyers.map(b => `<option value="${b.name}" data-terms="${b.terms}">${b.name} (${b.terms})</option>`).join('');
+                       const buyerSelectHtml = buyers.length > 0 ? `
+                            <div class="input-group">
+                                <label>Buyer / Customer</label>
+                                <select id="tx-buyer">
+                                    <option value="Walk-in Customer" data-terms="COD">Walk-in Customer (COD)</option>
+                                    ${buyerOptions}
+                                </select>
+                            </div>
+                       ` : `<input type="hidden" id="tx-buyer" value="Walk-in Customer">`;
+                       html += buyerSelectHtml;
+                       
+                       html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"><div class="input-group"><label>Unit</label><select id="tx-unit" onchange="window.checkCapacity()"><option value="trays">Trays (30 pcs)</option><option value="pcs">Individual Eggs</option></select></div>`;
+                       html += `<div class="input-group"><label>Quantity</label><input type="number" id="tx-qty" value="1" max="${Math.ceil(inventoryAging.totalUnsold / 30)}" required oninput="window.checkCapacity()"></div></div>`;
+                       
+                       html += `<div class="input-group"><label>Delivery Logistics</label><select id="tx-route" onchange="window.checkCapacity()"><option value="pickup">Farm Pickup</option><option value="keke">Keke / Tricycle Delivery</option><option value="saloon">Saloon Car Delivery</option></select></div>`;
+                       
+                       html += `<div id="tx-capacity-warning" style="display:none; font-size:12px; color:var(--text-muted); background:#fef3c7; padding:8px; border-radius:4px; border:1px solid #f59e0b; margin-bottom:16px;">
+                                   <div style="display:flex; align-items:center; gap:8px; color:#d97706; font-weight:bold; margin-bottom:4px;">
+                                       <i data-lucide="alert-triangle" style="width:14px; height:14px;"></i> Capacity Warning
+                                   </div>
+                                   <div id="tx-capacity-msg" style="color:#b45309;"></div>
+                                </div>`;
+                       
+                       html += `
+                        <script>
+                            window.checkCapacity = function() {
+                                const route = document.getElementById('tx-route');
+                                const qty = document.getElementById('tx-qty');
+                                const unit = document.getElementById('tx-unit');
+                                const warningBox = document.getElementById('tx-capacity-warning');
+                                const msgBox = document.getElementById('tx-capacity-msg');
+                                
+                                if (!route || !qty || !unit || !warningBox || !msgBox) return;
+                                
+                                const rVal = route.value;
+                                const qVal = parseFloat(qty.value) || 0;
+                                const uVal = unit.value;
+                                
+                                let trays = uVal === 'trays' ? qVal : qVal / 30;
+                                
+                                if (rVal === 'keke' && trays > 50) {
+                                    msgBox.innerText = 'A Tricycle can safely carry a maximum of ~50 trays. ' + Math.ceil(trays) + ' trays exceeds safe limits and risks breakage.';
+                                    warningBox.style.display = 'block';
+                                } else if (rVal === 'saloon' && trays > 200) {
+                                    msgBox.innerText = 'A Saloon Car can safely carry a maximum of ~200 trays. ' + Math.ceil(trays) + ' trays exceeds safe limits and risks breakage.';
+                                    warningBox.style.display = 'block';
+                                } else {
+                                    warningBox.style.display = 'none';
+                                }
+                            };
+                            setTimeout(window.checkCapacity, 50);
+                        </script>`;
+                       
+                       html += `<div style="font-size:12px; color:var(--text-muted); background:var(--bg-main); padding:8px; border-radius:4px; border:1px solid var(--border-color); display:flex; align-items:center; gap:8px;">
+                                   <i data-lucide="layers" style="width:14px; height:14px; color:var(--primary);"></i> 
+                                   <div><strong>FIFO Dispatch Active:</strong> You have ${inventoryAging.totalUnsold.toLocaleString()} eggs in stock. Sales will automatically deduct from the oldest stock first (oldest is ${oldestBatch} days old).</div>
+                                </div>`;
                   } else if (cat === 'manure') {
                        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"><div class="input-group"><label>Unit</label><select id="tx-unit"><option value="bags">50kg Bags</option><option value="wb">Wheelbarrows</option></select></div>`;
                        html += `<div class="input-group"><label>Quantity</label><input type="number" id="tx-qty" value="1" required></div></div>`;
                   } else if (cat === 'spent') {
                        html += `<div class="input-group"><label>Birds Sold</label><input type="number" id="tx-qty" value="1" required></div>`;
                   }
+             } else if (type === 'return') {
+                   html = `<div class="input-group"><label>Refund Amount (KES)</label><input type="number" id="tx-amount" value="0" required></div>`;
+                   html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"><div class="input-group"><label>Unit</label><select id="tx-unit"><option value="trays">Trays (30 pcs)</option><option value="pcs">Individual Eggs</option></select></div>`;
+                   html += `<div class="input-group"><label>Quantity Returned</label><input type="number" id="tx-qty" value="1" required></div></div>`;
+                   
+                   html += `<div class="input-group"><label>Defect Type</label><select id="tx-defect" onchange="
+                      const val = this.value;
+                      const r = document.getElementById('tx-root-cause');
+                      if(!r) return;
+                      if(val === 'pale') r.innerText = 'Infectious Bronchitis (IB) or older birds (>72 wks)';
+                      else if(val === 'crack') r.innerText = 'Mechanical damage — rough handling or overcrowding';
+                      else if(val === 'dirty') r.innerText = 'Wet litter, poor gut health, or infrequent collection';
+                      else if(val === 'thin') r.innerText = 'Ca / Vitamin D3 deficiency or heat stress';
+                      else r.innerText = 'Unknown';
+                   ">
+                       <option value="pale">Pale Shells</option>
+                       <option value="crack">Hairline / Star Cracks</option>
+                       <option value="dirty">Dirty / Stained Shells</option>
+                       <option value="thin">Thin Shells</option>
+                   </select></div>`;
+                   
+                   html += `<div style="font-size:12px; color:var(--text-muted); background:#fee2e2; padding:8px; border-radius:4px; border:1px solid #fca5a5; display:flex; align-items:center; gap:8px;">
+                               <i data-lucide="microscope" style="width:14px; height:14px; color:#dc2626;"></i> 
+                               <div><strong>Likely Root Cause:</strong> <span id="tx-root-cause">Infectious Bronchitis (IB) or older birds (>72 wks)</span></div>
+                            </div>`;
              } else {
                   if (cat === 'feed') {
                        html += `<div class="input-group"><label>Quantity (kg)</label><input type="number" id="tx-qty" required></div>`;
@@ -2171,7 +2443,40 @@ document.addEventListener('DOMContentLoaded', async () => {
                        html += `<div class="input-group"><label>Billing Month</label><input type="month" id="tx-billing-month"></div>`;
                   }
              }
+
+             if (type !== 'return') {
+                  if (cat === 'feed') {
+                      html += `
+                        <div class="input-group">
+                            <label>Purchase Amount (KES)</label>
+                            <input type="number" id="tx-amount" required>
+                            <span style="font-size:11px; color:var(--text-muted);">Auto-calculated based on ${farmProfile.defaultFeedPrice} KES per ${farmProfile.sackWeightKg}kg bag. You can override this.</span>
+                        </div>
+                        <div class="input-group">
+                            <label>Delivery Fee (Optional KES)</label>
+                            <input type="number" id="tx-delivery" value="0">
+                        </div>
+                        <script>
+                            document.getElementById('tx-qty').addEventListener('input', function() {
+                                const amtEl = document.getElementById('tx-amount');
+                                if (amtEl && this.value) {
+                                    amtEl.value = Math.round((parseFloat(this.value) / ${farmProfile.sackWeightKg}) * ${farmProfile.defaultFeedPrice});
+                                } else if (amtEl) {
+                                    amtEl.value = '';
+                                }
+                            });
+                        </script>`;
+                  } else {
+                      html += `<div class="input-group"><label>Total Amount (KES)</label><input type="number" id="tx-amount" required></div>`;
+                  }
+             }
              $('tx-dynamic-inputs').innerHTML = html;
+             
+             // Eval script tags if any were injected (for the feed qty listener)
+             const scripts = $('tx-dynamic-inputs').getElementsByTagName('script');
+             for (let i = 0; i < scripts.length; i++) {
+                 eval(scripts[i].innerText);
+             }
         };
 
         $('tx-category').addEventListener('change', renderInputs);
@@ -2179,42 +2484,74 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         $('tx-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const bid = window.currentBatchId || (typeof batchId !== 'undefined' ? batchId : null);
+            const bid = currentBatchId;
             if (!bid) { alert("Batch context missing."); return; }
 
             const txs = await api.getTransactions(bid);
             const amount = parseFloat($('tx-amount').value);
+            const deliveryFee = $('tx-delivery') ? parseFloat($('tx-delivery').value) || 0 : 0;
             let rawQty = parseFloat($('tx-qty') ? $('tx-qty').value : 0);
             let unit = $('tx-unit') ? $('tx-unit').value : null;
             let farmhandName = $('tx-farmhand') ? $('tx-farmhand').value : null;
             let billingMonth = $('tx-billing-month') ? $('tx-billing-month').value : null;
+            let buyerName = $('tx-buyer') ? $('tx-buyer').value : null;
+            let route = $('tx-route') ? $('tx-route').value : null;
+            let defectType = $('tx-defect') ? $('tx-defect').value : null;
+            let buyerTerms = 'COD';
+            if ($('tx-buyer') && $('tx-buyer').options && $('tx-buyer').type === 'select-one') {
+                const selectedOpt = $('tx-buyer').options[$('tx-buyer').selectedIndex];
+                if (selectedOpt) buyerTerms = selectedOpt.getAttribute('data-terms');
+            }
+            
             let normalizedQty = rawQty;
 
-            if (type === 'sale' && $('tx-category').value === 'eggs' && unit === 'trays') {
+            if ((type === 'sale' || type === 'return') && $('tx-category').value === 'eggs' && unit === 'trays') {
                 normalizedQty = rawQty * 30; // convert to individual eggs
             }
 
             const newTx = {
-                id: Date.now(),
-                type,
+                id: Date.now().toString(),
+                type: type, // 'sale', 'purchase', 'return'
                 category: $('tx-category').value,
-                amount,
+                amount: amount,
+                deliveryFee: deliveryFee,
                 qty: normalizedQty,
                 rawUnit: unit,
                 rawQty: rawQty,
                 farmhandName,
                 billingMonth,
+                buyerName,
+                buyerTerms,
+                route,
+                defectType,
+                status: (buyerTerms && buyerTerms !== 'COD' && type === 'sale') ? 'unpaid' : 'paid',
                 unitPrice: normalizedQty > 0 ? (amount / normalizedQty) : 0,
                 notes: $('tx-notes') ? $('tx-notes').value.trim() : '',
                 date: new Date().toISOString()
             };
             
-            txs.unshift(newTx);
-            localStorage.setItem(`poultryTx_${bid}`, JSON.stringify(txs));
             await api.saveTransaction(bid, newTx);
             
-            document.body.removeChild(modal);
             const batch = getBatches().find(b => String(b.id) === String(bid));
+            
+            // Handle Spent Layers reduction
+            if (type === 'sale' && $('tx-category').value === 'spent' && rawQty > 0 && batch) {
+                batch.stats.birdsAlive = Math.max(0, batch.stats.birdsAlive - rawQty);
+                batch.stats.totalSold = (batch.stats.totalSold || 0) + rawQty;
+                await updateBatch(batch);
+            }
+            
+            // Handle feed price learning
+            if (type === 'purchase' && $('tx-category').value === 'feed' && rawQty > 0 && amount > 0) {
+                const impliedBagPrice = (amount / rawQty) * farmProfile.sackWeightKg;
+                if (Math.abs(impliedBagPrice - farmProfile.defaultFeedPrice) > 1) {
+                    farmProfile.defaultFeedPrice = Math.round(impliedBagPrice);
+                    saveFarmProfile(farmProfile);
+                    console.log("Farm profile default feed price updated to: " + farmProfile.defaultFeedPrice);
+                }
+            }
+            
+            document.body.removeChild(modal);
             if (batch) refreshCockpitData(batch);
         });
     }
@@ -2228,10 +2565,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const batchIndex = batches.findIndex(b => b.id === id);
         const batch = batches[batchIndex];
         
-        const logs = await api.getLogs(batchId || batch.id || currentBatchId || id);
-        const txs = await api.getTransactions(batchId || batch.id || currentBatchId || id);
+        const logs = await api.getLogs(id);
+        const txs = await api.getTransactions(id);
 
-        const kpis = computeKPIs(logs, batch.size, farmProfile);
+        const kpis = computeKPIs(logs, batch, farmProfile);
         
         const feedTxs = txs.filter(t => t.category.toLowerCase() === 'feed');
         const avgFeedPrice = feedTxs.length > 0 ? (feedTxs.reduce((sum, t) => sum + t.amount, 0) / feedTxs.reduce((sum, t) => sum + t.qty, 0)) : farmProfile.defaultFeedPrice / farmProfile.sackWeightKg;
@@ -2260,13 +2597,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateAggregates(batch, logs, txs, kpis);
 
         // Save Snapshot
-        const snapshots = await api.getSnapshots();
-        snapshots.unshift(snapshot);
-        localStorage.setItem('poultrySnapshots', JSON.stringify(snapshots));
+        await api.saveSnapshot(snapshot);
 
         // Mark Batch as Completed
         batch.status = 'completed';
-        localStorage.setItem('poultryBatches', JSON.stringify(batches));
+        await api.saveBatch(batch);
 
         switchView('batches');
         alert('Batch completed! Success snapshot and farm aggregates updated.');
@@ -2293,7 +2628,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     $('btn-clear-all')?.addEventListener('click', async () => {
         if (confirm('Delete all saved proposals?')) {
-            localStorage.removeItem('poultryProposals');
+            const proposals = await api.getProposals();
+            for (const p of proposals) {
+                await api.deleteProposal(p.id);
+            }
             refreshDashboard();
             renderAnalytics();
         }
@@ -2398,6 +2736,43 @@ document.addEventListener('DOMContentLoaded', async () => {
             dropNotifications.style.display = 'none';
         }
     });
+
+    window.updateGlobalNotifications = function(alerts) {
+        const badge = $('notification-badge');
+        const container = $('notifications-dropdown');
+        if (!container) return;
+
+        // Header for notifications
+        let html = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                <h4 style="margin:0; color:var(--text-dark);">Notifications (${alerts.length})</h4>
+            </div>
+        `;
+
+        if (alerts.length === 0) {
+            html += `<p style="margin:0; font-size:13px; color:var(--text-muted); text-align:center; padding:12px 0;">No new alerts for your active batches.</p>`;
+            if (badge) badge.style.display = 'none';
+        } else {
+            alerts.forEach(a => {
+                html += `
+                    <div class="notification-item ${a.type}">
+                        <i data-lucide="${a.icon}"></i>
+                        <div>
+                            <div style="font-weight: 500;">${a.text}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            if (badge) {
+                badge.style.display = 'block';
+                badge.innerText = ''; // Or alerts.length if we want a number
+            }
+        }
+
+        container.innerHTML = html;
+        lucide.createIcons();
+    };
+
 
     // ===================== ANALYTICS =====================
     let _capexChartInstance = null;
@@ -2544,7 +2919,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // ===================== SETTINGS & BATCH LEARNING (§5.1/5.2) =====================
+    // ===================== SETTINGS & CRM & BATCH LEARNING (§5.1/5.2) =====================
+    function renderBuyersList() {
+        const list = $('buyers-list');
+        if (!list) return;
+        const buyers = farmProfile.buyers || [];
+        if (buyers.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">No buyers added yet.</p>';
+            return;
+        }
+        list.innerHTML = buyers.map((b, i) => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border-color); font-size:13px;">
+                <div><strong>${b.name}</strong> <span style="color:var(--text-muted); margin-left:8px;">(${b.terms})</span></div>
+                <button type="button" class="btn btn-sm" style="color:var(--danger); padding:2px 6px;" onclick="removeBuyer(${i})"><i data-lucide="trash-2" style="width:14px; height:14px;"></i></button>
+            </div>
+        `).join('');
+        lucide.createIcons();
+    }
+    
+    window.removeBuyer = function(idx) {
+        if (!confirm('Remove this buyer?')) return;
+        farmProfile.buyers.splice(idx, 1);
+        saveFarmProfile(farmProfile);
+        renderBuyersList();
+    };
+    
+    $('add-buyer-form')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (!farmProfile.buyers) farmProfile.buyers = [];
+        farmProfile.buyers.push({
+            name: $('buyer-name').value,
+            terms: $('buyer-terms').value
+        });
+        saveFarmProfile(farmProfile);
+        renderBuyersList();
+        $('add-buyer-form').reset();
+    });
+
     function loadSettingsForm() {
         const p = farmProfile;
         $('set-flock-size').value = p.flockSize;
@@ -2554,6 +2965,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('set-max-fc').value = p.alertThresholds.maxFeedConversion;
         $('set-low-inv').value = p.alertThresholds.lowInventoryDays;
         $('set-prod-drop').value = p.alertThresholds.productionDropPercent;
+        if($('set-storage-type')) $('set-storage-type').value = p.eggStorageType || 'room';
+        renderBuyersList();
     }
 
     $('settings-form')?.addEventListener('submit', (e) => {
@@ -2565,22 +2978,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         farmProfile.alertThresholds.maxFeedConversion = parseFloat($('set-max-fc').value);
         farmProfile.alertThresholds.lowInventoryDays = parseInt($('set-low-inv').value);
         farmProfile.alertThresholds.productionDropPercent = parseInt($('set-prod-drop').value);
+        if($('set-storage-type')) farmProfile.eggStorageType = $('set-storage-type').value;
         
         saveFarmProfile(farmProfile);
         alert('Farm profile updated successfully!');
     });
 
     $('btn-export-data')?.addEventListener('click', async () => {
-        const keys = ['poultryFarmProfile', 'poultryAggregates', 'poultryProposals', 'poultryBatches', 'poultrySnapshots'];
-        const data = {};
-        keys.forEach(k => data[k] = JSON.parse(localStorage.getItem(k) || 'null'));
+        const data = {
+            poultryFarmProfile: await api.getEntity('poultryFarmProfile', null),
+            poultryAggregates: await api.getEntity('poultryAggregates', null),
+            poultryProposals: await api.getProposals(),
+            poultryBatches: await api.getBatches(),
+            poultrySnapshots: await api.getSnapshots()
+        };
         
         // Find all logs and transactions
         const batches = data.poultryBatches || [];
-        batches.forEach(b => {
-            data[`poultryLogs_${b.id}`] = JSON.parse(localStorage.getItem(`poultryLogs_${b.id}`) || 'null');
-            data[`poultryTx_${b.id}`] = JSON.parse(localStorage.getItem(`poultryTx_${b.id}`) || 'null');
-        });
+        for (const b of batches) {
+            data[`poultryLogs_${b.id}`] = await api.getLogs(b.id);
+            data[`poultryTx_${b.id}`] = await api.getTransactions(b.id);
+            data[`poultryHealth_${b.id}`] = await api.getHealthLogs(b.id);
+        }
 
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -2663,6 +3082,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <input type="text" id="h-dosage" placeholder="e.g. 1 vial / 200L water" required class="input-md">
                     </div>
                     <div class="input-group">
+                        <label>Route of Administration</label>
+                        <select id="h-route" required class="input-md">
+                            <option value="Drinking Water">Drinking Water</option>
+                            <option value="Intramuscular">Intramuscular Injection</option>
+                            <option value="Subcutaneous">Subcutaneous Injection</option>
+                            <option value="Eye Drop">Eye Drop</option>
+                            <option value="Spray">Spray</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
                         <label>Administrator / Vet</label>
                         <input type="text" id="h-admin" placeholder="Name" required class="input-md">
                     </div>
@@ -2685,32 +3114,31 @@ document.addEventListener('DOMContentLoaded', async () => {
             $('h-name-other-group').style.display = e.target.value === 'Other' ? 'block' : 'none';
         });
 
-        $('health-form').addEventListener('submit', (e) => {
+        $('health-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             let drugName = $('h-name').value;
             if (drugName === 'Other') drugName = $('h-name-other').value || 'Unknown';
             
-            const logs = JSON.parse(localStorage.getItem(`poultryHealth_${currentBatchId}`) || '[]');
-            logs.unshift({
+            await api.saveHealthLog(currentBatchId, {
                 id: Date.now(),
                 type: type,
                 date: $('h-date').value,
                 drug: drugName,
                 dosage: $('h-dosage').value,
+                route: $('h-route').value,
                 admin: $('h-admin').value,
                 offLabel: $('h-offlabel') ? $('h-offlabel').checked : false
             });
-            localStorage.setItem(`poultryHealth_${currentBatchId}`, JSON.stringify(logs));
             document.body.removeChild(modal);
             const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
             if (batch) refreshCockpitData(batch);
         });
     };
 
-    window.renderHealthTable = function(batchId) {
+    window.renderHealthTable = async function(batchId) {
         const container = $('health-log-table');
         if (!container) return;
-        const logs = JSON.parse(localStorage.getItem(`poultryHealth_${batchId}`) || '[]');
+        const logs = await api.getHealthLogs(batchId);
         
         container.innerHTML = logs.length === 0 ? '<p style="text-align:center; padding:20px; color:var(--text-muted);">No health records yet.</p>' : `
             <table style="width:100%; border-collapse:collapse;">
@@ -2733,7 +3161,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 <strong>${l.drug}</strong>
                                 ${l.offLabel ? '<span style="color:#dc2626; font-size:10px; margin-left:4px;">(Off-label)</span>' : ''}
                             </td>
-                            <td style="padding:8px 12px;">${l.dosage}</td>
+                            <td style="padding:8px 12px;">
+                                <div style="margin-bottom:4px;">${l.dosage}</div>
+                                <span class="pill" style="background:var(--border-color); color:var(--text-muted); font-size:10px;">${l.route || 'Unknown'}</span>
+                            </td>
                             <td style="padding:8px 12px; color:var(--text-muted);">${l.admin}</td>
                         </tr>`;
                     }).join('')}
@@ -2742,6 +3173,161 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
         lucide.createIcons();
     };
+
+    window.openCleanoutSOP = function(batchId) {
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay active';
+        modal.innerHTML = `
+            <div class="modal-content card" style="max-width:500px; padding:24px; position:relative;">
+                <button type="button" class="btn btn-secondary btn-sm" style="position:absolute; top:16px; right:16px;" onclick="document.body.removeChild(this.closest('.modal-overlay'))"><i data-lucide="x" style="width:14px;height:14px;"></i></button>
+                <h3>House Cleanout SOP</h3>
+                <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">Complete this biosecurity checklist before starting a new flock in this house.</p>
+                <form id="sop-form" style="display:flex; flex-direction:column; gap:16px;">
+                    <div style="border:1px solid var(--border-color); padding:12px; border-radius:8px;">
+                        <h4 style="margin:0 0 8px 0; font-size:14px;">Phase 1: Preparation</h4>
+                        <label style="display:flex; gap:8px; font-size:13px; margin-bottom:4px; cursor:pointer;">
+                            <input type="checkbox" required> Removed all equipment (feeders, drinkers)
+                        </label>
+                        <label style="display:flex; gap:8px; font-size:13px; cursor:pointer;">
+                            <input type="checkbox" required> Dampened surfaces to minimize airborne dust
+                        </label>
+                    </div>
+                    <div style="border:1px solid var(--border-color); padding:12px; border-radius:8px;">
+                        <h4 style="margin:0 0 8px 0; font-size:14px;">Phase 2: Litter Disposal</h4>
+                        <label style="display:flex; gap:8px; font-size:13px; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" required> Old litter disposed ≥ 1.5 km from house
+                        </label>
+                        <div class="input-grid">
+                            <div class="input-group">
+                                <label>Disposal Date</label>
+                                <input type="date" id="sop-disp-date" required class="input-md" value="${new Date().toISOString().split('T')[0]}">
+                            </div>
+                            <div class="input-group">
+                                <label>Disposal Site</label>
+                                <input type="text" id="sop-disp-site" required class="input-md" placeholder="e.g. Farm edge field">
+                            </div>
+                        </div>
+                    </div>
+                    <div style="border:1px solid var(--border-color); padding:12px; border-radius:8px;">
+                        <h4 style="margin:0 0 8px 0; font-size:14px;">Phase 3: Wash & Disinfect</h4>
+                        <label style="display:flex; gap:8px; font-size:13px; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" required> Top-down wash with soap, dried, then disinfected
+                        </label>
+                        <div class="input-group">
+                            <label>Products Used</label>
+                            <input type="text" id="sop-products" required class="input-md" placeholder="e.g. Omo, Virocid">
+                        </div>
+                    </div>
+                    <div style="border:1px solid var(--border-color); padding:12px; border-radius:8px;">
+                        <h4 style="margin:0 0 8px 0; font-size:14px;">Phase 4: Fresh Litter</h4>
+                        <label style="display:flex; gap:8px; font-size:13px; margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" required> Laid 4 inches (10cm) of fresh, dry litter
+                        </label>
+                        <div class="input-grid">
+                            <div class="input-group">
+                                <label>Litter Type</label>
+                                <select id="sop-litter-type" class="input-md" required>
+                                    <option value="Wood Shavings">Wood Shavings</option>
+                                    <option value="Rice Hulls">Rice Hulls</option>
+                                </select>
+                            </div>
+                            <div class="input-group">
+                                <label>Litter Source</label>
+                                <input type="text" id="sop-litter-src" required class="input-md" placeholder="e.g. Kitale Timber Mill">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" style="margin-top:8px;">Submit Audit Log</button>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        lucide.createIcons();
+        
+        $('sop-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const batch = getBatches().find(b => String(b.id) === String(batchId));
+            if (!batch) return;
+            
+            batch.cleanoutSOP = {
+                date: new Date().toISOString(),
+                disposalDate: $('sop-disp-date').value,
+                disposalSite: $('sop-disp-site').value,
+                productsUsed: $('sop-products').value,
+                litterType: $('sop-litter-type').value,
+                litterSource: $('sop-litter-src').value
+            };
+            
+            await updateBatch(batch);
+            document.body.removeChild(modal);
+            refreshBatches();
+        });
+    };
+
+    window.showConfirmModal = function(message, onConfirm) {
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay active';
+        modal.innerHTML = `
+            <div class="modal-content card" style="max-width:400px; text-align:center; padding:32px;">
+                <div style="width:64px; height:64px; background:#fee2e2; color:#dc2626; border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto 20px;">
+                    <i data-lucide="alert-triangle" style="width:32px; height:32px;"></i>
+                </div>
+                <h3 style="margin-bottom:12px;">Confirm Action</h3>
+                <p style="font-size:14px; color:var(--text-muted); margin-bottom:28px;">${message}</p>
+                <div style="display:flex; gap:12px; justify-content:center;">
+                    <button class="btn btn-secondary" onclick="document.body.removeChild(this.closest('.modal-overlay'))">Cancel</button>
+                    <button class="btn btn-primary" id="modal-confirm-btn" style="background:var(--danger);">Delete Forever</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        lucide.createIcons();
+        
+        $('modal-confirm-btn').onclick = () => {
+            document.body.removeChild(modal);
+            onConfirm();
+        };
+    };
+
+    window.deleteBatchUI = async function(id) {
+        console.log('Attempting to delete batch:', id);
+        window.showConfirmModal('Are you sure you want to delete this batch and all its records? This cannot be undone.', async () => {
+            try {
+                await api.deleteBatch(id);
+                console.log('Batch deleted from API');
+                await window.syncBatches();
+                await window.refreshBatches();
+            } catch (err) {
+                console.error('Error deleting batch:', err);
+            }
+        });
+    };
+
+    window.clearAllBatchesUI = async function() {
+        console.log('Attempting to clear all batches...');
+        const batches = await api.getBatches();
+        if (batches.length === 0) {
+            console.log('No batches to clear.');
+            return;
+        }
+        
+        window.showConfirmModal(`Are you sure you want to delete ALL ${batches.length} active batches? This cannot be undone.`, async () => {
+            try {
+                for (const b of batches) {
+                    console.log('Deleting batch:', b.id);
+                    await api.deleteBatch(b.id);
+                }
+                console.log('All batches deleted from API');
+                await window.syncBatches();
+                await window.refreshBatches();
+            } catch (err) {
+                console.error('Error clearing batches:', err);
+            }
+        });
+    };
+
+    $('btn-clear-all-batches')?.addEventListener('click', () => { window.clearAllBatchesUI(); });
 
     // ===================== INIT =====================
     document.querySelectorAll('input[type="number"]').forEach(input => {

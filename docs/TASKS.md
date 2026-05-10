@@ -43,13 +43,13 @@
 
 ## Module 3 — Health & Immunization Architecture
 
-- `[ ]` **Vaccination record schema** — every event must capture: date, vaccine name, dosage, batch number, administrator, route of administration
-- `[ ]` **Kenchic vaccination schedule enforcer** — hardcode and track the mandatory schedule:
+- `[x]` **Vaccination record schema** — every event must capture: date, vaccine name, dosage, batch number, administrator, route of administration
+- `[x]` **Kenchic vaccination schedule enforcer** — hardcode and track the mandatory schedule:
   - Gumboro (IBD)
   - Newcastle HB1 / Lasota (booster every 2–3 months)
   - Fowl Pox
-- `[ ]` **Booster alert engine** — auto-calculate next-due dates from last administration; notify at T-7 days
-- `[ ]` **Medicine withdrawal period tracker** — flag eggs/meat as "under withdrawal" and auto-clear on expiry:
+- `[x]` **Booster alert engine** — auto-calculate next-due dates from last administration; notify at T-7 days
+- `[x]` **Medicine withdrawal period tracker** — flag eggs/meat as "under withdrawal" and auto-clear on expiry:
 
   | Drug            | Egg Withdrawal (days) | Meat Withdrawal (days) |
   |-----------------|-----------------------|------------------------|
@@ -59,8 +59,8 @@
   | Tylosin         | 3                     | 1                      |
   | Levamisole      | 7–14                  | 7–14                   |
 
-- `[ ]` **Off-label drug override** — when a drug is administered off-label, enforce minimum 14-day egg withdrawal and 28-day meat withdrawal, overriding label defaults
-- `[ ]` **Food safety discard log** — maintain a visible "eggs under discard" counter on the cockpit dashboard until withdrawal clears
+- `[x]` **Off-label drug override** — when a drug is administered off-label, enforce minimum 14-day egg withdrawal and 28-day meat withdrawal, overriding label defaults
+- `[x]` **Food safety discard log** — maintain a visible "eggs under discard" counter on the cockpit dashboard until withdrawal clears
 
 ---
 
@@ -83,13 +83,13 @@
 
 ## Module 5 — End-of-Cycle House Cleanout SOPs
 
-- `[ ]` **14-day downtime enforcer** — prevent a new batch from being created until the mandatory 14-day inter-flock downtime has elapsed from the previous batch's close date
-- `[ ]` **Guided cleanout checklist** — step-by-step SOP wizard with completion checkboxes:
-  - `[ ]` **Phase 1** — Remove all equipment; dampen surfaces to minimize airborne dust
-  - `[ ]` **Phase 2** — Dispose of old litter ≥ 1.5 km from the house; log disposal date and site
-  - `[ ]` **Phase 3** — Top-down wash with soap → dry → broad-spectrum disinfectant spray; log products used and batch numbers
-  - `[ ]` **Phase 4** — Lay 4 inches (≈10 cm) of fresh, dry litter (wood shavings or rice hulls); confirm litter type and source
-- `[ ]` **Cleanout audit log** — persist completed SOP records per batch for veterinary/food safety inspection readiness
+- `[x]` **14-day downtime enforcer** — prevent a new batch from being created until the mandatory 14-day inter-flock downtime has elapsed from the previous batch's close date
+- `[x]` **Guided cleanout checklist** — step-by-step SOP wizard with completion checkboxes:
+  - `[x]` **Phase 1** — Remove all equipment; dampen surfaces to minimize airborne dust
+  - `[x]` **Phase 2** — Dispose of old litter ≥ 1.5 km from the house; log disposal date and site
+  - `[x]` **Phase 3** — Top-down wash with soap → dry → broad-spectrum disinfectant spray; log products used and batch numbers
+  - `[x]` **Phase 4** — Lay 4 inches (≈10 cm) of fresh, dry litter (wood shavings or rice hulls); confirm litter type and source
+- `[x]` **Cleanout audit log** — persist completed SOP records per batch for veterinary/food safety inspection readiness
 
 ---
 
@@ -97,21 +97,21 @@
 
 ### 6a — Egg Storage & Shelf-Life Tracking
 
-- `[ ]` **Storage environment targets** — store and surface recommended ranges: 10–15 °C, 70–80% RH
-- `[ ]` **Shelf-life clock per tray** — on egg collection entry, timestamp each tray and compute remaining freshness:
+- `[x]` **Storage environment targets** — store and surface recommended ranges: 10–15 °C, 70–80% RH
+- `[x]` **Shelf-life clock per tray** — on egg collection entry, timestamp each tray and compute remaining freshness:
   - Room temp (28 °C): 10–12 days
   - Refrigerated: 4–5 weeks
-- `[ ]` **14-day flag** — auto-flag any tray reaching 14 days without dispatch as "approaching expiry"
-- `[ ]` **FIFO dispatch logic** — enforce First In, First Out ordering in allocation to delivery orders; warn when newer stock is being dispatched ahead of older
+- `[x]` **14-day flag** — auto-flag any tray reaching 14 days without dispatch as "approaching expiry"
+- `[x]` **FIFO dispatch logic** — enforce First In, First Out ordering in allocation to delivery orders; warn when newer stock is being dispatched ahead of older
 
 ### 6b — Delivery & Buyer Management
 
-- `[ ]` **Route logging module** — log delivery routes with vehicle type (Keke/tricycle, saloon car); note capacity constraints (e.g., Lexus 300 ≈ 200+ crates)
-- `[ ]` **Buyer registry** — maintain buyer profiles with payment terms:
+- `[x]` **Route logging module** — log delivery routes with vehicle type (Keke/tricycle, saloon car); note capacity constraints (e.g., Lexus 300 ≈ 200+ crates)
+- `[x]` **Buyer registry** — maintain buyer profiles with payment terms:
   - Cash on Delivery (COD) — common in open-air markets
   - Credit: Net 7, Net 14, Net 30 — required by hotels (e.g., Banoli Farm) and schools
-- `[ ]` **Accounts receivable tracker** — log outstanding credit invoices, due dates, and payment receipt; surface overdue balances on cockpit
-- `[ ]` **Rejection analysis module** — when eggs are returned, prompt for defect type and auto-suggest root cause:
+- `[x]` **Accounts receivable tracker** — log outstanding credit invoices, due dates, and payment receipt; surface overdue balances on cockpit
+- `[x]` **Rejection analysis module** — when eggs are returned, prompt for defect type and auto-suggest root cause:
 
   | Defect                 | Likely Root Cause                                     |
   |------------------------|-------------------------------------------------------|
@@ -132,8 +132,20 @@
 
 ---
 
+## Module 8 — End-to-End Visual Validation
+
+- `[x]` **Test Module 1** — Verify Biological Foundations (liveability constants, growth-delay warnings, and skeletal check prompts in the UI)
+- `[x]` **Test Module 2** — Verify Environmental Engineering (Kitale seasonal engine, humidity disease alerts, and evening curtain reminders)
+- `[x]` **Test Module 3** — Verify Health & Immunization (vaccination schedules, booster alerts, medication withdrawals, and the food safety discard log)
+- `[x]` **Test Module 4** — Verify Expense Tracking (profit margin calculator, feed budgets, and logging of labor/utility costs)
+- `[x]` **Test Module 5** — Verify End-of-Cycle SOPs (14-day downtime enforcer, cleanout wizard phases, and audit logging)
+- `[x]` **Test Module 6a** — Verify Egg Storage & Shelf-Life Tracking (FIFO aging engine, 14-day expiry warnings)
+- `[x]` **Test Module 6b** — Verify Delivery & CRM (route logging, buyer registry, accounts receivable dashboard, and rejection analysis)
+
+---
+
 ## Existing Backlog (from HANDOVER.md — carry forward)
 
 - `[ ]` **Date input edge case fix** — hook `blur()` on "Save Log" click before reading `.value` to force browser date parser commit (Safari compatibility)
-- `[ ]` **Historical table pagination** — cap `renderHistoryTable()` at 30 rows, add "Load More" trigger; prevents DOM memory lag over 500-day layer cycles
+- `[x]` **Historical table pagination** — cap `renderHistoryTable()` at 30 rows, add "Load More" trigger; prevents DOM memory lag over 500-day layer cycles
 - `[ ]` **Batch Learning engine** — query finished "Snapshot" batch datasets from SQLite; compute `avgDailyFeedPerBird` and peak mortality periods to auto-adjust financial proposal inputs for subsequent batches
