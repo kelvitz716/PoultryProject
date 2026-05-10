@@ -1406,8 +1406,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <button class="btn btn-secondary btn-sm" onclick="markLitterChanged()">
                             <i data-lucide="leaf" style="width:14px; height:14px;"></i> Litter Done
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="window.simulateLifecycle(${batch.id})" style="border-color:var(--accent); color:var(--text-dark);">
+                        <button class="btn btn-secondary btn-sm" onclick="window.simulateLifecycle(${batch.id})" style="border-color:var(--accent); color:var(--text-dark); position:relative;">
                             <i data-lucide="zap" style="width:14px; height:14px; color:var(--accent);"></i> Skip 60d
+                            <sup style="font-size:9px; font-weight:700; color:var(--accent); letter-spacing:0.5px; margin-left:2px;">[Dev]</sup>
                         </button>
                         <button class="btn btn-primary btn-sm" onclick="window.finishBatch(${batch.id})" style="margin-left:8px;">
                             <i data-lucide="flag" style="width:14px; height:14px;"></i> Snapshot
@@ -1594,7 +1595,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
     window.simulateLifecycle = async function(batchId) {
-        const batch = getBatches().find(b => b.id === batchId);
+        const batch = getBatches().find(b => String(b.id) === String(batchId));
         if (!batch) return;
 
         const confirmSim = confirm("This will simulate 60 days of chronologically accurate data (30 days Rearing + 30 days Laying). Proceed?");
@@ -2302,12 +2303,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const purchaseOptions = `
             <option value="chicks">Chicks (Initial Stock)</option>
             <option value="feed">Feed</option>
-            <option value="meds">Vaccines / Medication</option>
-            <option value="electricity">Electricity</option>
-            <option value="water">Water</option>
             <option value="labour">Labour</option>
-            <option value="infrastructure">Infrastructure</option>
-            <option value="other">Other Supplies</option>
+            <option value="utilities">Utilities (Electricity / Water)</option>
+            <option value="health">Health &amp; Supplies (Meds, Infra, Other)</option>
         `;
 
         modal.innerHTML = `
@@ -2439,8 +2437,24 @@ document.addEventListener('DOMContentLoaded', async () => {
                        html += `<div class="input-group"><label>Quantity (kg)</label><input type="number" id="tx-qty" required></div>`;
                   } else if (cat === 'labour') {
                        html += `<div class="input-group"><label>Farmhand Name</label><input type="text" id="tx-farmhand" placeholder="e.g. John Doe"></div>`;
-                  } else if (cat === 'electricity' || cat === 'water') {
-                       html += `<div class="input-group"><label>Billing Month</label><input type="month" id="tx-billing-month"></div>`;
+                  } else if (cat === 'utilities') {
+                        html += `<div class="input-group">
+                            <label>Utility Type</label>
+                            <select id="tx-sub-category">
+                                <option value="electricity">Electricity</option>
+                                <option value="water">Water</option>
+                            </select>
+                        </div>`;
+                        html += `<div class="input-group"><label>Billing Month</label><input type="month" id="tx-billing-month"></div>`;
+                  } else if (cat === 'health') {
+                        html += `<div class="input-group">
+                            <label>Supply Type</label>
+                            <select id="tx-sub-category">
+                                <option value="meds">Vaccines / Medication</option>
+                                <option value="infrastructure">Infrastructure</option>
+                                <option value="other">Other Supplies</option>
+                            </select>
+                        </div>`;
                   }
              }
 
@@ -2509,10 +2523,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 normalizedQty = rawQty * 30; // convert to individual eggs
             }
 
+            // Resolve actual category: for grouped types, use the sub-category dropdown value
+            const subCat = $('tx-sub-category') ? $('tx-sub-category').value : null;
+            const resolvedCategory = subCat || $('tx-category').value;
+
             const newTx = {
                 id: Date.now().toString(),
                 type: type, // 'sale', 'purchase', 'return'
-                category: $('tx-category').value,
+                category: resolvedCategory,
                 amount: amount,
                 deliveryFee: deliveryFee,
                 qty: normalizedQty,
@@ -2535,14 +2553,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             const batch = getBatches().find(b => String(b.id) === String(bid));
             
             // Handle Spent Layers reduction
-            if (type === 'sale' && $('tx-category').value === 'spent' && rawQty > 0 && batch) {
+            if (type === 'sale' && resolvedCategory === 'spent' && rawQty > 0 && batch) {
                 batch.stats.birdsAlive = Math.max(0, batch.stats.birdsAlive - rawQty);
                 batch.stats.totalSold = (batch.stats.totalSold || 0) + rawQty;
                 await updateBatch(batch);
             }
             
             // Handle feed price learning
-            if (type === 'purchase' && $('tx-category').value === 'feed' && rawQty > 0 && amount > 0) {
+            if (type === 'purchase' && resolvedCategory === 'feed' && rawQty > 0 && amount > 0) {
                 const impliedBagPrice = (amount / rawQty) * farmProfile.sackWeightKg;
                 if (Math.abs(impliedBagPrice - farmProfile.defaultFeedPrice) > 1) {
                     farmProfile.defaultFeedPrice = Math.round(impliedBagPrice);
