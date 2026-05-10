@@ -450,13 +450,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Module 6a: FIFO Egg Aging Engine
     function computeEggInventoryAging(logs, txs) {
-        // 1. Calculate total eggs sold (outflows)
+        // 1. Calculate total eggs removed from inventory (sold + written off)
         const totalEggsSold = txs.filter(t => t.type === 'sale' && t.category === 'eggs').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
+        const totalEggsWrittenOff = txs.filter(t => t.type === 'write_off' && t.category === 'eggs').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
         
         // 2. Iterate through logs chronologically (oldest first) to find unsold stock
         const sortedLogs = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
         
-        let eggsToDeduct = totalEggsSold;
+        let eggsToDeduct = totalEggsSold + totalEggsWrittenOff;
         let unsoldBatches = [];
         let totalUnsold = 0;
         
@@ -627,7 +628,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (week <= 8) { feedC = 0.25; feedPrice = pChick; }
                 else if (week <= 18) { feedC = 0.55; feedPrice = pGrower; }
                 else {
-                    feedC = 0.84; feedPrice = pLayer; // ~120g per day
+                    feedC = window.farmLearnings?.layerFeedC || 0.84; feedPrice = pLayer; // ~120g per day or learned value
                     if (week <= 22) layRate = 0.50; // Coming into lay
                     else if (week <= 40) layRate = 0.92; // Peak production
                     else if (week <= 60) layRate = 0.85; // Standard decay
@@ -1262,7 +1263,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        list.innerHTML = batches.map(b => {
+        const cardsHtml = await Promise.all(batches.map(async b => {
+            const logs = await api.getLogs(b.id);
+            const hasEggs = logs.some(l => (parseInt(l.eggs) || 0) > 0);
+            
             const isCompleted = b.status === 'completed';
             let sopHtml = '';
             if (isCompleted) {
@@ -1275,7 +1279,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return `
             <div class="batch-card" onclick="openBatchCockpit(${b.id})">
                 <div class="batch-header">
-                    <span class="batch-badge ${b.status}">${b.status.toUpperCase()}</span>
+                    <span class="batch-badge ${b.status}">${b.status === 'post_batch' ? 'WINDING DOWN' : b.status.toUpperCase()}</span>
                     <button class="project-delete" onclick="event.stopPropagation(); window.deleteBatchUI(${b.id})" title="Delete Batch">
                         <i data-lucide="trash-2"></i>
                     </button>
@@ -1285,7 +1289,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </div>
                 <div class="batch-metrics">
                     <div class="m-item"><span>Birds</span><strong>${b.stats?.birdsAlive || b.size}</strong></div>
-                    <div class="m-item"><span>Status</span><strong>${(b.stats?.totalEggs || 0) > 0 ? 'Laying' : 'Growing'}</strong></div>
+                    <div class="m-item"><span>Status</span><strong>${b.status === 'completed' ? 'Completed' : b.status === 'post_batch' ? 'Winding Down' : (hasEggs ? 'Laying' : 'Growing')}</strong></div>
                 </div>
                 ${sopHtml}
                 <div class="batch-footer">
@@ -1294,10 +1298,54 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </div>
             </div>
             `;
-        }).join('');
+        }));
+        list.innerHTML = cardsHtml.join('');
         lucide.createIcons();
+        await updateBatchLearningUI();
     }
 
+    async function updateBatchLearningUI() {
+        const snapshots = await api.getSnapshots();
+        const content = $('batch-learning-content');
+        if (!content) return;
+        
+        if (snapshots.length === 0) {
+            content.innerHTML = `<div class="empty-state"><i data-lucide="brain-circuit"></i><p>Finish your first batch to unlock data-driven recommendations.</p></div>`;
+            return;
+        }
+
+        const avgFeedArray = snapshots.filter(s => s.avgDailyFeedPerBird > 0).map(s => s.avgDailyFeedPerBird);
+        const overallAvgFeed = avgFeedArray.length > 0 ? (avgFeedArray.reduce((a, b) => a + b, 0) / avgFeedArray.length) : 0.12;
+        
+        const peakWeeks = snapshots.filter(s => s.peakMortalityWeek).map(s => parseInt(s.peakMortalityWeek));
+        let commonPeakWeek = 'N/A';
+        if (peakWeeks.length > 0) {
+            const counts = {};
+            let maxCount = 0;
+            for (const w of peakWeeks) {
+                counts[w] = (counts[w] || 0) + 1;
+                if (counts[w] > maxCount) { maxCount = counts[w]; commonPeakWeek = w; }
+            }
+        }
+
+        // Store global learnings for use in proposal generation
+        window.farmLearnings = window.farmLearnings || {};
+        window.farmLearnings.layerFeedC = overallAvgFeed * 7;
+
+        content.innerHTML = `
+            <div style="display:flex; flex-direction:column; gap:12px; padding: 12px 0;">
+                <div style="background:var(--bg-main); padding:16px; border-radius:8px; border-left:4px solid var(--primary);">
+                    <h4 style="margin:0 0 8px 0; display:flex; align-items:center; gap:6px; color:var(--text-dark);"><i data-lucide="scale" style="width:16px; height:16px; color:var(--primary);"></i> Feed Optimization</h4>
+                    <p style="margin:0; font-size:13px; color:var(--text-muted);">Your historical feed intake is <strong>${(overallAvgFeed * 1000).toFixed(0)}g</strong>/bird/day (Standard is 120g). We will use this to auto-adjust future financial models.</p>
+                </div>
+                <div style="background:var(--bg-main); padding:16px; border-radius:8px; border-left:4px solid var(--danger);">
+                    <h4 style="margin:0 0 8px 0; display:flex; align-items:center; gap:6px; color:var(--text-dark);"><i data-lucide="activity" style="width:16px; height:16px; color:var(--danger);"></i> Health & Mortality Risk</h4>
+                    <p style="margin:0; font-size:13px; color:var(--text-muted);">Past data shows peak mortality occurs around <strong>Week ${commonPeakWeek}</strong>. Be extra vigilant with brooder heat and coccidiosis checks during this period.</p>
+                </div>
+            </div>
+        `;
+        lucide.createIcons();
+    }
     function getActiveWithdrawal(healthLogs, logs) {
         const meds = healthLogs || [];
         const dailyLogs = logs || [];
@@ -1365,7 +1413,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const batch = getBatches().find(b => String(b.id) === String(id));
         if (!batch) return;
         currentBatchId = id;
-        window.currentHistoryLimit = 30;
+        window.currentHistoryLimit = 10;
         
         const logs = await api.getLogs(id);
         const dayCount = logs.length;
@@ -1399,6 +1447,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                     
                     <div class="cockpit-actions" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                        ${batch.status === 'completed' ? `
+                        <span class="pill" style="background:var(--primary-soft); color:var(--primary); font-weight:bold; border:1px solid var(--primary);">Completed</span>
+                        ` : batch.status === 'post_batch' ? `
+                        <span class="pill" style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d;">Winding Down</span>
+                        ` : `
                         <button class="btn btn-secondary btn-sm" onclick="window.openCSVImportModal(${batch.id})">
                             <i data-lucide="upload" style="width:14px; height:14px;"></i> Import
                         </button>
@@ -1415,6 +1468,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <button class="btn btn-primary btn-sm" onclick="window.finishBatch(${batch.id})" style="margin-left:8px;">
                             <i data-lucide="flag" style="width:14px; height:14px;"></i> Snapshot
                         </button>
+                        `}
                     </div>
                 </div>
                 
@@ -1464,7 +1518,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             <!-- Main Cockpit Grid: matches spec §5.1, perfectly symmetric rows -->
             <div class="cockpit-grid-spec">
                 <!-- ROW 1 -->
-                <div class="card log-form-card" style="height:100%; display:flex; flex-direction:column;">
+                <div class="card log-form-card" style="height:100%; display:flex; flex-direction:column; position:relative;">
+                    ${batch.status === 'post_batch' || batch.status === 'completed' ? `
+                    <div style="position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(255,255,255,0.85); z-index:10; display:flex; align-items:center; justify-content:center; border-radius:8px;">
+                        <span style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d; padding:8px 16px; border-radius:8px; display:flex; align-items:center;"><i data-lucide="lock" style="width:14px;height:14px;margin-right:6px;"></i>Daily Logging Disabled (${batch.status === 'completed' ? 'Completed' : 'Winding Down'})</span>
+                    </div>
+                    ` : ''}
                     <div class="card-header">
                         <h3><i data-lucide="clipboard-check" style="width:18px;height:18px;"></i> Today's Log</h3>
                         <input type="date" id="log-date" value="${new Date().toISOString().split('T')[0]}" class="input-sm" style="width:auto;">
@@ -1529,7 +1588,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                         </div>
                         <div>
                             <div class="price-advisory" id="price-advisory" style="margin-bottom:12px;">Enter logs to see pricing recommendations.</div>
+                            ${batch.status === 'completed' ? '' : `
                             <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="openTxModal('sale')"><i data-lucide="plus-circle" style="width:14px;height:14px;"></i> Record a Sale</button>
+                            <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px; border-color:#f87171; color:#f87171;" onclick="openTxModal('write_off')"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> Log Write-off</button>
+                            `}
                         </div>
                     </div>
                 </div>
@@ -1555,7 +1617,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <div class="feed-metric"><span>Days Left</span><strong id="feed-days-left">—</strong></div>
                             <div class="feed-metric"><span>Daily Consumption</span><strong id="feed-daily">—</strong></div>
                         </div>
-                        <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>
+                        ${batch.status === 'post_batch' || batch.status === 'completed' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
                     </div>
                 </div>
 
@@ -1580,10 +1642,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="card" style="height:100%; display:flex; flex-direction:column; grid-column: 1 / -1;">
                     <div class="card-header">
                         <h3><i data-lucide="activity" style="width:16px;height:16px;"></i> Health & Immunization Log</h3>
+                        ${batch.status === 'completed' ? '' : `
                         <div>
                             <button class="btn btn-primary btn-sm" onclick="openHealthModal('vaccine')"><i data-lucide="syringe" style="width:14px; height:14px;"></i> Log Vaccine</button>
                             <button class="btn btn-secondary btn-sm" onclick="openHealthModal('meds')"><i data-lucide="pill" style="width:14px; height:14px;"></i> Log Meds</button>
                         </div>
+                        `}
                     </div>
                     <div id="health-log-table" style="flex:1; overflow-y:auto; overflow-x:auto; width:100%; min-height:150px;"></div>
                 </div>
@@ -1705,7 +1769,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             batch.stats.birdsAlive = birdCount;
             await updateBatch(batch);
-            refreshCockpitData(batch);
+            openBatchCockpit(batchId);
         });
     };
 
@@ -1843,8 +1907,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const totalFeedPurchased = txs
             .filter(t => t.type === 'purchase' && t.category.toLowerCase() === 'feed')
             .reduce((s, t) => s + (parseFloat(t.qty) || 0), 0);
-        const currentInventory = Math.max(0, totalFeedPurchased - kpis.totalFeed);
-        const feedDeficit = totalFeedPurchased - kpis.totalFeed < 0;
+        const feedWrittenOff = txs
+            .filter(t => t.type === 'write_off' && t.category === 'feed')
+            .reduce((s, t) => s + (parseFloat(t.qty) || 0), 0);
+        const currentInventory = Math.max(0, totalFeedPurchased - kpis.totalFeed - feedWrittenOff);
+        const feedDeficit = totalFeedPurchased - kpis.totalFeed - feedWrittenOff < 0;
         if($('info-feed')) $('info-feed').innerText = currentInventory.toFixed(1) + ' kg';
         if($('feed-stock')) {
             $('feed-stock').innerText = feedDeficit ? 'Feed deficit!' : currentInventory.toFixed(1) + ' kg';
@@ -1951,6 +2018,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash, txs, healthLogs) {
+        if (batch.status === 'completed') {
+            updateGlobalNotifications([]);
+            return;
+        }
+
         const alerts = [];
         const t = farmProfile.alertThresholds;
 
@@ -2118,7 +2190,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }));
         events.sort((a,b) => new Date(b.date) - new Date(a.date));
         
-        window.currentHistoryLimit = window.currentHistoryLimit || 30;
+        window.currentHistoryLimit = window.currentHistoryLimit || 10;
         const slicedEvents = events.slice(0, window.currentHistoryLimit);
 
         container.innerHTML = events.length === 0 ? '<p style="text-align:center; padding:20px; color:var(--text-muted);">No logs yet.</p>' : `
@@ -2155,7 +2227,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         if (events.length > window.currentHistoryLimit) {
             const remaining = events.length - window.currentHistoryLimit;
-            container.innerHTML += `<div style="padding:12px; text-align:center;"><button class="btn btn-secondary btn-sm" onclick="window.currentHistoryLimit += 30; const b = getBatches().find(x => x.id === currentBatchId); if(b) refreshCockpitData(b);">Load More (${remaining} remaining)</button></div>`;
+            container.innerHTML += `<div style="padding:12px; text-align:center;"><button class="btn btn-secondary btn-sm" onclick="window.currentHistoryLimit += 10; const b = getBatches().find(x => x.id === currentBatchId); if(b) refreshCockpitData(b);">Load More (${remaining} remaining)</button></div>`;
         }
     }
 
@@ -2219,7 +2291,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ${statusBadge}
             </div>
             <div style="border-top:1px solid var(--border-color); overflow-y:auto; padding:8px 12px; max-height:180px;">
-                ${txs.length === 0 ? '' : txs.slice(0, 8).map(t => `
+                ${txs.length === 0 ? '' : txs.slice(0, 3).map(t => `
                 <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border-color);">
                     <div>
                         <span style="font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; background:${t.type==='sale'?'var(--primary-soft)':'#fee2e2'}; color:${t.type==='sale'?'var(--primary)':'#dc2626'};">${t.type.toUpperCase()}</span>
@@ -2327,7 +2399,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Modal logic for transactions
     window.openTxModal = async function(type) {
-        const title = type === 'purchase' ? 'Log Purchase' : type === 'return' ? 'Log Egg Return' : 'Log Sale';
+        const title = type === 'purchase' ? 'Log Purchase' : type === 'return' ? 'Log Egg Return' : type === 'write_off' ? 'Log Write-off / Wastage' : 'Log Sale';
         const bid = currentBatchId;
         if (!bid) return;
         const logs = await api.getLogs(bid);
@@ -2343,6 +2415,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             <option value="manure">Manure</option>
         `;
         const returnOptions = `<option value="eggs">Rejected / Returned Eggs</option>`;
+        const writeOffOptions = `
+            <option value="eggs">Eggs (cracked / destroyed / self-consumed)</option>
+            <option value="feed">Feed (spoiled / wet / expired)</option>
+            <option value="meds">Medicine (expired / spilled)</option>
+            <option value="other">Other</option>
+        `;
         const purchaseOptions = `
             <option value="chicks">Chicks (Initial Stock)</option>
             <option value="feed">Feed</option>
@@ -2356,9 +2434,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <h3>${title}</h3>
                 <form id="tx-form" style="display:flex; flex-direction:column; gap:16px; margin-top:16px;">
                     <div class="input-group">
-                        <label>Category</label>
+                        <label>${type === 'write_off' ? 'What are you writing off?' : 'Category'}</label>
                         <select id="tx-category">
-                            ${type === 'purchase' ? purchaseOptions : type === 'return' ? returnOptions : saleOptions}
+                            ${type === 'purchase' ? purchaseOptions : type === 'return' ? returnOptions : type === 'write_off' ? writeOffOptions : saleOptions}
                         </select>
                     </div>
                     <div class="input-grid" id="tx-dynamic-inputs" style="display:flex; flex-direction:column; gap:12px;">
@@ -2475,6 +2553,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                                <i data-lucide="microscope" style="width:14px; height:14px; color:#dc2626;"></i> 
                                <div><strong>Likely Root Cause:</strong> <span id="tx-root-cause">Infectious Bronchitis (IB) or older birds (>72 wks)</span></div>
                             </div>`;
+             } else if (type === 'write_off') {
+                   const unitLabel = cat === 'eggs' ? 'Quantity (eggs)' : cat === 'feed' ? 'Quantity (kg)' : 'Quantity (units)';
+                   html += `
+                       <div class="input-group"><label>Reason</label><select id="tx-reason">
+                           <option value="spoiled">Spoiled / Contaminated</option>
+                           <option value="cracked">Cracked / Physically Damaged</option>
+                           <option value="self_consumed">Self-consumed (staff / household)</option>
+                           <option value="destroyed">Destroyed (pest, theft, accident)</option>
+                           <option value="expired">Expired (past safe use date)</option>
+                           <option value="other">Other</option>
+                       </select></div>
+                       <div class="input-group"><label>${unitLabel}</label><input type="number" id="tx-qty" min="1" required></div>
+                       <div class="input-group"><label>Est. Value Lost (KES — optional)</label><input type="number" id="tx-amount" value="0"></div>
+                   `;
              } else {
                   if (cat === 'feed') {
                        html += `<div class="input-group"><label>Quantity (kg)</label><input type="number" id="tx-qty" required></div>`;
@@ -2501,7 +2593,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                   }
              }
 
-             if (type !== 'return') {
+             if (type !== 'return' && type !== 'write_off') {
                   if (cat === 'feed') {
                       html += `
                         <div class="input-group">
@@ -2545,7 +2637,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!bid) { alert("Batch context missing."); return; }
 
             const txs = await api.getTransactions(bid);
-            const amount = parseFloat($('tx-amount').value);
+            const amount = parseFloat($('tx-amount') ? $('tx-amount').value : 0) || 0;
             const deliveryFee = $('tx-delivery') ? parseFloat($('tx-delivery').value) || 0 : 0;
             let rawQty = parseFloat($('tx-qty') ? $('tx-qty').value : 0);
             let unit = $('tx-unit') ? $('tx-unit').value : null;
@@ -2554,6 +2646,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             let buyerName = $('tx-buyer') ? $('tx-buyer').value : null;
             let route = $('tx-route') ? $('tx-route').value : null;
             let defectType = $('tx-defect') ? $('tx-defect').value : null;
+            let reason = $('tx-reason') ? $('tx-reason').value : null;
             let buyerTerms = 'COD';
             if ($('tx-buyer') && $('tx-buyer').options && $('tx-buyer').type === 'select-one') {
                 const selectedOpt = $('tx-buyer').options[$('tx-buyer').selectedIndex];
@@ -2562,7 +2655,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             let normalizedQty = rawQty;
 
-            if ((type === 'sale' || type === 'return') && $('tx-category').value === 'eggs' && unit === 'trays') {
+            if ((type === 'sale' || type === 'return' || type === 'write_off') && $('tx-category').value === 'eggs' && unit === 'trays') {
                 normalizedQty = rawQty * 30; // convert to individual eggs
             }
 
@@ -2572,7 +2665,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             const newTx = {
                 id: Date.now().toString(),
-                type: type, // 'sale', 'purchase', 'return'
+                type: type, // 'sale', 'purchase', 'return', 'write_off'
                 category: resolvedCategory,
                 amount: amount,
                 deliveryFee: deliveryFee,
@@ -2585,8 +2678,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 buyerTerms,
                 route,
                 defectType,
+                reason,
                 status: (buyerTerms && buyerTerms !== 'COD' && type === 'sale') ? 'unpaid' : 'paid',
-                unitPrice: normalizedQty > 0 ? (amount / normalizedQty) : 0,
+                unitPrice: normalizedQty > 0 && amount > 0 ? (amount / normalizedQty) : 0,
                 notes: $('tx-notes') ? $('tx-notes').value.trim() : '',
                 date: new Date().toISOString()
             };
@@ -2620,57 +2714,254 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Logic handled by window.submitDailyLog in cockpit view
 
     window.finishBatch = async function(id) {
-        if (!confirm('This will close the batch and generate a Success Snapshot for future modelling. Proceed?')) return;
-        
         const batches = getBatches();
-        const batchIndex = batches.findIndex(b => b.id === id);
-        const batch = batches[batchIndex];
+        const batch = batches.find(b => String(b.id) === String(id));
+        if (!batch) {
+            console.error("Batch not found for id:", id);
+            return;
+        }
         
         const logs = await api.getLogs(id);
         const txs = await api.getTransactions(id);
-
         const kpis = computeKPIs(logs, batch, farmProfile);
         
-        const feedTxs = txs.filter(t => t.category.toLowerCase() === 'feed');
-        const avgFeedPrice = feedTxs.length > 0 ? (feedTxs.reduce((sum, t) => sum + t.amount, 0) / feedTxs.reduce((sum, t) => sum + t.qty, 0)) : farmProfile.defaultFeedPrice / farmProfile.sackWeightKg;
+        // 1. Inventory Math
+        const birdsAlive = kpis.currentBirds;
+        const inventoryAging = computeEggInventoryAging(logs, txs);
+        const unsoldEggs = inventoryAging.totalUnsold;
         
-        const eggSales = txs.filter(t => t.category.toLowerCase() === 'eggs');
-        const avgEggPrice = eggSales.length > 0 ? (eggSales.reduce((sum, t) => sum + t.amount, 0) / eggSales.reduce((sum, t) => sum + t.qty, 0)) : 15;
+        const totalFeedPurchased = txs.filter(t => t.type === 'purchase' && t.category.toLowerCase() === 'feed').reduce((s, t) => s + (parseFloat(t.qty) || 0), 0);
+        const feedWrittenOff = txs.filter(t => t.type === 'write_off' && t.category === 'feed').reduce((s, t) => s + (parseFloat(t.qty) || 0), 0);
+        const feedRemaining = Math.max(0, totalFeedPurchased - kpis.totalFeed - feedWrittenOff);
         
-        const revenue = txs.filter(t => t.type === 'sale').reduce((sum, t) => sum + t.amount, 0);
-        const expenses = txs.filter(t => t.type === 'purchase').reduce((sum, t) => sum + t.amount, 0);
+        const revenue = txs.filter(t => t.type === 'sale').reduce((sum, t) => sum + (parseFloat(t.amount)||0), 0);
+        const expenses = txs.filter(t => t.type === 'purchase').reduce((sum, t) => sum + (parseFloat(t.amount)||0), 0);
+        const unpaidAR = txs.filter(t => t.status === 'unpaid' && t.type === 'sale').reduce((sum, t) => sum + (parseFloat(t.amount)||0), 0);
+        
+        const durationDays = Math.floor((new Date() - new Date(batch.startDate)) / 86400000);
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'closure-modal';
+        
+        let step1Html = `
+            <div class="closure-step active" id="c-step-1">
+                <p style="margin-bottom:16px; color:var(--text-muted);">Review the final state of this batch before closing.</p>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                    <div class="card" style="padding:12px;"><div style="font-size:12px; color:var(--text-muted);">Birds Alive</div><div style="font-weight:700; font-size:18px; color:var(--text-dark);">${birdsAlive}</div></div>
+                    <div class="card" style="padding:12px;"><div style="font-size:12px; color:var(--text-muted);">Unsold Eggs</div><div style="font-weight:700; font-size:18px; color:var(--text-dark);">${unsoldEggs.toLocaleString()}</div></div>
+                    <div class="card" style="padding:12px;"><div style="font-size:12px; color:var(--text-muted);">Feed Remaining</div><div style="font-weight:700; font-size:18px; color:var(--text-dark);">${feedRemaining.toFixed(1)} kg</div></div>
+                    <div class="card" style="padding:12px;"><div style="font-size:12px; color:var(--text-muted);">Cash Balance</div><div style="font-weight:700; font-size:18px; color:${revenue-expenses >= 0 ? 'var(--primary)' : 'var(--danger)'};">KES ${(revenue-expenses).toLocaleString()}</div></div>
+                    <div class="card" style="padding:12px;"><div style="font-size:12px; color:var(--text-muted);">Unpaid AR</div><div style="font-weight:700; font-size:18px; color:var(--accent);">KES ${unpaidAR.toLocaleString()}</div></div>
+                    <div class="card" style="padding:12px;"><div style="font-size:12px; color:var(--text-muted);">Duration</div><div style="font-weight:700; font-size:18px; color:var(--text-dark);">${durationDays} days</div></div>
+                </div>
+            </div>
+        `;
+        
+        let step2Html = `
+            <div class="closure-step" id="c-step-2" style="display:none;">
+                <p style="margin-bottom:16px; color:var(--text-muted);">How do you want to handle remaining inventory?</p>
+                
+                ${birdsAlive > 0 ? `
+                <div class="card" style="padding:16px; margin-bottom:12px;">
+                    <h4 style="margin-top:0; margin-bottom:8px; color:var(--text-dark);"><i data-lucide="bird" style="width:14px;height:14px; color:var(--text-muted);"></i> Birds (${birdsAlive})</h4>
+                    <select id="disp-birds" style="width:100%; padding:8px; border-radius:4px; border:1px solid var(--border-color); background:var(--bg-input); color:var(--text-dark); margin-bottom:8px;" onchange="document.getElementById('disp-birds-price').style.display = this.value === 'sell' ? 'block' : 'none';">
+                        <option value="sell">Sell as Spent Layers (Log sale)</option>
+                        <option value="cull">Cull / Dispose (Log mortality)</option>
+                        <option value="transfer">Transfer to another batch</option>
+                    </select>
+                    <div id="disp-birds-price" style="display:block;">
+                        <label style="font-size:11px; color:var(--text-muted);">Total Sale Amount (KES)</label>
+                        <input type="number" id="disp-birds-amt" style="width:100%; padding:8px; border-radius:4px; border:1px solid var(--border-color); background:var(--bg-input); color:var(--text-dark);">
+                    </div>
+                </div>` : ''}
 
-        const snapshot = {
-            id: Date.now(),
-            batchId: id,
-            batchName: batch.name,
-            type: batch.type,
-            birds: batch.size,
-            avgFeedPrice,
-            avgEggPrice,
-            avgLayRate: kpis.avg7LayRate,
-            feedConversion: kpis.feedConversion,
-            totalProfit: revenue - expenses,
-            date: new Date().toISOString()
+                ${unsoldEggs > 0 ? `
+                <div class="card" style="padding:16px; margin-bottom:12px;">
+                    <h4 style="margin-top:0; margin-bottom:8px; color:var(--text-dark);"><i data-lucide="egg" style="width:14px;height:14px; color:var(--text-muted);"></i> Unsold Eggs (${unsoldEggs})</h4>
+                    <select id="disp-eggs" style="width:100%; padding:8px; border-radius:4px; border:1px solid var(--border-color); background:var(--bg-input); color:var(--text-dark);">
+                        <option value="carry_over">Keep batch in 'Winding Down' mode to sell later</option>
+                        <option value="sell_now">All sold now (I will log a sale before closing)</option>
+                        <option value="write_off">Write off as waste / expired</option>
+                    </select>
+                </div>` : ''}
+
+                ${feedRemaining > 5 ? `
+                <div class="card" style="padding:16px;">
+                    <h4 style="margin-top:0; margin-bottom:8px; color:var(--text-dark);"><i data-lucide="package" style="width:14px;height:14px; color:var(--text-muted);"></i> Feed Remaining (${feedRemaining.toFixed(1)} kg)</h4>
+                    <select id="disp-feed" style="width:100%; padding:8px; border-radius:4px; border:1px solid var(--border-color); background:var(--bg-input); color:var(--text-dark);">
+                        <option value="transfer">Transfer to next batch (No accounting change)</option>
+                        <option value="sell">Sold / Given away</option>
+                        <option value="write_off">Write off / Spoiled</option>
+                    </select>
+                </div>` : ''}
+                
+                ${(birdsAlive === 0 && unsoldEggs === 0 && feedRemaining <= 5) ? '<div class="empty-state">No remaining inventory to disposition.</div>' : ''}
+            </div>
+        `;
+        
+        let step3Html = `
+            <div class="closure-step" id="c-step-3" style="display:none;">
+                <div class="card" style="padding:16px; background:var(--primary-soft); border:1px solid var(--primary); text-align:center; margin-bottom:16px;">
+                    <h3 style="color:var(--primary); margin-top:0;">Ready to Close Batch</h3>
+                    <p style="font-size:12px; margin-bottom:0;">This will lock the batch records, generate a Success Snapshot, and update farm aggregates.</p>
+                </div>
+            </div>
+        `;
+
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width:500px; padding:24px; border-radius:12px; background:var(--bg-white); border:1px solid var(--border-color); box-shadow:var(--shadow-lg);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <h3 style="margin:0; color:var(--text-dark);">Batch Closure Wizard</h3>
+                    <span id="c-step-badge" style="font-size:12px; font-weight:700; background:var(--bg-main); color:var(--text-muted); padding:4px 8px; border-radius:12px; border:1px solid var(--border-color);">Step 1 of 3</span>
+                </div>
+                
+                <div id="c-steps-container">
+                    ${step1Html}
+                    ${step2Html}
+                    ${step3Html}
+                </div>
+                
+                <div style="display:flex; gap:12px; margin-top:24px;">
+                    <button type="button" class="btn btn-secondary" id="c-btn-cancel" style="flex:1;">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="c-btn-next" style="flex:1;">Next Step</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        lucide.createIcons();
+
+        let currentStep = 1;
+        
+        const updateStepView = () => {
+            document.getElementById('c-step-1').style.display = currentStep === 1 ? 'block' : 'none';
+            document.getElementById('c-step-2').style.display = currentStep === 2 ? 'block' : 'none';
+            document.getElementById('c-step-3').style.display = currentStep === 3 ? 'block' : 'none';
+            document.getElementById('c-step-badge').innerText = `Step ${currentStep} of 3`;
+            document.getElementById('c-btn-next').innerText = currentStep === 3 ? 'Finalize Batch' : 'Next Step';
+            document.getElementById('c-btn-cancel').innerText = currentStep === 1 ? 'Cancel' : 'Back';
         };
 
-        // Update Global Aggregates
-        updateAggregates(batch, logs, txs, kpis);
+        document.getElementById('c-btn-cancel').addEventListener('click', () => {
+            if (currentStep > 1) {
+                currentStep--;
+                updateStepView();
+            } else {
+                document.body.removeChild(modal);
+            }
+        });
 
-        // Save Snapshot
-        await api.saveSnapshot(snapshot);
+        document.getElementById('c-btn-next').addEventListener('click', async () => {
+            if (currentStep < 3) {
+                currentStep++;
+                updateStepView();
+                return;
+            }
+            
+            // EXECUTE FINALIZATION
+            document.getElementById('c-btn-next').disabled = true;
+            document.getElementById('c-btn-next').innerText = 'Processing...';
+            
+            // 1. Process Bird Disposition
+            if (birdsAlive > 0) {
+                const bDisp = document.getElementById('disp-birds').value;
+                if (bDisp === 'sell') {
+                    const amt = parseFloat(document.getElementById('disp-birds-amt').value) || 0;
+                    await api.saveTransaction(batch.id, {
+                        id: Date.now().toString() + 'b', date: new Date().toISOString(),
+                        type: 'sale', category: 'spent', qty: birdsAlive, amount: amt, status: 'paid',
+                        notes: 'Final batch spent layer clearance'
+                    });
+                } else if (bDisp === 'cull') {
+                    await api.saveLog(batch.id, {
+                        id: Date.now().toString() + 'l', date: new Date().toISOString().split('T')[0],
+                        birds: 0, morning:0, evening:0, other:0, eggs:0, feedGiven:0,
+                        notes: `End of batch culling: ${birdsAlive} birds`
+                    });
+                }
+                batch.stats.birdsAlive = 0;
+            }
 
-        // Mark Batch as Completed
-        batch.status = 'completed';
-        await api.saveBatch(batch);
+            // 2. Process Egg Disposition
+            let willSoftClose = false;
+            if (unsoldEggs > 0) {
+                const eDisp = document.getElementById('disp-eggs').value;
+                if (eDisp === 'carry_over') {
+                    willSoftClose = true;
+                } else if (eDisp === 'write_off') {
+                    await api.saveTransaction(batch.id, {
+                        id: Date.now().toString() + 'e', date: new Date().toISOString(),
+                        type: 'write_off', category: 'eggs', qty: unsoldEggs, amount: 0, status: 'paid',
+                        reason: 'expired', notes: 'End of batch write-off'
+                    });
+                }
+            }
 
-        switchView('batches');
-        alert('Batch completed! Success snapshot and farm aggregates updated.');
+            // 3. Process Feed Disposition
+            if (feedRemaining > 5) {
+                const fDisp = document.getElementById('disp-feed').value;
+                if (fDisp === 'write_off') {
+                    await api.saveTransaction(batch.id, {
+                        id: Date.now().toString() + 'f', date: new Date().toISOString(),
+                        type: 'write_off', category: 'feed', qty: feedRemaining, amount: 0, status: 'paid',
+                        reason: 'spoiled', notes: 'End of batch feed disposal'
+                    });
+                }
+            }
+            
+            // Finalize Snapshot and Update DB
+            const finalTxs = await api.getTransactions(batch.id);
+            const feedTxs = finalTxs.filter(t => t.category.toLowerCase() === 'feed');
+            const avgFeedPrice = feedTxs.length > 0 ? (feedTxs.reduce((sum, t) => sum + (parseFloat(t.amount)||0), 0) / feedTxs.reduce((sum, t) => sum + (parseFloat(t.qty)||0), 0)) : farmProfile.defaultFeedPrice / farmProfile.sackWeightKg;
+            const eggSales = finalTxs.filter(t => t.category.toLowerCase() === 'eggs' && t.type === 'sale');
+            const avgEggPrice = eggSales.length > 0 ? (eggSales.reduce((sum, t) => sum + (parseFloat(t.amount)||0), 0) / eggSales.reduce((sum, t) => sum + (parseFloat(t.qty)||0), 0)) : 15;
+            const finalRev = finalTxs.filter(t => t.type === 'sale').reduce((sum, t) => sum + (parseFloat(t.amount)||0), 0);
+            const finalExp = finalTxs.filter(t => t.type === 'purchase').reduce((sum, t) => sum + (parseFloat(t.amount)||0), 0);
+            
+            if (!willSoftClose) {
+                // Calculate Learning Metrics
+                const totalBirdDays = logs.reduce((s, l) => s + (l.birds || batch.size), 0);
+                const batchTotalFeed = logs.reduce((s, l) => s + (parseFloat(l.feed) || 0), 0);
+                const avgDailyFeedPerBird = totalBirdDays > 0 ? (batchTotalFeed / totalBirdDays) : 0.12;
+
+                const weeklyMortality = {};
+                logs.forEach(l => {
+                    if (l.mortality > 0) {
+                        const daysDiff = Math.floor((new Date(l.date) - new Date(batch.startDate)) / 86400000);
+                        const week = Math.floor(daysDiff / 7) + 1;
+                        weeklyMortality[week] = (weeklyMortality[week] || 0) + l.mortality;
+                    }
+                });
+                let peakMortalityWeek = null;
+                let maxMortality = 0;
+                for (const [w, m] of Object.entries(weeklyMortality)) {
+                    if (m > maxMortality) { maxMortality = m; peakMortalityWeek = w; }
+                }
+
+                const snapshot = {
+                    id: Date.now(), batchId: batch.id, batchName: batch.name, type: batch.type, birds: batch.size,
+                    avgFeedPrice, avgEggPrice, avgLayRate: kpis.avg7LayRate, feedConversion: kpis.feedConversion,
+                    totalProfit: finalRev - finalExp, date: new Date().toISOString(),
+                    avgDailyFeedPerBird, peakMortalityWeek
+                };
+                await updateAggregates(batch, logs, finalTxs, kpis);
+                await api.saveSnapshot(snapshot);
+                batch.status = 'completed';
+            } else {
+                batch.status = 'post_batch';
+            }
+
+            await api.saveBatch(batch);
+            document.body.removeChild(modal);
+            switchView('batches');
+            alert(willSoftClose ? 'Batch moved to Winding Down. Only egg sales are permitted.' : 'Batch completed! Success snapshot and farm aggregates updated.');
+        });
     };
 
-    function updateAggregates(batch, logs, txs, kpis) {
-        const agg = loadAggregates();
+    async function updateAggregates(batch, logs, txs, kpis) {
+        const agg = await loadAggregates();
         agg.batchCount = (agg.batchCount || 0) + 1;
+        if (!agg.avgLayRateByMonth) agg.avgLayRateByMonth = {};
         
         // 1. Avg Feed Conversion (Rolling)
         agg.avgFeedConversion = (agg.avgFeedConversion * (agg.batchCount-1) + kpis.feedConversion) / agg.batchCount;
@@ -2683,11 +2974,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             agg.avgLayRateByMonth[month].count += 1;
         });
 
-        saveAggregates(agg);
+        await saveAggregates(agg);
     }
 
 
-    $('btn-clear-all')?.addEventListener('click', async () => {
+    window.clearAllProposals = async function() {
         if (confirm('Delete all saved proposals?')) {
             const proposals = await api.getProposals();
             for (const p of proposals) {
@@ -2696,7 +2987,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             refreshDashboard();
             renderAnalytics();
         }
-    });
+    };
 
     // ===================== KNOWLEDGE BASE =====================
     const docsGrid = document.querySelector('.docs-grid');
@@ -2881,28 +3172,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             let postBE = 0;
             if (p.type === 'layer' || p.type === 'dual') {
-                postBE = p.raw.sixMonRev - p.raw.sixMonOpex; // 6-month margin after capex is paid
+                postBE = (p.raw.sixMonRev || 0) - (p.raw.sixMonOpex || 0); // 6-month margin after capex is paid
             } else {
                 // Broiler: recurring cost is birds+feed+vaccines+brooding. Ignore fixed housing/equipment capex.
-                const flockCapex = p.raw.totalCapex - p.raw.housing - p.raw.equipment;
-                postBE = p.raw.sixMonRev - flockCapex; // Batch margin after capex is paid
+                const flockCapex = (p.raw.totalCapex || 0) - (p.raw.housing || 0) - (p.raw.equipment || 0);
+                postBE = (p.raw.sixMonRev || 0) - flockCapex; // Batch margin after capex is paid
             }
-            sumPostBE += postBE;
+            sumPostBE += isNaN(postBE) ? 0 : postBE;
             
-            avgRaw.birds += p.raw.birds;
-            avgRaw.feed += p.raw.feed;
-            avgRaw.vaccines += p.raw.vaccines;
-            avgRaw.brooding += p.raw.brooding;
-            avgRaw.housing += p.raw.housing;
-            avgRaw.equipment += p.raw.equipment;
-            avgRaw.capex += p.raw.totalCapex;
-            avgRaw.rev += p.raw.sixMonRev;
+            avgRaw.birds += p.raw.birds || 0;
+            avgRaw.feed += p.raw.feed || 0;
+            avgRaw.vaccines += p.raw.vaccines || 0;
+            avgRaw.brooding += p.raw.brooding || 0;
+            avgRaw.housing += p.raw.housing || 0;
+            avgRaw.equipment += p.raw.equipment || 0;
+            avgRaw.capex += p.raw.totalCapex || 0;
+            avgRaw.rev += p.raw.sixMonRev || 0;
         });
 
-        const num = proposals.length;
+        let validNum = proposals.filter(p => p.raw).length;
+        const num = validNum > 0 ? validNum : 1;
         const avgBE = beCount > 0 ? (sumBE / beCount) : 0;
-        const avgPostBEProfit = sumPostBE / num;
-        const avgInitialProfit = sumProfit / num;
+        const avgPostBEProfit = (sumPostBE || 0) / num;
+        const avgInitialProfit = (sumProfit || 0) / num;
 
         $('kpi-total-capex').textContent = `KES ${totalCapexAll.toLocaleString()}`;
         $('kpi-avg-profit').textContent = `KES ${Math.round(avgPostBEProfit).toLocaleString()}`;

@@ -123,7 +123,7 @@
                         <div class="card projects-card">
                             <div class="card-header">
                                 <h3>Saved Proposals</h3>
-                                <button class="btn btn-secondary btn-sm" id="btn-clear-all">Clear All</button>
+                                <button class="btn btn-secondary btn-sm" id="btn-clear-all" onclick="window.clearAllProposals()">Clear All</button>
                             </div>
                             <div class="projects-list" id="saved-proposals-list">
                                 <div class="empty-state" id="empty-proposals">
@@ -477,10 +477,7 @@
                             <h1>Farm <span class="highlight">Operations</span></h1>
                             <p>Track live bird performance, feed inventory, and cash profitability.</p>
                         </div>
-                        <div style="display: flex; gap: 8px;"><button class="btn btn-secondary" id="btn-clear-all-batches">Clear All</button><button class="btn btn-primary" id="btn-goto-generator">
-                            <i data-lucide="play-circle"></i>
-                            <span>Model New Batch</span>
-                        </button>
+                        <div style="display: flex; gap: 8px;"><button class="btn btn-secondary" id="btn-clear-all-batches">Clear All</button>
                         </div>
                     </div>
                     <div class="batches-grid" id="batches-list">

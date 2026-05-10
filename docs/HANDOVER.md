@@ -26,12 +26,17 @@ Following visual End-to-End validation of the Cockpit UI, several critical stabi
 * **Proposed Fix**: Add a programmatic `blur()` focus extraction event hooked onto the "Save Log" click action before fetching `.value`, forcing the browser string parser to commit the date instantly.
 
 ### 2. Historical Table Pagination [COMPLETED]
-* **Status**: Resolved. The `refreshCockpitData` engine now enforces a 30-row limit on initial render with a "Load More" pagination trigger to maintain performance on lower-tier hardware.
+* **Status**: Resolved. The `refreshCockpitData` engine now enforces a 10-row limit (reduced from 30 for better visibility) on initial render with a "Load More" pagination trigger to maintain performance on lower-tier hardware.
 
-### 3. The "Batch Learning" Engine 
-* **Context**: Deep analytical architecture handles real-time computations effectively, but historical macro-learning remains scoped out of the active v1 prototype. 
-* **Result**: Farm planning parameters (via the Proposal Wizard) remain fully manual or based on initial constants rather than learning from actual operational metrics over past flock lifecycles.
-* **Proposed Fix**: Construct the "Batch Learning" matrix that queries finished "Snapshot" batch datasets from the SQLite backend, isolating averages like true `avgDailyFeedPerBird` and peak mortality periods. This data can later be used to autonomously modify predicted financial inputs for consecutive new proposals inside `farmProfile`.
+### 3. The "Batch Learning" Engine [COMPLETED]
+* **Status**: Resolved. Farm planning parameters now query finished "Snapshot" batch datasets from the SQLite backend to isolate true `avgDailyFeedPerBird` and peak mortality periods. This data automatically modifies predicted financial inputs for consecutive new proposals.
+
+### 4. Recent UX & Operational Fixes (May 2026)
+* **Completed Batch Lockdown**: Hardened the lifecycle by completely hiding all operational buttons (Import, Backfill, Skip, Snapshot, Litter Done) and silencing the dynamic alert engine for batches marked as `completed`.
+* **Active Batch Card Status Logic**: Fixed an issue where batches actively laying eggs still reported as "Growing" on the exterior cards. The system now physically queries the sqlite log history to find actual egg production instead of relying on stale cache properties.
+* **Portfolio Analytics Math Integrity**: Added robust `null` and `NaN` catchers to the Analytics dashboard math formulas, preventing errors caused by parsing legacy proposals that lacked `.raw` stat objects.
+* **Redundant Elements & UI Spacing**: Fixed CSS flex alignment on the "Feed & Inventory" card, pruned a redundant "Model New Batch" button from the operations header, and clamped the Recent Logs table to 10 rows and Financial Pulse to 3 rows to perfectly align the cockpit layout on desktop.
+* **Clear All Button Integrity**: Wired the "Clear All" saved proposals button to a global `onclick` handler to prevent DOM-attachment race conditions, ensuring reliable bulk deletion.
 
 ---
 

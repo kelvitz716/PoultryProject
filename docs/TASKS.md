@@ -148,4 +148,4 @@
 
 - `[ ]` **Date input edge case fix** — hook `blur()` on "Save Log" click before reading `.value` to force browser date parser commit (Safari compatibility)
 - `[x]` **Historical table pagination** — cap `renderHistoryTable()` at 30 rows, add "Load More" trigger; prevents DOM memory lag over 500-day layer cycles
-- `[ ]` **Batch Learning engine** — query finished "Snapshot" batch datasets from SQLite; compute `avgDailyFeedPerBird` and peak mortality periods to auto-adjust financial proposal inputs for subsequent batches
+- `[x]` **Batch Learning engine** — query finished "Snapshot" batch datasets from SQLite; compute `avgDailyFeedPerBird` and peak mortality periods to auto-adjust financial proposal inputs for subsequent batches
