@@ -1598,72 +1598,126 @@ document.addEventListener('DOMContentLoaded', async () => {
         const batch = getBatches().find(b => String(b.id) === String(batchId));
         if (!batch) return;
 
-        const confirmSim = confirm("This will simulate 60 days of chronologically accurate data (30 days Rearing + 30 days Laying). Proceed?");
-        if (!confirmSim) return;
+        // Custom in-app confirmation modal (replaces native browser confirm())
+        const existingModal = document.getElementById('sim-confirm-modal');
+        if (existingModal) document.body.removeChild(existingModal);
 
-        let logs = [];
-        const txs = await api.getTransactions(batchId);
-        
-        // Ensure starting inventory and cash
-        if (txs.length === 0) {
-            await api.saveTransaction(batchId, { id: Date.now(), date: new Date(Date.now() - 61 * 86400000).toISOString(), type: 'purchase', category: 'feed', qty: 1000, unitPrice: 70, amount: 70000, notes: 'Initial Simulation Feed Stock' });
-        }
+        const confirmModal = document.createElement('div');
+        confirmModal.className = 'modal-overlay';
+        confirmModal.id = 'sim-confirm-modal';
+        confirmModal.innerHTML = `
+            <div class="modal-content card" style="max-width:400px; padding:28px;">
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+                    <div style="background:rgba(250,204,21,0.15); border-radius:50%; padding:10px; flex-shrink:0;">
+                        <i data-lucide="zap" style="width:22px; height:22px; color:var(--accent);"></i>
+                    </div>
+                    <div>
+                        <h3 style="margin:0; font-size:16px;">Run Lifecycle Simulation</h3>
+                        <p style="margin:4px 0 0 0; font-size:12px; color:var(--text-muted);">[Dev Tool]</p>
+                    </div>
+                </div>
+                <p style="font-size:14px; color:var(--text-secondary); line-height:1.6; margin:0 0 8px 0;">
+                    This will generate <strong>60 days</strong> of synthetic historical data for this batch:
+                </p>
+                <ul style="font-size:13px; color:var(--text-muted); margin:0 0 20px 0; padding-left:20px; line-height:1.8;">
+                    <li>Days 1–30: Rearing phase (no egg production)</li>
+                    <li>Days 31–60: Laying phase (~85–95% lay rate)</li>
+                    <li>Random mortality simulation (~5% daily chance)</li>
+                    <li>Feed sack consumption every 5 days</li>
+                </ul>
+                <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:10px 12px; margin-bottom:20px; font-size:12px; color:#f87171; display:flex; gap:8px; align-items:flex-start;">
+                    <i data-lucide="alert-triangle" style="width:14px; height:14px; flex-shrink:0; margin-top:1px;"></i>
+                    <span>For demonstration only. Do not run this on a live production batch.</span>
+                </div>
+                <div style="display:flex; gap:12px;">
+                    <button type="button" class="btn btn-secondary" style="flex:1;" 
+                        onclick="document.body.removeChild(document.getElementById('sim-confirm-modal'))">
+                        Cancel
+                    </button>
+                    <button type="button" class="btn btn-primary" style="flex:1; background:var(--accent); border-color:var(--accent); color:#111;" 
+                        id="sim-confirm-btn">
+                        <i data-lucide="zap" style="width:14px; height:14px;"></i> Run Simulation
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(confirmModal);
+        if (window.lucide) lucide.createIcons();
 
-        const now = new Date();
-        let birdCount = batch.size;
+        // Wire up the confirm button
+        document.getElementById('sim-confirm-btn').addEventListener('click', async () => {
+            document.body.removeChild(confirmModal);
 
-        for (let i = 60; i >= 1; i--) {
-            const date = new Date(now.getTime() - i * 86400000);
-            const isLayingPhase = i < 30; // Last 30 days are laying peak
+            // Show a loading state
+            const btn = document.getElementById('sim-confirm-btn');
             
-            // Mortality simulation: 0.1% chance per day
-            if (Math.random() < 0.05) birdCount--;
-
-            const eggs = isLayingPhase ? Math.round(birdCount * (0.85 + Math.random() * 0.1)) : 0;
-            const morning = Math.floor(eggs * 0.6);
-            const evening = Math.floor(eggs * 0.3);
-            const other = eggs - morning - evening;
-
-            // Feed simulation: 2 sacks every 5 days roughly
-            const sacks = (i % 5 === 0) ? 2 : 0;
-
-            logs.push({
-                date: date.toISOString().split('T')[0],
-                birds: birdCount,
-                morning, evening, other,
-                eggs,
-                sacks,
-                feedGiven: 0,
-                notes: isLayingPhase ? 'Peak production activity' : 'Rearing phase'
-            });
+            let logs = [];
+            const txs = await api.getTransactions(batchId);
             
-            // Log revenue for eggs every day in laying phase
-            if (isLayingPhase && eggs > 0) {
-                txs.push({
-                    id: Date.now() + i,
-                    date: date.toISOString(),
-                    type: 'sale',
-                    category: 'eggs',
-                    qty: Math.floor(eggs / 30), // Trays
-                    amount: eggs * 15, // KES
-                    notes: 'Automated Daily Sales Log'
+            // Ensure starting feed purchase if none exists
+            if (txs.length === 0) {
+                await api.saveTransaction(batchId, {
+                    id: Date.now(), date: new Date(Date.now() - 61 * 86400000).toISOString(),
+                    type: 'purchase', category: 'feed', qty: 1000, unitPrice: 70,
+                    amount: 70000, notes: 'Initial Simulation Feed Stock'
                 });
             }
-        }
-        for (let l of logs) {
-            await api.saveLog(batchId, l);
-        }
 
-        // Also add initial feed stock if empty
-        const currentTxs = await api.getTransactions(batchId);
-        if (currentTxs.filter(t => t.category === 'feed').length === 0) {
-            await api.saveTransaction(batchId, { id: Date.now() + 999, date: new Date(now.getTime() - 65 * 86400000).toISOString(), type: 'purchase', category: 'feed', qty: 1000, amount: 70000, notes: 'Initial Feed' });
-        }
+            const now = new Date();
+            let birdCount = batch.size;
+            const saleTxsToSave = [];
 
-        batch.stats.birdsAlive = birdCount;
-        updateBatch(batch);
-        
-        refreshCockpitData(batch);
+            for (let i = 60; i >= 1; i--) {
+                const date = new Date(now.getTime() - i * 86400000);
+                const isLayingPhase = i < 30;
+                
+                if (Math.random() < 0.05) birdCount = Math.max(0, birdCount - 1);
+
+                const eggs = isLayingPhase ? Math.round(birdCount * (0.85 + Math.random() * 0.1)) : 0;
+                const morning = Math.floor(eggs * 0.6);
+                const evening = Math.floor(eggs * 0.3);
+                const other = eggs - morning - evening;
+                const sacks = (i % 5 === 0) ? 2 : 0;
+
+                logs.push({
+                    date: date.toISOString().split('T')[0],
+                    birds: birdCount, morning, evening, other,
+                    eggs, sacks, feedGiven: 0,
+                    notes: isLayingPhase ? 'Peak production activity' : 'Rearing phase'
+                });
+                
+                if (isLayingPhase && eggs > 0) {
+                    saleTxsToSave.push({
+                        id: Date.now() + i + Math.random(),
+                        date: date.toISOString(),
+                        type: 'sale', category: 'eggs',
+                        qty: eggs, rawQty: Math.floor(eggs / 30), rawUnit: 'trays',
+                        amount: eggs * 15,
+                        notes: 'Simulated Daily Sale'
+                    });
+                }
+            }
+
+            // Save all logs
+            for (const l of logs) await api.saveLog(batchId, l);
+            // Save all sale transactions (previously these were only pushed to local array!)
+            for (const t of saleTxsToSave) await api.saveTransaction(batchId, t);
+
+            // Ensure feed purchase exists
+            const currentTxs = await api.getTransactions(batchId);
+            if (currentTxs.filter(t => t.category === 'feed').length === 0) {
+                await api.saveTransaction(batchId, {
+                    id: Date.now() + 999,
+                    date: new Date(now.getTime() - 65 * 86400000).toISOString(),
+                    type: 'purchase', category: 'feed', qty: 1000, amount: 70000,
+                    notes: 'Initial Feed'
+                });
+            }
+
+            batch.stats.birdsAlive = birdCount;
+            await updateBatch(batch);
+            refreshCockpitData(batch);
+        });
     };
 
     window.autoSumEggs = function() {
