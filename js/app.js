@@ -19,6 +19,8 @@ const api = {
     async getTransactions(bId) { try { const r = await fetch('/api/transactions/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
     async saveTransaction(bId, tx) { await fetch('/api/transactions/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(tx)}); },
     async deleteTransaction(bId, id) { await fetch('/api/transactions/'+bId+'/'+id, {method:'DELETE'}); },
+    async clearLogs(bId) { await fetch('/api/logs/'+bId, {method:'DELETE'}); },
+    async clearTransactions(bId) { await fetch('/api/transactions/'+bId, {method:'DELETE'}); },
     async getSnapshots() { try { const r = await fetch('/api/snapshots'); return r.ok ? await r.json() : []; } catch(e){return [];} },
     async saveSnapshot(s) { await fetch('/api/snapshots', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(s)}); },
     async getHealthLogs(bId) { try { const r = await fetch('/api/health/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
@@ -1648,20 +1650,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('sim-confirm-btn').addEventListener('click', async () => {
             document.body.removeChild(confirmModal);
 
-            // Show a loading state
-            const btn = document.getElementById('sim-confirm-btn');
-            
             let logs = [];
-            const txs = await api.getTransactions(batchId);
-            
-            // Ensure starting feed purchase if none exists
-            if (txs.length === 0) {
-                await api.saveTransaction(batchId, {
-                    id: Date.now(), date: new Date(Date.now() - 61 * 86400000).toISOString(),
-                    type: 'purchase', category: 'feed', qty: 1000, unitPrice: 70,
-                    amount: 70000, notes: 'Initial Simulation Feed Stock'
-                });
-            }
+
+            // ── RESET: clear existing logs & transactions before writing fresh data ──
+            await api.clearLogs(batchId);
+            await api.clearTransactions(batchId);
+
+            // Seed initial feed purchase
+            await api.saveTransaction(batchId, {
+                id: Date.now(), date: new Date(Date.now() - 65 * 86400000).toISOString(),
+                type: 'purchase', category: 'feed', qty: 1000, unitPrice: 70,
+                amount: 70000, notes: 'Initial Simulation Feed Stock'
+            });
 
             const now = new Date();
             let birdCount = batch.size;
@@ -1700,19 +1700,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Save all logs
             for (const l of logs) await api.saveLog(batchId, l);
-            // Save all sale transactions (previously these were only pushed to local array!)
+            // Save all sale transactions
             for (const t of saleTxsToSave) await api.saveTransaction(batchId, t);
-
-            // Ensure feed purchase exists
-            const currentTxs = await api.getTransactions(batchId);
-            if (currentTxs.filter(t => t.category === 'feed').length === 0) {
-                await api.saveTransaction(batchId, {
-                    id: Date.now() + 999,
-                    date: new Date(now.getTime() - 65 * 86400000).toISOString(),
-                    type: 'purchase', category: 'feed', qty: 1000, amount: 70000,
-                    notes: 'Initial Feed'
-                });
-            }
 
             batch.stats.birdsAlive = birdCount;
             await updateBatch(batch);

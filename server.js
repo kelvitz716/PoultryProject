@@ -120,6 +120,14 @@ app.delete('/api/logs/:batchId/:id', async (req, res) => {
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// Bulk clear all logs for a batch (dev/simulation use)
+app.delete('/api/logs/:batchId', async (req, res) => {
+    try {
+        const id = req.params.batchId;
+        await runQuery('DELETE FROM logs WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // TRANSACTIONS
 app.get('/api/transactions/:batchId', async (req, res) => {
@@ -140,6 +148,14 @@ app.post('/api/transactions/:batchId', async (req, res) => {
 app.delete('/api/transactions/:batchId/:id', async (req, res) => {
     try {
         await runQuery('DELETE FROM transactions WHERE batch_id = ? AND id = ?', [req.params.batchId, req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Bulk clear all transactions for a batch (dev/simulation use)
+app.delete('/api/transactions/:batchId', async (req, res) => {
+    try {
+        const id = req.params.batchId;
+        await runQuery('DELETE FROM transactions WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
