@@ -21,6 +21,8 @@ export const api = {
     async clearAllProposals() { await fetch('/api/proposals', {method:'DELETE', headers:{'x-confirm-delete':'true'}}); },
     async getHealthLogs(bId) { try { const r = await fetch('/api/health/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
     async saveHealthLog(bId, log) { await fetch('/api/health/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(log)}); },
+    async getLiveSensors() { try { const r = await fetch('/api/sensors/live'); return r.ok ? await r.json() : null; } catch(e){return null;} },
+    async forceSyncSensors() { try { const r = await fetch('/api/sensors/sync', {method:'POST'}); return r.ok ? await r.json() : null; } catch(e){return null;} },
     
     // Fallback for UI settings
     getTheme() { return localStorage.getItem('poultryTheme') || 'system'; },

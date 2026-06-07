@@ -1153,6 +1153,12 @@ if ('serviceWorker' in navigator) {
                 <div class="info-chip"><i data-lucide="package" style="width:14px;height:14px;"></i> Feed: <strong id="info-feed">0 kg</strong></div>
                 <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash: <strong id="info-cash">KES 0</strong></div>
                 <div class="info-chip"><i data-lucide="egg" style="width:14px;height:14px;"></i> Total: <strong id="info-totaleggs">0</strong> <span id="info-unsoldeggs" style="font-size:11px; margin-left:4px;">(0 in stock)</span></div>
+                <div class="info-chip" id="info-sensor-container" style="display:none; cursor:pointer;" onclick="window.triggerSensorSync()">
+                    <i data-lucide="thermometer" style="width:14px;height:14px;"></i> 
+                    Coop: <strong id="info-sensor-temp">— °C</strong> / <strong id="info-sensor-hum">—% RH</strong> 
+                    <span id="info-sensor-battery" style="font-size:10px; margin-left:6px; color:var(--text-muted);"></span>
+                    <span id="info-sensor-sync" style="font-size:9px; margin-left:6px; color:var(--text-muted);"></span>
+                </div>
                 <div class="info-chip" id="info-discard-container" style="display:none; background:#fee2e2; color:#dc2626; border:1px solid #fca5a5;">
                     <i data-lucide="trash-2" style="width:14px;height:14px;"></i> Discard: <strong id="info-discard">0 days</strong>
                 </div>
@@ -1205,6 +1211,10 @@ if ('serviceWorker' in navigator) {
                         <div class="log-field">
                             <label>CO₂ (ppm)</label>
                             <input type="number" id="log-co2" placeholder="Optional" class="input-md" onfocus="this.select()">
+                        </div>
+                        <div class="log-field">
+                            <label>Temp (°C)</label>
+                            <input type="number" id="log-temp" step="0.1" placeholder="Optional" class="input-md" onfocus="this.select()">
                         </div>
                         <div class="log-field">
                             <label>Humidity (%)</label>
@@ -1452,6 +1462,7 @@ if ('serviceWorker' in navigator) {
         const mortality = parseInt($('log-mortality').value) || 0;
         const nh3 = parseFloat($('log-nh3').value) || null;
         const co2 = parseFloat($('log-co2').value) || null;
+        const temperature = parseFloat($('log-temp').value) || null;
         const humidity = parseFloat($('log-humidity').value) || null;
         const notes = $('log-notes').value;
 
@@ -1470,7 +1481,7 @@ if ('serviceWorker' in navigator) {
 
         const newEntry = {
             date, eggs, morning, evening, other,
-            sacks, feedGiven, nh3, co2, humidity, notes,
+            sacks, feedGiven, nh3, co2, humidity, temperature, notes,
             birds: batch.stats.birdsAlive,
             mortality,
             feed: feedGiven 
@@ -1480,7 +1491,7 @@ if ('serviceWorker' in navigator) {
 
         // Reset UI — preserve the date for consecutive same-day edits
         const savedDate = $('log-date').value;
-        ['log-eggs', 'log-eggs-morning', 'log-eggs-evening', 'log-eggs-other', 'log-feed', 'log-notes', 'log-nh3', 'log-co2', 'log-humidity'].forEach(id => {
+        ['log-eggs', 'log-eggs-morning', 'log-eggs-evening', 'log-eggs-other', 'log-feed', 'log-notes', 'log-nh3', 'log-co2', 'log-temp', 'log-humidity'].forEach(id => {
             const el = $(id);
             if (el) el.value = '';
         });
@@ -1663,7 +1674,90 @@ if ('serviceWorker' in navigator) {
         renderHistoryTable(logs, txs);
         renderCockpitTransactions(txs, initialCash);
         await renderHealthTable(batch.id);
+        await window.updateLiveSensorWidget();
     }
+
+    window.updateLiveSensorWidget = async function() {
+        const container = $('info-sensor-container');
+        if (!container) return;
+        
+        const res = await api.getLiveSensors();
+        if (!res) {
+            container.style.display = 'none';
+            return;
+        }
+        
+        container.style.display = 'inline-flex';
+        
+        if (res.temperature !== null) {
+            $('info-sensor-temp').innerText = res.temperature.toFixed(1) + ' °C';
+            // Auto-fill today's log form if empty
+            const tempInput = $('log-temp');
+            if (tempInput && !tempInput.value) {
+                tempInput.value = res.temperature.toFixed(1);
+            }
+        } else {
+            $('info-sensor-temp').innerText = '— °C';
+        }
+        
+        if (res.humidity !== null) {
+            $('info-sensor-hum').innerText = res.humidity.toFixed(0) + '% RH';
+            // Auto-fill today's log form if empty
+            const humInput = $('log-humidity');
+            if (humInput && !humInput.value) {
+                humInput.value = res.humidity.toFixed(0);
+            }
+        } else {
+            $('info-sensor-hum').innerText = '—% RH';
+        }
+        
+        if (res.battery !== null) {
+            $('info-sensor-battery').innerHTML = `<i data-lucide="battery" style="width:10px;height:10px;display:inline-block;vertical-align:middle;margin-right:2px;"></i>${res.battery}%`;
+        } else {
+            $('info-sensor-battery').innerHTML = '';
+        }
+        
+        // Show status (last sync or error)
+        const syncEl = $('info-sensor-sync');
+        if (!res.success) {
+            container.style.borderColor = '#fca5a5';
+            container.style.background = '#fee2e2';
+            container.style.color = '#dc2626';
+            syncEl.innerText = '⚠️ Core Plan Expired';
+            syncEl.style.color = '#dc2626';
+            container.title = `Sync failing: ${res.error || 'unknown error'}. Click to retry. Ensure Tuya Cloud Core is renewed at iot.tuya.com.`;
+        } else {
+            container.style.borderColor = 'var(--border-color)';
+            container.style.background = 'var(--bg-white)';
+            container.style.color = 'var(--text-dark)';
+            
+            // Format time ago
+            const diffMin = Math.round((Date.now() - new Date(res.last_updated).getTime()) / 60000);
+            let timeStr = 'just now';
+            if (diffMin > 0) {
+                timeStr = diffMin < 60 ? `${diffMin}m ago` : `${Math.floor(diffMin/60)}h ago`;
+            }
+            syncEl.innerText = `(${timeStr})`;
+            syncEl.style.color = 'var(--text-muted)';
+            container.title = 'Sensor online. Click to sync now.';
+        }
+        
+        lucide.createIcons();
+    };
+
+    window.triggerSensorSync = async function() {
+        const container = $('info-sensor-container');
+        if (container) {
+            container.style.opacity = '0.6';
+            const syncEl = $('info-sensor-sync');
+            if (syncEl) syncEl.innerText = '(syncing...)';
+        }
+        await api.forceSyncSensors();
+        await window.updateLiveSensorWidget();
+        if (container) {
+            container.style.opacity = '1';
+        }
+    };
 
     function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash, txs, healthLogs) {
         if (batch.status === 'completed') {
@@ -1874,6 +1968,8 @@ if ('serviceWorker' in navigator) {
                                     <strong>${e.eggs || 0}</strong> eggs
                                     ${parseFloat(e.feed)>0 ? `<span style="color:var(--text-muted);"> &bull; ${(parseFloat(e.feed)).toFixed(1)}kg feed</span>` : ''}
                                     ${e.mortality>0 ? `<strong class="text-danger"> &bull; ${e.mortality} died</strong>` : ''}
+                                    ${e.temperature ? `<span style="color:var(--text-muted);"> &bull; ${e.temperature}°C</span>` : ''}
+                                    ${e.humidity ? `<span style="color:var(--text-muted);"> &bull; ${e.humidity}% RH</span>` : ''}
                                 </td>
                             `}
                         </tr>`;

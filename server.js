@@ -292,6 +292,216 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Load .env locally if not running in container (docker-compose injects environment variables directly, bypassing this)
+const dotenvPath = path.join(__dirname, '.env');
+if (fs.existsSync(dotenvPath)) {
+    const envConfig = fs.readFileSync(dotenvPath, 'utf8');
+    envConfig.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+            const parts = trimmed.split('=');
+            const key = parts[0].trim();
+            const value = parts.slice(1).join('=').trim();
+            if (key && value && !process.env[key]) {
+                process.env[key] = value;
+            }
+        }
+    });
+}
+
+// HTTP request helper for Tuya API
+const https = require('https');
+const crypto = require('crypto');
+
+async function syncTuyaSensor() {
+    const clientId = process.env.TUYA_CLIENT_ID;
+    const secret = process.env.TUYA_CLIENT_SECRET;
+    const deviceId = process.env.TUYA_DEVICE_ID;
+    const region = process.env.TUYA_REGION || 'eu';
+    
+    if (!clientId || !secret || !deviceId) {
+        console.log('Tuya Sync: credentials not fully configured in environment.');
+        return;
+    }
+    
+    const baseUrl = `openapi.tuya${region}.com`;
+    
+    function sign(clientId, secret, t, nonce, stringToSign, accessToken = '') {
+        const str = accessToken 
+            ? clientId + accessToken + t + nonce + stringToSign 
+            : clientId + t + nonce + stringToSign;
+        return crypto.createHmac('sha256', secret).update(str, 'utf8').digest('hex').toUpperCase();
+    }
+    
+    function request(method, path, body = null, accessToken = '') {
+        return new Promise((resolve, reject) => {
+            const t = Date.now().toString();
+            const nonce = crypto.randomUUID();
+            const bodyStr = body ? JSON.stringify(body) : '';
+            const contentHash = crypto.createHash('sha256').update(bodyStr, 'utf8').digest('hex');
+            const stringToSign = `${method}\n${contentHash}\n\n${path}`;
+            const signature = sign(clientId, secret, t, nonce, stringToSign, accessToken);
+            
+            const headers = {
+                'client_id': clientId,
+                'sign': signature,
+                't': t,
+                'sign_method': 'HMAC-SHA256',
+                'nonce': nonce,
+                'Content-Type': 'application/json'
+            };
+            if (accessToken) headers['access_token'] = accessToken;
+            
+            const req = https.request({
+                hostname: baseUrl,
+                port: 443,
+                path: path,
+                method: method,
+                headers: headers
+            }, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        reject(new Error(`Invalid JSON: ${data}`));
+                    }
+                });
+            });
+            req.on('error', reject);
+            if (bodyStr) req.write(bodyStr);
+            req.end();
+        });
+    }
+
+    try {
+        console.log('Tuya Sync: Fetching access token...');
+        const tokenRes = await request('GET', '/v1.0/token?grant_type=1');
+        if (!tokenRes.success) {
+            throw new Error(`Token request failed: ${tokenRes.msg || tokenRes.code}`);
+        }
+        
+        const accessToken = tokenRes.result.access_token;
+        console.log('Tuya Sync: Fetching device status...');
+        const statusRes = await request('GET', `/v1.0/devices/${deviceId}/status`, null, accessToken);
+        
+        if (!statusRes.success) {
+            throw new Error(`Device status request failed: ${statusRes.msg || statusRes.code}`);
+        }
+        
+        let temperature = null;
+        let humidity = null;
+        let battery = null;
+        
+        if (statusRes.result && Array.isArray(statusRes.result)) {
+            statusRes.result.forEach(item => {
+                const val = item.value;
+                if (item.code === 'va_temperature') {
+                    temperature = typeof val === 'number' && val > 100 ? val / 10 : val;
+                } else if (item.code === 'va_humidity') {
+                    humidity = typeof val === 'number' && val > 100 ? val / 10 : val;
+                } else if (item.code === 'battery_percentage') {
+                    battery = val;
+                }
+            });
+        }
+        
+        const sensorData = {
+            temperature,
+            humidity,
+            battery,
+            last_updated: new Date().toISOString(),
+            success: true
+        };
+        
+        console.log('Tuya Sync: Success, parsed data:', sensorData);
+        await runQuery(
+            'INSERT INTO entities (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP',
+            ['live_sensors', JSON.stringify(sensorData)]
+        );
+        
+        // Auto-fill today's daily log
+        await autoFillTodayLog(sensorData);
+        
+    } catch (err) {
+        console.error('Tuya Sync failed:', err.message);
+        
+        const row = await getQuery('SELECT value FROM entities WHERE key = ?', ['live_sensors']);
+        let cached = row ? JSON.parse(row.value) : {};
+        cached.success = false;
+        cached.error = err.message;
+        cached.last_attempt = new Date().toISOString();
+        
+        await runQuery(
+            'INSERT INTO entities (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP',
+            ['live_sensors', JSON.stringify(cached)]
+        );
+    }
+}
+
+async function autoFillTodayLog(sensorData) {
+    if (!sensorData.temperature && !sensorData.humidity) return;
+    try {
+        const batchesRows = await allQuery('SELECT data FROM batches');
+        const activeBatch = batchesRows
+            .map(r => JSON.parse(r.data))
+            .find(b => b.status === 'Active');
+            
+        if (!activeBatch) return;
+        
+        // Nairobi YYYY-MM-DD
+        const tzOffset = 3 * 60;
+        const localDate = new Date(Date.now() + tzOffset * 60 * 1000).toISOString().split('T')[0];
+        
+        const logRow = await getQuery('SELECT data FROM logs WHERE batch_id = ? AND date = ?', [activeBatch.id, localDate]);
+        if (logRow) {
+            const log = JSON.parse(logRow.data);
+            let updated = false;
+            
+            if (sensorData.humidity !== null && (log.humidity === null || log.humidity === undefined)) {
+                log.humidity = sensorData.humidity;
+                updated = true;
+            }
+            if (sensorData.temperature !== null && (log.temperature === null || log.temperature === undefined)) {
+                log.temperature = sensorData.temperature;
+                updated = true;
+            }
+            
+            if (updated) {
+                await runQuery('UPDATE logs SET data = ? WHERE batch_id = ? AND date = ?', [JSON.stringify(log), activeBatch.id, localDate]);
+                console.log(`Tuya Sync: Updated today's log (${localDate}) with temperature: ${log.temperature}°C, humidity: ${log.humidity}%`);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to auto-fill today\'s log:', e.message);
+    }
+}
+
+// GET Live Sensors status
+app.get('/api/sensors/live', async (req, res) => {
+    try {
+        const row = await getQuery('SELECT value FROM entities WHERE key = ?', ['live_sensors']);
+        res.json(row ? JSON.parse(row.value) : { success: false, error: 'No sensor data available' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Force sync trigger
+app.post('/api/sensors/sync', async (req, res) => {
+    try {
+        await syncTuyaSensor();
+        const row = await getQuery('SELECT value FROM entities WHERE key = ?', ['live_sensors']);
+        res.json(row ? JSON.parse(row.value) : { success: false });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Poultry DSS backend running on port ${PORT}`);
+    // Trigger sync on startup, then every 15 minutes
+    syncTuyaSensor();
+    setInterval(syncTuyaSensor, 15 * 60 * 1000);
 });
