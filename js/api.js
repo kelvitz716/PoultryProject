@@ -1,0 +1,28 @@
+export const api = {
+    async getEntity(key, def) { try { const r = await fetch('/api/entities/'+key); return r.ok ? ((await r.json()) ?? def) : def; } catch(e){return def;} },
+    async setEntity(key, val) { await fetch('/api/entities/'+key, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({value:val})}); },
+    async getProposals() { try { const r = await fetch('/api/proposals'); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveProposal(p) { await fetch('/api/proposals', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)}); },
+    async deleteProposal(id) { await fetch('/api/proposals/'+id, {method:'DELETE', headers:{'x-confirm-delete':'true'}}); },
+    async getBatches() { try { const r = await fetch('/api/batches'); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveBatch(b) { await fetch('/api/batches', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)}); },
+    async deleteBatch(id) { await fetch('/api/batches/'+id, {method:'DELETE', headers:{'x-confirm-delete':'true'}}); },
+    async clearAllBatches() { await fetch('/api/batches', {method:'DELETE', headers:{'x-confirm-delete':'true'}}); },
+    async getLogs(bId) { try { const r = await fetch('/api/logs/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveLog(bId, l) { await fetch('/api/logs/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(l)}); },
+    async getTransactions(bId) { try { const r = await fetch('/api/transactions/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveTransaction(bId, tx) { await fetch('/api/transactions/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(tx)}); },
+    async deleteTransaction(bId, id) { await fetch('/api/transactions/'+bId+'/'+id, {method:'DELETE'}); },
+    async clearLogs(bId) { await fetch('/api/logs/'+bId, {method:'DELETE'}); },
+    async clearTransactions(bId) { await fetch('/api/transactions/'+bId, {method:'DELETE'}); },
+    async getSnapshots() { try { const r = await fetch('/api/snapshots'); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveSnapshot(s) { await fetch('/api/snapshots', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(s)}); },
+    async clearAllSnapshots() { await fetch('/api/snapshots', {method:'DELETE', headers:{'x-confirm-delete':'true'}}); },
+    async clearAllProposals() { await fetch('/api/proposals', {method:'DELETE', headers:{'x-confirm-delete':'true'}}); },
+    async getHealthLogs(bId) { try { const r = await fetch('/api/health/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
+    async saveHealthLog(bId, log) { await fetch('/api/health/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(log)}); },
+    
+    // Fallback for UI settings
+    getTheme() { return localStorage.getItem('poultryTheme') || 'system'; },
+    setTheme(t) { localStorage.setItem('poultryTheme', t); }
+};
