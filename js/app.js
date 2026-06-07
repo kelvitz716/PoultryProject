@@ -1685,7 +1685,14 @@ if ('serviceWorker' in navigator) {
 
         const recent3 = kpis.recent7.slice(0, 3);
         const lowLayCount = recent3.filter(l => (l.eggs / (l.birds || batch.size)) < (t.minLayRatePercent/100)).length;
-        if (lowLayCount >= t.consecutiveLowDays) alerts.push({ type: 'danger', icon: 'alert-circle', text: `Production Crisis: Lay rate below ${t.minLayRatePercent}%!` });
+        // Suppress production crisis during ramp-up (first 42 days of laying)
+        const layStartDate = batch.layStartDate ? new Date(batch.layStartDate) : null;
+        const daysSinceLaying = layStartDate ? Math.floor((now - layStartDate) / 86400000) : 999;
+        if (lowLayCount >= t.consecutiveLowDays && daysSinceLaying > 42) {
+            alerts.push({ type: 'danger', icon: 'alert-circle', text: `Production Crisis: Lay rate below ${t.minLayRatePercent}%!` });
+        } else if (lowLayCount >= t.consecutiveLowDays && daysSinceLaying <= 42) {
+            alerts.push({ type: 'info', icon: 'trending-up', text: `Ramp-up phase: Lay rate is expected to be low in the first 6 weeks of production. Currently Day ${daysSinceLaying} since first egg.` });
+        }
         if (kpis.feedConversion > t.maxFeedConversion) alerts.push({ type: 'warning', icon: 'trending-up', text: `High conversion: ${kpis.feedConversion.toFixed(2)}kg/doz` });
         
         const dailyNeed = kpis.avgDailyFeedPerBird * kpis.currentBirds;
@@ -1721,7 +1728,9 @@ if ('serviceWorker' in navigator) {
             alerts.push({ type: 'danger', icon: 'alert-triangle', text: `⚠️ Eggs under withdrawal — discard until ${withdrawal.eggClearDate.toLocaleDateString()}` });
         }
 
-        const batchAgeDays = Math.floor((now - new Date(batch.startDate)) / 86400000);
+        // Use hatchDate for biological age (vaccine scheduling), fall back to startDate
+        const ageOrigin = batch.hatchDate ? new Date(batch.hatchDate) : new Date(batch.startDate);
+        const batchAgeDays = Math.floor((now - ageOrigin) / 86400000);
         const batchAgeWeeks = batchAgeDays / 7;
 
         // Module 1 Biological Alerts
