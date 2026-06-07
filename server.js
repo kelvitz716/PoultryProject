@@ -288,10 +288,6 @@ app.get('/api/export/:batchId', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
 // Load .env locally if not running in container (docker-compose injects environment variables directly, bypassing this)
 const fs = require('fs');
 const dotenvPath = path.join(__dirname, '.env');
@@ -498,6 +494,10 @@ app.post('/api/sensors/sync', async (req, res) => {
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
+});
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(PORT, () => {
