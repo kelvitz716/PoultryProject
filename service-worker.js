@@ -1,15 +1,15 @@
-const CACHE_NAME = 'poultry-dss-v1';
+const CACHE_NAME = 'poultry-dss-v4';
 const ASSETS_TO_CACHE = [
-    '/',
-    '/index.html',
-    '/css/styles.css',
-    '/js/app.js',
-    '/js/api.js',
-    '/js/engine.js',
-    '/js/ui.js',
-    '/manifest.json',
-    '/assets/favicon.png',
-    '/assets/favicon.svg',
+    new Request('/', { cache: 'reload' }),
+    new Request('/index.html', { cache: 'reload' }),
+    new Request('/css/styles.css', { cache: 'reload' }),
+    new Request('/js/app.js', { cache: 'reload' }),
+    new Request('/js/api.js', { cache: 'reload' }),
+    new Request('/js/engine.js', { cache: 'reload' }),
+    new Request('/js/ui.js', { cache: 'reload' }),
+    new Request('/manifest.json', { cache: 'reload' }),
+    new Request('/assets/favicon.png', { cache: 'reload' }),
+    new Request('/assets/favicon.svg', { cache: 'reload' }),
     'https://unpkg.com/lucide@latest',
     'https://cdn.jsdelivr.net/npm/chart.js'
 ];
@@ -19,7 +19,7 @@ self.addEventListener('install', event => {
         caches.open(CACHE_NAME).then(cache => {
             console.log('[Service Worker] Caching app shell');
             return cache.addAll(ASSETS_TO_CACHE);
-        })
+        }).then(() => self.skipWaiting()) // activate immediately, don't wait for old tabs to close
     );
 });
 
@@ -34,7 +34,7 @@ self.addEventListener('activate', event => {
                     }
                 })
             );
-        })
+        }).then(() => self.clients.claim()) // take control of all open tabs immediately
     );
 });
 

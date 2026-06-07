@@ -1310,6 +1310,29 @@ if ('serviceWorker' in navigator) {
             </div>
         `;
         lucide.createIcons();
+
+        // Inject sensor chip programmatically — always after template is set
+        (function injectSensorChip() {
+            const actionsBar = document.querySelector('#view-batch-cockpit .cockpit-actions');
+            if (!actionsBar) { console.warn('[SensorChip] .cockpit-actions not found'); return; }
+            const existing = document.getElementById('sensor-popover-chip');
+            if (existing) existing.remove();
+            const chip = document.createElement('button');
+            chip.id = 'sensor-popover-chip';
+            chip.title = 'Coop Live Environment';
+            chip.setAttribute('style', 'padding:0 10px;height:32px;border-radius:30px;background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff;border:none;display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;box-shadow:0 0 0 2px rgba(99,102,241,0.25);cursor:pointer;flex-shrink:0;');
+            chip.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg><span id="sensor-chip-temp">—°C</span><span style="opacity:0.6">|</span><span id="sensor-chip-hum">—%</span>';
+            chip.addEventListener('click', function(e) { window.toggleSensorPopover(e); });
+            // Insert after Export button (first button in actionsBar)
+            const exportBtn = actionsBar.querySelector('button');
+            if (exportBtn && exportBtn.nextSibling) {
+                actionsBar.insertBefore(chip, exportBtn.nextSibling);
+            } else {
+                actionsBar.appendChild(chip);
+            }
+            console.log('[SensorChip] Injected successfully into .cockpit-actions');
+        })();
+
         switchView('batch-cockpit');
         refreshCockpitData(batch);
     };
@@ -1696,6 +1719,9 @@ if ('serviceWorker' in navigator) {
             if (tempInput && !tempInput.value) {
                 tempInput.value = res.temperature.toFixed(1);
             }
+            // Update chip
+            const chipTemp = $('sensor-chip-temp');
+            if (chipTemp) chipTemp.innerText = res.temperature.toFixed(1) + '°C';
         } else {
             $('info-sensor-temp').innerText = '— °C';
         }
@@ -1707,6 +1733,9 @@ if ('serviceWorker' in navigator) {
             if (humInput && !humInput.value) {
                 humInput.value = res.humidity.toFixed(0);
             }
+            // Update chip
+            const chipHum = $('sensor-chip-hum');
+            if (chipHum) chipHum.innerText = res.humidity.toFixed(0) + '%';
         } else {
             $('info-sensor-hum').innerText = '—% RH';
         }
@@ -1723,9 +1752,9 @@ if ('serviceWorker' in navigator) {
             container.style.borderColor = '#fca5a5';
             container.style.background = '#fee2e2';
             container.style.color = '#dc2626';
-            syncEl.innerText = '⚠️ Core Plan Expired';
+            syncEl.innerText = `⚠️ ${res.error || 'Sync error'}`;
             syncEl.style.color = '#dc2626';
-            container.title = `Sync failing: ${res.error || 'unknown error'}. Click to retry. Ensure Tuya Cloud Core is renewed at iot.tuya.com.`;
+            container.title = `Sync error: ${res.error || 'unknown'}. Click to retry.`;
         } else {
             container.style.borderColor = 'var(--border-color)';
             container.style.background = 'var(--bg-white)';
@@ -1757,7 +1786,292 @@ if ('serviceWorker' in navigator) {
         if (container) {
             container.style.opacity = '1';
         }
+        // Refresh popover chart if it's open
+        const popover = document.getElementById('sensor-popover');
+        if (popover && popover.style.display !== 'none') {
+            await window.renderSensorPopover();
+        }
     };
+
+    // ── Sensor Popover ─────────────────────────────────────────────────────────
+    let _sensorPopoverChartInstance = null;
+
+    window.toggleSensorPopover = async function(e) {
+        e.stopPropagation();
+        let popover = document.getElementById('sensor-popover');
+        if (popover) {
+            const isVisible = popover.style.display !== 'none';
+            popover.style.display = isVisible ? 'none' : 'block';
+            if (!isVisible) await window.renderSensorPopover();
+            return;
+        }
+
+        // Build the popover DOM once
+        popover = document.createElement('div');
+        popover.id = 'sensor-popover';
+        popover.className = 'sensor-popover';
+        popover.innerHTML = `
+            <div class="sp-header">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span class="sp-icon-wrap"><i data-lucide="thermometer" style="width:16px;height:16px;color:#0ea5e9;"></i></span>
+                    <div>
+                        <div class="sp-title">Coop Live Environment</div>
+                        <div class="sp-subtitle" id="sp-last-sync">Loading…</div>
+                    </div>
+                </div>
+                <button onclick="window.triggerSensorSync()" class="sp-sync-btn" title="Sync now">
+                    <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i>
+                </button>
+            </div>
+
+            <div class="sp-gauges">
+                <div class="sp-gauge" id="sp-gauge-temp">
+                    <div class="sp-gauge-icon">🌡️</div>
+                    <div class="sp-gauge-value" id="sp-temp-val">—</div>
+                    <div class="sp-gauge-label">Temperature</div>
+                    <div class="sp-gauge-bar-wrap"><div class="sp-gauge-bar" id="sp-temp-bar" style="width:0%; background:linear-gradient(90deg,#0ea5e9,#f97316);"></div></div>
+                    <div class="sp-gauge-range"><span>10°C</span><span>40°C</span></div>
+                </div>
+                <div class="sp-gauge" id="sp-gauge-hum">
+                    <div class="sp-gauge-icon">💧</div>
+                    <div class="sp-gauge-value" id="sp-hum-val">—</div>
+                    <div class="sp-gauge-label">Humidity</div>
+                    <div class="sp-gauge-bar-wrap"><div class="sp-gauge-bar" id="sp-hum-bar" style="width:0%; background:linear-gradient(90deg,#38bdf8,#818cf8);"></div></div>
+                    <div class="sp-gauge-range"><span>0%</span><span>100%</span></div>
+                </div>
+                <div class="sp-gauge sp-gauge-battery" id="sp-gauge-bat">
+                    <div class="sp-gauge-icon">🔋</div>
+                    <div class="sp-gauge-value" id="sp-bat-val">—</div>
+                    <div class="sp-gauge-label">Battery</div>
+                    <div class="sp-gauge-bar-wrap"><div class="sp-gauge-bar" id="sp-bat-bar" style="width:0%; background:linear-gradient(90deg,#22c55e,#a3e635);"></div></div>
+                    <div class="sp-gauge-range"><span>0%</span><span>100%</span></div>
+                </div>
+            </div>
+
+            <div class="sp-chart-section">
+                <div class="sp-chart-title">7-Day History</div>
+                <div style="position:relative; height:120px;">
+                    <canvas id="sp-history-chart"></canvas>
+                </div>
+                <div class="sp-chart-legend">
+                    <span><span class="sp-legend-dot" style="background:#0ea5e9;"></span>Temp (°C)</span>
+                    <span><span class="sp-legend-dot" style="background:#818cf8;"></span>Humidity (%)</span>
+                </div>
+                <div id="sp-no-history" style="display:none; text-align:center; color:var(--text-muted); font-size:12px; padding:20px 0;">No historical data yet. Log some days with the sensor connected.</div>
+            </div>
+        `;
+        document.body.appendChild(popover);
+        lucide.createIcons();
+
+        // Position below the chip button
+        window.positionSensorPopover();
+        await window.renderSensorPopover();
+
+        // Dismiss on outside click
+        document.addEventListener('click', function outsideClick(ev) {
+            const pop = document.getElementById('sensor-popover');
+            const chip = document.getElementById('sensor-popover-chip');
+            if (pop && !pop.contains(ev.target) && chip && !chip.contains(ev.target)) {
+                pop.style.display = 'none';
+                document.removeEventListener('click', outsideClick);
+            }
+        });
+    };
+
+    window.positionSensorPopover = function() {
+        const chip = document.getElementById('sensor-popover-chip');
+        const popover = document.getElementById('sensor-popover');
+        if (!chip || !popover) return;
+        const rect = chip.getBoundingClientRect();
+        const scrollY = window.scrollY || document.documentElement.scrollTop;
+        popover.style.top = (rect.bottom + scrollY + 8) + 'px';
+        // Anchor to right edge of chip, shift left so popover doesn't overflow
+        const popW = 320;
+        let left = rect.right - popW;
+        if (left < 8) left = 8;
+        popover.style.left = left + 'px';
+        popover.style.display = 'block';
+    };
+
+    window.renderSensorPopover = async function() {
+        const res = await api.getLiveSensors();
+        const history = await api.getSensorHistory();
+
+        // Last sync label + error detail panel
+        const syncLabel = document.getElementById('sp-last-sync');
+        const existingErrBox = document.getElementById('sp-error-box');
+        if (existingErrBox) existingErrBox.remove();
+
+        if (syncLabel) {
+            if (res && res.last_updated) {
+                const diffMin = Math.round((Date.now() - new Date(res.last_updated).getTime()) / 60000);
+                const timeStr = diffMin <= 0 ? 'just now' : diffMin < 60 ? `${diffMin}m ago` : `${Math.floor(diffMin/60)}h ago`;
+                syncLabel.innerHTML = res.success
+                    ? `<span style="color:#22c55e;">●</span> Live · synced ${timeStr}`
+                    : `<span style="color:#ef4444;">●</span> Sync error · ${timeStr}`;
+            } else {
+                syncLabel.textContent = 'No data yet';
+            }
+        }
+
+        // Error detail box
+        if (res && !res.success) {
+            const errBox = document.createElement('div');
+            errBox.id = 'sp-error-box';
+            errBox.style.cssText = 'margin:0; padding:10px 14px 12px; background:#fff1f2; border-bottom:1px solid #fecdd3;';
+            const errorText   = res.error      || 'Unknown error';
+            const errorCode   = res.error_code  != null ? String(res.error_code) : null;
+            const errorRaw    = res.error_raw    ? JSON.stringify(res.error_raw, null, 2) : null;
+
+            errBox.innerHTML = `
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                    <i data-lucide="alert-triangle" style="width:13px;height:13px;color:#ef4444;flex-shrink:0;"></i>
+                    <span style="font-size:11px;font-weight:700;color:#dc2626;">Cloud API Error</span>
+                    ${errorCode ? `<span style="margin-left:auto;font-size:10px;font-family:monospace;background:#fecdd3;color:#9f1239;padding:1px 6px;border-radius:4px;">code&nbsp;${errorCode}</span>` : ''}
+                </div>
+                <div style="font-size:11px;color:#be123c;margin-bottom:${errorRaw ? '8px' : '0'};word-break:break-word;">${errorText}</div>
+                ${errorRaw ? `
+                <details style="margin-top:4px;">
+                    <summary style="font-size:10px;color:#9f1239;cursor:pointer;user-select:none;font-weight:600;">Raw API response ▾</summary>
+                    <pre style="margin:6px 0 0;font-size:9px;color:#7f1d1d;background:#ffe4e6;border-radius:6px;padding:8px;overflow:auto;max-height:120px;white-space:pre-wrap;word-break:break-all;">${errorRaw.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+                </details>` : ''}
+            `;
+            // Insert below header
+            const header = document.querySelector('#sensor-popover .sp-header');
+            if (header) header.insertAdjacentElement('afterend', errBox);
+            lucide.createIcons();
+        }
+
+        // Temperature gauge
+        if (res && res.temperature != null) {
+            const tv = document.getElementById('sp-temp-val');
+            const tb = document.getElementById('sp-temp-bar');
+            if (tv) tv.textContent = res.temperature.toFixed(1) + '°C';
+            if (tb) {
+                const pct = Math.min(100, Math.max(0, ((res.temperature - 10) / 30) * 100));
+                tb.style.width = pct + '%';
+                // Color coding: ideal 18-28°C
+                tb.style.background = res.temperature < 15 || res.temperature > 32
+                    ? 'linear-gradient(90deg,#ef4444,#f97316)'
+                    : 'linear-gradient(90deg,#0ea5e9,#22d3ee)';
+            }
+        }
+
+        // Humidity gauge
+        if (res && res.humidity != null) {
+            const hv = document.getElementById('sp-hum-val');
+            const hb = document.getElementById('sp-hum-bar');
+            if (hv) hv.textContent = res.humidity.toFixed(0) + '%';
+            if (hb) {
+                hb.style.width = Math.min(100, res.humidity) + '%';
+                hb.style.background = res.humidity > 80 || res.humidity < 40
+                    ? 'linear-gradient(90deg,#f97316,#ef4444)'
+                    : 'linear-gradient(90deg,#38bdf8,#818cf8)';
+            }
+        }
+
+        // Battery gauge
+        if (res && res.battery != null) {
+            const bv = document.getElementById('sp-bat-val');
+            const bb = document.getElementById('sp-bat-bar');
+            const bg = document.getElementById('sp-gauge-bat');
+            if (bv) bv.textContent = res.battery + '%';
+            if (bb) {
+                bb.style.width = res.battery + '%';
+                bb.style.background = res.battery < 20
+                    ? 'linear-gradient(90deg,#ef4444,#f97316)'
+                    : 'linear-gradient(90deg,#22c55e,#a3e635)';
+            }
+            if (bg) bg.style.display = '';
+        } else {
+            const bg = document.getElementById('sp-gauge-bat');
+            if (bg) bg.style.display = 'none';
+        }
+
+        // History chart
+        const noHistory = document.getElementById('sp-no-history');
+        const canvas = document.getElementById('sp-history-chart');
+        if (!canvas) return;
+
+        if (!history || history.length === 0) {
+            if (noHistory) { noHistory.style.display = ''; canvas.style.display = 'none'; }
+            return;
+        }
+        if (noHistory) { noHistory.style.display = 'none'; canvas.style.display = ''; }
+
+        const labels = history.map(h => {
+            const d = new Date(h.date + 'T00:00:00');
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        const temps = history.map(h => h.temperature);
+        const hums  = history.map(h => h.humidity);
+
+        if (_sensorPopoverChartInstance) {
+            _sensorPopoverChartInstance.data.labels = labels;
+            _sensorPopoverChartInstance.data.datasets[0].data = temps;
+            _sensorPopoverChartInstance.data.datasets[1].data = hums;
+            _sensorPopoverChartInstance.update();
+            return;
+        }
+
+        _sensorPopoverChartInstance = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'Temp (°C)',
+                        data: temps,
+                        borderColor: '#0ea5e9',
+                        backgroundColor: 'rgba(14,165,233,0.1)',
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointBackgroundColor: '#0ea5e9',
+                        tension: 0.4,
+                        fill: true,
+                        yAxisID: 'yTemp'
+                    },
+                    {
+                        label: 'Humidity (%)',
+                        data: hums,
+                        borderColor: '#818cf8',
+                        backgroundColor: 'rgba(129,140,248,0.08)',
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointBackgroundColor: '#818cf8',
+                        tension: 0.4,
+                        fill: true,
+                        yAxisID: 'yHum'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { display: false }, tooltip: { callbacks: {
+                    label: ctx => ctx.datasetIndex === 0
+                        ? `🌡️ ${ctx.parsed.y?.toFixed(1) ?? '—'}°C`
+                        : `💧 ${ctx.parsed.y?.toFixed(0) ?? '—'}%`
+                }}},
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#94a3b8' } },
+                    yTemp: {
+                        position: 'left',
+                        ticks: { font: { size: 10 }, color: '#0ea5e9', callback: v => v + '°' },
+                        grid: { color: 'rgba(148,163,184,0.1)' }
+                    },
+                    yHum: {
+                        position: 'right',
+                        ticks: { font: { size: 10 }, color: '#818cf8', callback: v => v + '%' },
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    };
+
+
 
     function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash, txs, healthLogs) {
         if (batch.status === 'completed') {

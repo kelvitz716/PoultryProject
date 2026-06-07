@@ -49,6 +49,16 @@ app.use((req, res, next) => {
     next();
 });
 
+app.get('/service-worker.js', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.sendFile(path.join(__dirname, 'service-worker.js'));
+});
+
+app.get('/js/:file', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.sendFile(path.join(__dirname, 'js', req.params.file));
+});
+
 app.use(express.static(__dirname, { index: 'index.html', dotfiles: 'deny' }));
 
 const normalizeId = (id) => id ? String(id).replace(/\.0$/, '') : id;
@@ -372,19 +382,28 @@ async function syncTuyaSensor() {
         });
     }
 
+    let _lastRawResponse = null; // capture the most recent raw API body for error reporting
     try {
         console.log('Tuya Sync: Fetching access token...');
         const tokenRes = await request('GET', '/v1.0/token?grant_type=1');
+        _lastRawResponse = tokenRes;
         if (!tokenRes.success) {
-            throw new Error(`Token request failed: ${tokenRes.msg || tokenRes.code}`);
+            const err = new Error(`Token request failed: ${tokenRes.msg || tokenRes.code}`);
+            err.apiCode = tokenRes.code;
+            err.apiRaw  = tokenRes;
+            throw err;
         }
         
         const accessToken = tokenRes.result.access_token;
         console.log('Tuya Sync: Fetching device status...');
         const statusRes = await request('GET', `/v1.0/devices/${deviceId}/status`, null, accessToken);
+        _lastRawResponse = statusRes;
         
         if (!statusRes.success) {
-            throw new Error(`Device status request failed: ${statusRes.msg || statusRes.code}`);
+            const err = new Error(`Device status request failed: ${statusRes.msg || statusRes.code}`);
+            err.apiCode = statusRes.code;
+            err.apiRaw  = statusRes;
+            throw err;
         }
         
         let temperature = null;
@@ -422,12 +441,14 @@ async function syncTuyaSensor() {
         await autoFillTodayLog(sensorData);
         
     } catch (err) {
-        console.error('Tuya Sync failed:', err.message);
+        console.error('Tuya Sync failed:', err.message, err.apiRaw || '');
         
         const row = await getQuery('SELECT value FROM entities WHERE key = ?', ['live_sensors']);
         let cached = row ? JSON.parse(row.value) : {};
-        cached.success = false;
-        cached.error = err.message;
+        cached.success      = false;
+        cached.error        = err.message;
+        cached.error_code   = err.apiCode   || null;   // Tuya numeric error code (e.g. 1010)
+        cached.error_raw    = err.apiRaw    || null;   // full raw JSON body from Tuya
         cached.last_attempt = new Date().toISOString();
         
         await runQuery(
@@ -474,6 +495,40 @@ async function autoFillTodayLog(sensorData) {
         console.error('Failed to auto-fill today\'s log:', e.message);
     }
 }
+
+// GET Sensor history from daily logs (last 7 days of the active batch)
+app.get('/api/sensors/history', async (req, res) => {
+    try {
+        const batchesRows = await allQuery('SELECT data FROM batches');
+        const activeBatch = batchesRows
+            .map(r => JSON.parse(r.data))
+            .find(b => b.status === 'Active' || b.status === 'active' || b.status === 'post_batch');
+
+        if (!activeBatch) {
+            return res.json([]);
+        }
+
+        const rows = await allQuery(
+            'SELECT data FROM logs WHERE batch_id = ? ORDER BY date DESC LIMIT 14',
+            [activeBatch.id]
+        );
+
+        const history = rows
+            .map(r => JSON.parse(r.data))
+            .filter(l => l.temperature != null || l.humidity != null)
+            .slice(0, 7)
+            .reverse()
+            .map(l => ({
+                date: l.date,
+                temperature: l.temperature ?? null,
+                humidity: l.humidity ?? null
+            }));
+
+        res.json(history);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 // GET Live Sensors status
 app.get('/api/sensors/live', async (req, res) => {
