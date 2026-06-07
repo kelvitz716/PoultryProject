@@ -293,6 +293,7 @@ app.get('*', (req, res) => {
 });
 
 // Load .env locally if not running in container (docker-compose injects environment variables directly, bypassing this)
+const fs = require('fs');
 const dotenvPath = path.join(__dirname, '.env');
 if (fs.existsSync(dotenvPath)) {
     const envConfig = fs.readFileSync(dotenvPath, 'utf8');
