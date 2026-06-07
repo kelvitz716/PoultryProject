@@ -1671,6 +1671,7 @@ if ('serviceWorker' in navigator) {
             return;
         }
 
+        const now = new Date();
         const alerts = [];
         const t = farmProfile.alertThresholds;
 
@@ -1700,7 +1701,6 @@ if ('serviceWorker' in navigator) {
         if (cash < 5000) alerts.push({ type: 'warning', icon: 'wallet', text: `Low Cash: KES ${cash.toLocaleString()}` });
 
         // --- NEW ALERTS ---
-        const now = new Date();
         const seasonInfo = getKitaleSeason(now);
         const latestLog = kpis.recent7[0] || {};
         const currentHumidity = latestLog.humidity || 0;
