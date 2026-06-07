@@ -17,7 +17,8 @@ app.use(cors({
         if (!origin) return callback(null, true);
         const isAllowed = allowedOrigins.includes(origin);
         const isLan = /^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|127\.0\.0\.1)(:\d+)?$/.test(origin);
-        if (isAllowed || isLan) {
+        const isTailscale = /\.ts\.net(:\d+)?$/.test(origin) || origin.startsWith('https://aws-host') || origin.startsWith('https://oci-host');
+        if (isAllowed || isLan || isTailscale) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
