@@ -2,15 +2,16 @@ version: '3.8'
 
 services:
   poultry-dss:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: poultry-dss
     ports:
       - "8089:80"
     restart: always
     volumes:
-      # Mount the static files for rapid dev
-      - .:/app:z
       # Specifically persist the SQLite database volume securely
-      - ./data:/app/data:z
-      # Prevent host empty node_modules from overwriting docker node_modules
-      - /app/node_modules
+      - ./data:/app/data
+    env_file:
+      - .env
+

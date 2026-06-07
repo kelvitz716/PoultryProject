@@ -1,488 +1,47 @@
-let farmProfile; // Global farm profile, will be loaded on DOMContentLoaded
+import { api } from './api.js';
+import {
+    ISA_BROWN_CONSTANTS, KITALE_CLIMATE_BASELINE, KENCHIC_SCHEDULE,
+    DRUG_WITHDRAWAL_TABLE, getKitaleSeason, FEED_SCHEDULE,
+    VACCINATION_SCHEDULE, KB_CONTENT, DEFAULT_FARM_PROFILE,
+    sackBackfill, parseEggTrackerCSV, computeKPIs, computeEggInventoryAging
+} from './engine.js';
+import { $, showToast, showConfirmModal, updateGlobalNotifications } from './ui.js';
+
+let farmProfile = { ...DEFAULT_FARM_PROFILE }; // Global farm profile, loaded at startup
 let currentBatchId = null;
 let _cockpitChartInstance = null;
 let allBatches = []; // Cache for batches
 
+window.addEventListener('unhandledrejection', e => {
+    console.error('[unhandled rejection]', e.reason);
+});
 
+// Register Service Worker for offline PWA capabilities
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then(reg => console.log('[PWA] Service Worker registered successfully on scope:', reg.scope))
+            .catch(err => console.error('[PWA] Service Worker registration failed:', err));
+    });
+}
 
-const api = {
-    async getEntity(key, def) { try { const r = await fetch('/api/entities/'+key); return r.ok ? ((await r.json()) ?? def) : def; } catch(e){return def;} },
-    async setEntity(key, val) { await fetch('/api/entities/'+key, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({value:val})}); },
-    async getProposals() { try { const r = await fetch('/api/proposals'); return r.ok ? await r.json() : []; } catch(e){return [];} },
-    async saveProposal(p) { await fetch('/api/proposals', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)}); },
-    async deleteProposal(id) { await fetch('/api/proposals/'+id, {method:'DELETE'}); },
-    async getBatches() { try { const r = await fetch('/api/batches'); return r.ok ? await r.json() : []; } catch(e){return [];} },
-    async saveBatch(b) { await fetch('/api/batches', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)}); },
-    async deleteBatch(id) { await fetch('/api/batches/'+id, {method:'DELETE'}); },
-    async getLogs(bId) { try { const r = await fetch('/api/logs/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
-    async saveLog(bId, l) { await fetch('/api/logs/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(l)}); },
-    async getTransactions(bId) { try { const r = await fetch('/api/transactions/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
-    async saveTransaction(bId, tx) { await fetch('/api/transactions/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(tx)}); },
-    async deleteTransaction(bId, id) { await fetch('/api/transactions/'+bId+'/'+id, {method:'DELETE'}); },
-    async clearLogs(bId) { await fetch('/api/logs/'+bId, {method:'DELETE'}); },
-    async clearTransactions(bId) { await fetch('/api/transactions/'+bId, {method:'DELETE'}); },
-    async getSnapshots() { try { const r = await fetch('/api/snapshots'); return r.ok ? await r.json() : []; } catch(e){return [];} },
-    async saveSnapshot(s) { await fetch('/api/snapshots', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(s)}); },
-    async getHealthLogs(bId) { try { const r = await fetch('/api/health/'+bId); return r.ok ? await r.json() : []; } catch(e){return [];} },
-    async saveHealthLog(bId, log) { await fetch('/api/health/'+bId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(log)}); },
-    
-    // Fallback for UI settings
-    getTheme() { return localStorage.getItem('poultryTheme') || 'system'; },
-    setTheme(t) { localStorage.setItem('poultryTheme', t); }
-};
-
-const $ = id => document.getElementById(id);
-
-document.addEventListener('DOMContentLoaded', async () => {
+(async () => {
     lucide.createIcons();
 
-
-
-    // ===================== DATA MODELS =====================
-    const ISA_BROWN_CONSTANTS = {
-        targetLiveability: 93.2,
-        targetPeakProduction: 95.0,
-        pointOfLayWeeks: [18, 20],
-        spentCullingWeeks: [72, 78]
-    };
-
-    const KITALE_CLIMATE_BASELINE = {
-        ambientDayMin: 16,
-        ambientDayMax: 26,
-        ambientNightMin: 12,
-        ambientNightMax: 14
-    };
-
-    const KENCHIC_SCHEDULE = [
-        { name: 'Newcastle (HB1/La Sota)', dayRange: [5, 7], boosterDays: 75 },
-        { name: 'Gumboro (IBD)', dayRange: [10, 14], boosterDays: 14 },
-        { name: 'Fowl Pox', dayRange: [35, 42], boosterDays: null }
-    ];
-
-    const DRUG_WITHDRAWAL_TABLE = {
-        'Aliseryl WS': { egg: 1, meat: 7 },
-        'Oxytetracycline': { egg: 3, meat: 3 },
-        'Amoxicillin': { egg: 3, meat: 3 },
-        'Tylosin': { egg: 3, meat: 1 },
-        'Levamisole': { egg: 14, meat: 14 }
-    };
-
-    function getKitaleSeason(date) {
-        const month = date.getMonth(); // 0-11
-        if ([11, 0, 1, 2].includes(month)) return { season: 'dry', riskLevel: 'low' };
-        if (month >= 3 && month <= 9) return { season: 'rains', riskLevel: 'high' };
-        return { season: 'short-rains', riskLevel: 'medium' };
-    }
-
-    const FEED_SCHEDULE = [
-        { phase: 'Chick Mash', weeks: '0 – 8', type: 'High Protein Crumbs', kgPerBird: 2.0, bagCost: 4200 },
-        { phase: 'Growers Mash',   weeks: '9 – 18', type: 'Grower Mash',        kgPerBird: 5.5, bagCost: 3800 },
-        { phase: 'Layers Complete Meal',    weeks: '18+',     type: 'Layer Mash',         kgPerBird: 0.12, bagCost: 3500, note: 'per day' }
-    ];
-
-    const VACCINATION_SCHEDULE = [
-        { day: 'Day 1',      vaccine: 'Marek\'s Disease',   method: 'Injection (at hatchery)', notes: 'Usually done by Kenchic before pickup' },
-        { day: 'Day 5–7',    vaccine: 'Newcastle (HB1/La Sota)', method: 'Eye drop / Drinking water', notes: 'First dose' },
-        { day: 'Day 10–14',  vaccine: 'Gumboro (IBD)',      method: 'Drinking water', notes: 'First dose' },
-        { day: 'Day 18–21',  vaccine: 'Newcastle (Booster)',method: 'Drinking water', notes: 'Second dose' },
-        { day: 'Day 24–28',  vaccine: 'Gumboro (Booster)',  method: 'Drinking water', notes: 'Second dose' },
-        { day: 'Week 6',     vaccine: 'Fowl Pox',          method: 'Wing web stab', notes: 'Critical for tropics' },
-        { day: 'Week 8',     vaccine: 'Newcastle (Komarov)', method: 'Injection (IM)', notes: 'Long-lasting protection' },
-        { day: 'Week 10',    vaccine: 'Fowl Typhoid',       method: 'Injection (SC)', notes: 'Optional but recommended' },
-        { day: 'Week 14–16', vaccine: 'Newcastle (La Sota)', method: 'Drinking water', notes: 'Pre-lay booster' },
-        { day: 'Week 16–18', vaccine: 'Deworming',         method: 'Oral (Piperazine)', notes: 'Before point of lay' },
-    ];
-
-    const KB_CONTENT = {
-        'lifecycle-milestones': {
-            title: 'Lifecycle Milestones (ISA Brown)',
-            html: `
-                <h2>Lifecycle Milestones & Production Targets</h2>
-                <p>These performance constants are embedded in the Poultry DSS alert engine to track genetic potential deviations for the <strong>ISA Brown</strong> commercial layer.</p>
-                <table>
-                    <tr><th>Production Metric</th><th>Target / Value</th></tr>
-                    <tr><td>Point of Lay</td><td>18–20 Weeks</td></tr>
-                    <tr><td>Peak Production</td><td>> 95%</td></tr>
-                    <tr><td>Spent Layer Culling</td><td>72–78 Weeks (KSh 400–600/bird)</td></tr>
-                    <tr><td>Manure Production</td><td>Continuous (KSh 150–600/bag)</td></tr>
-                    <tr><td>Liveability (100 wks)</td><td>91.40%</td></tr>
-                </table>
-                <h3>Deviation Management</h3>
-                <ul>
-                    <li>If feed consumption drops below target during the critical weeks 4–5, skeletal development is delayed.</li>
-                    <li>Skeletal checks (the "squat response") must be monitored around week 17.</li>
-                </ul>
-            `
-        },
-        'coop-design': {
-            title: 'Coop Design: The Split-Floor System',
-            html: `
-                <div class="kb-media-header">
-                    <img src="assets/Coop Media/20260322_174218.jpg" alt="Split Floor System" class="kb-img">
-                </div>
-                <h2>Coop Design: The Split-Floor System</h2>
-                <p>This design is adapted from a working Kenyan poultry farm. It splits the coop floor into two distinct zones for maximum hygiene and minimal maintenance.</p>
-                
-                <div class="kb-video-container">
-                    <video width="100%" controls poster="assets/Coop Media/20260322_174210.jpg">
-                        <source src="assets/Coop Media/20260322_174223.mp4" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                    <p class="media-caption">Live View: Birds transitioning between deep litter and slatted areas.</p>
-                </div>
-
-                <h3>Zone A — Deep Litter (75% of Floor)</h3>
-                <ul>
-                    <li>Solid dirt or concrete base covered in 4-6 inches of dry wheat husks or wood shavings.</li>
-                    <li>All <strong>feeders</strong> are placed in this area only.</li>
-                    <li>No water is allowed in this section — this keeps the litter permanently dry.</li>
-                    <li>The chickens naturally turn the litter by scratching, so manure dries quickly without smell.</li>
-                    <li>The farmer who uses this system has <strong>never needed to change the litter</strong>.</li>
-                </ul>
-
-                <h3>Zone B — Slatted Floor / Droppings Pit (25% of Floor)</h3>
-                <ul>
-                    <li>Raised platform (2 ft high) with wire mesh or wooden slats.</li>
-                    <li><strong>Roosting bars</strong> are installed above this section.</li>
-                    <li>Since chickens poop mostly at night, the majority of manure falls through the mesh into a collection pit below.</li>
-                    <li>This isolates the wettest, heaviest manure from the deep litter.</li>
-                </ul>
-
-                <h3>Zero-Spill Watering</h3>
-                <div class="kb-media-row">
-                    <img src="assets/Coop Media/20260322_174007.jpg" alt="Zero Spill Watering" class="kb-img">
-                </div>
-                <ul>
-                    <li>Waterers (20L yellow jerrycans cut in half) are mounted <strong>outside</strong> the mesh wall adjacent to Zone B.</li>
-                    <li>Birds drink by sticking their heads through the mesh.</li>
-                    <li>Any spillage falls outside the coop or through the slatted floor, never onto the deep litter.</li>
-                </ul>
-
-                <h3>Roll-Away Nesting Boxes</h3>
-                <ul>
-                    <li>Placed along the <strong>long exterior wall of Zone A</strong> (the deep litter section).</li>
-                    <li>Nesting box floor is slanted at 10-15° so eggs roll gently to a padded external trough.</li>
-                    <li>Collection trough sits outside the coop with a <strong>lockable wooden or metal lid</strong>.</li>
-                    <li>Benefits: eggs stay clean, hens can't eat eggs, predators can't reach them, you collect without entering the coop.</li>
-                </ul>
-
-                <h3>Recommended Dimensions (100 Birds)</h3>
-                <table>
-                    <tr><th>Feature</th><th>Specification</th></tr>
-                    <tr><td>Total Floor Area</td><td>150–200 sq ft (e.g. 10ft × 20ft)</td></tr>
-                    <tr><td>Zone A (Deep Litter)</td><td>~150 sq ft (75%)</td></tr>
-                    <tr><td>Zone B (Slatted)</td><td>~50 sq ft (25%)</td></tr>
-                    <tr><td>Ceiling Height</td><td>7–8 ft (so you can stand inside)</td></tr>
-                    <tr><td>Nesting Boxes</td><td>20–25 roll-away units</td></tr>
-                    <tr><td>Roosting Bars</td><td>~75 ft linear total</td></tr>
-                </table>
-            `
-        },
-        'feed-schedule': {
-            title: 'Feed Schedule (Kenchic Standard)',
-            html: `
-                <h2>Feed Schedule: Day-Old Chick to Point of Lay</h2>
-                <p>This schedule is based on the <strong>Kenchic Commercial Layer Feeding Program</strong>. Changing feeds should always be done gradually over a few days to avoid stressing the birds.</p>
-                <table>
-                    <tr><th>Phase</th><th>Weeks</th><th>Feed Type</th><th>kg / Bird</th><th>Bag Cost (50kg)</th></tr>
-                    <tr><td>Chick Mash</td><td>0 – 8</td><td>High Protein Crumbs</td><td>2.0 kg</td><td>KES 4,200</td></tr>
-                    <tr><td>Growers Mash</td><td>9 – 18</td><td>Grower Mash</td><td>5.5 kg</td><td>KES 3,800</td></tr>
-                    <tr><td>Layers Meal</td><td>18+ (Point of Lay)</td><td>Layer Mash</td><td>~120g/day</td><td>KES 3,500</td></tr>
-                </table>
-                <h3>Budget for 100 Birds (to Point of Lay)</h3>
-                <ul>
-                    <li><strong>Starter:</strong> 100 birds × 2.0 kg = 200 kg → 4 bags → ~KES 16,800</li>
-                    <li><strong>Grower:</strong> 100 birds × 5.5 kg = 550 kg → 11 bags → ~KES 41,800</li>
-                    <li><strong>Total Feed to POL: ~KES 58,600</strong> (minimum) to <strong>~KES 75,000</strong> (with buffer for wastage and price variation)</li>
-                </ul>
-                <h3>Critical Tips</h3>
-                <ul>
-                    <li>Kenchic does not use a "Pre-Layer" mash. Move directly from Growers to Layers Meal at ~18 weeks.</li>
-                    <li>Use "no-waste" feeders to minimize feed on the floor.</li>
-                    <li>Ensure constant access to fresh, clean water daily.</li>
-                </ul>
-            `
-        },
-        'vaccination': {
-            title: 'Vaccination Schedule',
-            html: `
-                <h2>Vaccination Schedule for Layers (Kenya)</h2>
-                <p>Adhering to a strict vaccination schedule is critical to prevent mortality, especially during the first 8 weeks. Consult a local vet for region-specific adjustments.</p>
-                <table>
-                    <tr><th>Age</th><th>Vaccine</th><th>Method</th><th>Notes</th></tr>
-                    ${VACCINATION_SCHEDULE.map(v => `<tr><td>${v.day}</td><td>${v.vaccine}</td><td>${v.method}</td><td>${v.notes}</td></tr>`).join('')}
-                </table>
-                <h3>Estimated Vaccination Cost (100 Birds)</h3>
-                <ul>
-                    <li>Newcastle vaccines: ~KES 1,500</li>
-                    <li>Gumboro vaccines: ~KES 800</li>
-                    <li>Fowl Pox: ~KES 500</li>
-                    <li>Other (Typhoid, Dewormer): ~KES 1,200</li>
-                    <li><strong>Total: ~KES 4,000 – 5,000</strong></li>
-                </ul>
-            `
-        },
-        'biosecurity': {
-            title: 'Biosecurity 101',
-            html: `
-                <h2>Biosecurity 101</h2>
-                <p>Biosecurity is your first line of defence. One sick bird from outside can wipe out your entire flock.</p>
-                <h3>Essential Measures</h3>
-                <ul>
-                    <li><strong>Footbath at entrance:</strong> A shallow tray with disinfectant (e.g., Virkon S diluted in water). Change the solution daily.</li>
-                    <li><strong>Dedicated clothing:</strong> Wear specific boots and overalls inside the coop only. Never wear them outside.</li>
-                    <li><strong>No visitors:</strong> Restrict access. If someone must enter, they must use the footbath and wear clean clothing.</li>
-                    <li><strong>Quarantine new birds:</strong> Never mix new arrivals with your existing flock for at least 2 weeks.</li>
-                    <li><strong>Dead bird protocol:</strong> Remove any dead bird immediately. Burn or bury it far from the coop. Do not just throw it away.</li>
-                    <li><strong>Wild bird control:</strong> Use 1/2" mesh to keep wild birds out. They carry Newcastle disease.</li>
-                </ul>
-            `
-        },
-        'egg-handling': {
-            title: 'Egg Handling & Sales',
-            html: `
-                <h2>Egg Handling & Sales</h2>
-                <h3>Collection</h3>
-                <ul>
-                    <li>Collect eggs at least <strong>twice daily</strong> (morning and afternoon).</li>
-                    <li>With roll-away nesting boxes, collection is fast — just walk the perimeter and open the external lids.</li>
-                </ul>
-                <h3>Grading</h3>
-                <ul>
-                    <li>Grade eggs by size: Small, Medium, Large, Extra Large.</li>
-                    <li>Remove any cracked, dirty, or abnormally shaped eggs from the sales batch.</li>
-                </ul>
-                <h3>Storage</h3>
-                <ul>
-                    <li>Store eggs in a cool, dry place (not in direct sunlight).</li>
-                    <li>Eggs last 2-3 weeks at room temperature if kept clean and unwashed.</li>
-                    <li>Point down in trays to keep the air cell at the top.</li>
-                </ul>
-                <h3>Sales Channels</h3>
-                <ul>
-                    <li><strong>Direct to neighbours/community:</strong> Best margin, no transport costs.</li>
-                    <li><strong>Local shops and kiosks:</strong> Reliable, recurring orders.</li>
-                    <li><strong>Hotels and restaurants:</strong> Bulk orders, slightly lower price but consistent.</li>
-                    <li><strong>Open-air markets:</strong> Good for surplus but price-sensitive.</li>
-                </ul>
-            `
-        },
-        'manure': {
-            title: 'Manure Management',
-            html: `
-                <h2>Manure Management & Secondary Income</h2>
-                <p>Poultry manure is "black gold" for farmers. It is one of the richest organic fertilizers available.</p>
-                <h3>Collection (Split-Floor System)</h3>
-                <ul>
-                    <li>Most manure concentrates in the droppings pit beneath the slatted 25% floor.</li>
-                    <li>Scrape it out weekly or bi-weekly using a hoe and wheelbarrow.</li>
-                    <li>The deep litter side (75%) rarely needs changing if kept dry.</li>
-                </ul>
-                <h3>Composting</h3>
-                <ul>
-                    <li>Mix with dry plant matter and let it compost for 4-6 weeks before use.</li>
-                    <li>Raw poultry manure is "hot" — it can burn plants if applied directly.</li>
-                </ul>
-                <h3>Selling</h3>
-                <ul>
-                    <li>A 50kg bag of composted poultry manure sells for <strong>KES 200 – 500</strong> depending on your area.</li>
-                    <li>100 birds can produce enough manure for 2–3 bags per week.</li>
-                    <li>This is a legitimate secondary income stream that many beginners overlook.</li>
-                </ul>
-            `
+    // Request Persistent Storage to prevent mobile OS from clearing cache
+    if (navigator.storage && navigator.storage.persist) {
+        const isPersisted = await navigator.storage.persisted();
+        console.log(`[PWA] Storage is persisted: ${isPersisted}`);
+        if (!isPersisted) {
+            const granted = await navigator.storage.persist();
+            console.log(`[PWA] Persistent storage request status: ${granted}`);
         }
-    };
-
-    // ===================== FARM PROFILE & AGGREGATES =====================
-    const DEFAULT_FARM_PROFILE = {
-        flockSize: 49,
-        defaultFeedPrice: 3000,   // KES per bag
-        sackWeightKg: 50,         // Configurable sack weight
-        alertThresholds: {
-            minLayRatePercent: 40,
-            maxFeedConversion: 2.5,
-            lowInventoryDays: 2,
-            productionDropPercent: 15,
-            consecutiveLowDays: 3
-        },
-        litterLastChanged: new Date().toISOString(),
-        eggStorageType: 'room',
-        buyers: []
-    };
-
-    async function loadFarmProfile() {
-        const stored = await api.getEntity('poultryFarmProfile', null);
-        if (stored) {
-            return { ...DEFAULT_FARM_PROFILE, ...stored, alertThresholds: { ...DEFAULT_FARM_PROFILE.alertThresholds, ...(stored.alertThresholds || {}) } };
-        }
-        return { ...DEFAULT_FARM_PROFILE };
     }
 
-    async function saveFarmProfile(profile) {
-        await api.setEntity('poultryFarmProfile', profile);
-    }
-
-    // Initialize farmProfile AFTER DEFAULT_FARM_PROFILE is defined
-    farmProfile = await loadFarmProfile();
-
-    window.syncBatches = async function() {
-        allBatches = await api.getBatches();
-    }
-    await syncBatches();
-
-
-
-    async function loadAggregates() {
-        const stored = await api.getEntity('poultryAggregates', null);
-        if (stored) return stored;
-        return { avgLayRateByMonth: {}, avgFeedConversion: 0, avgMortalityCurve: [], seasonalFactor: {}, batchCount: 0 };
-    }
-
-    async function saveAggregates(agg) {
-        await api.setEntity('poultryAggregates', agg);
-    }
-
-    // Sack → kg backfill algorithm (§3.3 Rule)
-    function sackBackfill(logs, sackWeight) {
-        const weight = sackWeight || farmProfile.sackWeightKg;
-        const sorted = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
-
-        let lastSackIdx = -1;
-        for (let i = 0; i < sorted.length; i++) {
-            const sacks = parseInt(sorted[i].sacks) || 0;
-            if (sacks > 0) {
-                const kgToAdd = sacks * weight;
-                const gapDays = lastSackIdx >= 0 ? (i - lastSackIdx) : (i + 1);
-                const dailyFeed = kgToAdd / gapDays;
-                const startIdx = lastSackIdx >= 0 ? lastSackIdx + 1 : 0;
-                for (let j = startIdx; j <= i; j++) {
-                    if (!sorted[j].feedGiven || parseFloat(sorted[j].feedGiven) === 0) {
-                        sorted[j].feed = parseFloat((sorted[j].feed || 0)) + dailyFeed;
-                    }
-                }
-                lastSackIdx = i;
-            }
-        }
-        return sorted;
-    }
-
-    // CSV Parser for 2025 Egg Tracker format
-    function parseEggTrackerCSV(csvText) {
-        const lines = csvText.trim().replace(/\r/g, '').split('\n');
-        const header = lines[0].split(',').map(h => h.trim());
-        const records = [];
-
-        for (let i = 1; i < lines.length; i++) {
-            const cols = lines[i].split(',');
-            if (cols.length < 5) continue;
-
-            // Date conversion: MM/DD/YYYY → YYYY-MM-DD
-            const rawDate = cols[0].trim();
-            const parts = rawDate.split('/');
-            if (parts.length !== 3) continue;
-            const isoDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
-
-            const morning = parseInt(cols[1]) || 0;
-            const evening = parseInt(cols[2]) || 0;
-            const other = parseInt(cols[3]) || 0;
-            const total = parseInt(cols[4]) || 0;
-            const sacks = parseInt(cols[5]) || 0;
-
-            records.push({
-                date: isoDate,
-                morning, evening, other,
-                eggs: total || (morning + evening + other),
-                sacks,
-                feed: 0,
-                feedGiven: 0,
-                notes: total === 0 ? 'No recording' : '',
-                birds: farmProfile.flockSize
-            });
-        }
-        return records;
-    }
-
-    // Utility: compute KPIs from log data
-    function computeKPIs(logs, batch, profile) {
-        const batchSize = batch.size || profile.flockSize;
-        const liveBirds = batch.stats && batch.stats.birdsAlive !== undefined ? batch.stats.birdsAlive : batchSize;
-        
-        const recent7 = logs.slice(0, 7);
-        const recent30 = logs.slice(0, 30);
-        const latestLog = logs[0] || { eggs: 0, feed: 0, birds: liveBirds };
-        const currentBirds = liveBirds;
-
-        // Today's lay rate
-        const todayLayRate = currentBirds > 0 ? (latestLog.eggs / currentBirds) : 0;
-
-        // 7-day moving average lay rate
-        const avg7Eggs = recent7.length > 0 ? recent7.reduce((s, l) => s + (l.eggs || 0), 0) / recent7.length : 0;
-        const avg7LayRate = currentBirds > 0 ? avg7Eggs / currentBirds : 0;
-
-        // Previous 7-day rate for trend
-        const prev7 = logs.slice(7, 14);
-        const prevAvg7Eggs = prev7.length > 0 ? prev7.reduce((s, l) => s + (l.eggs || 0), 0) / prev7.length : avg7Eggs;
-        const prev7LayRate = currentBirds > 0 ? prevAvg7Eggs / currentBirds : 0;
-        const layRateTrend = avg7LayRate - prev7LayRate;
-
-        // Feed conversion (7-day): kg feed / dozen eggs
-        const totalFeed7 = recent7.reduce((s, l) => s + (parseFloat(l.feed) || 0), 0);
-        const totalEggs7 = recent7.reduce((s, l) => s + (l.eggs || 0), 0);
-        const feedConversion = totalEggs7 > 0 ? totalFeed7 / (totalEggs7 / 12) : 0;
-        
-        // Projected eggs this month
-        const now = new Date();
-        const daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
-        const projectedEggs = Math.round(avg7LayRate * currentBirds * daysLeft);
-
-        // Total metrics
-        const totalEggs = logs.reduce((s, l) => s + (l.eggs || 0), 0);
-        const totalFeed = logs.reduce((s, l) => s + (parseFloat(l.feed) || 0), 0);
-
-        const avgDailyFeedPerBird = recent7.length > 0 ? (totalFeed7 / recent7.length) / currentBirds : 0.12;
-
-        return {
-            todayLayRate, avg7LayRate, layRateTrend, feedConversion,
-            projectedEggs, totalEggs, totalFeed, avgDailyFeedPerBird,
-            currentBirds, avg7Eggs, daysLeft, recent7, recent30
-        };
-    }
-
-    // Module 6a: FIFO Egg Aging Engine
-    function computeEggInventoryAging(logs, txs) {
-        // 1. Calculate total eggs removed from inventory (sold + written off)
-        const totalEggsSold = txs.filter(t => t.type === 'sale' && t.category === 'eggs').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
-        const totalEggsWrittenOff = txs.filter(t => t.type === 'write_off' && t.category === 'eggs').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
-        
-        // 2. Iterate through logs chronologically (oldest first) to find unsold stock
-        const sortedLogs = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
-        
-        let eggsToDeduct = totalEggsSold + totalEggsWrittenOff;
-        let unsoldBatches = [];
-        let totalUnsold = 0;
-        
-        for (const log of sortedLogs) {
-            const eggsProduced = parseInt(log.eggs) || 0;
-            if (eggsProduced === 0) continue;
-            
-            if (eggsToDeduct >= eggsProduced) {
-                // This entire day's production is sold
-                eggsToDeduct -= eggsProduced;
-            } else {
-                // Partial or zero sales for this day's production
-                const remainingInLog = eggsProduced - eggsToDeduct;
-                eggsToDeduct = 0; // All sales accounted for
-                
-                const daysOld = Math.floor((new Date() - new Date(log.date)) / 86400000);
-                unsoldBatches.push({ date: log.date, qty: remainingInLog, ageDays: daysOld });
-                totalUnsold += remainingInLog;
-            }
-        }
-        
-        return { totalUnsold, unsoldBatches };
-    }
-
-    // Navigation logic
+    // Toast Notification logic
+    window.showToast = showToast;
+    window.showConfirmModal = showConfirmModal;
+    window.updateGlobalNotifications = updateGlobalNotifications;
 
     // ===================== NAVIGATION =====================
     const navItems = document.querySelectorAll('.nav-item');
@@ -499,7 +58,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     navItems.forEach(item => {
-        item.addEventListener('click', async (e) => { e.preventDefault(); switchView(item.id.replace('nav-', '')); });
+        item.addEventListener('click', async (e) => {
+            e.preventDefault();
+            switchView(item.id.replace('nav-', ''));
+        });
     });
 
     document.getElementById('btn-new-project')?.addEventListener('click', async () => { resetWizard(); switchView('generator'); });
@@ -507,6 +69,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Model New Batch triggers the bridge modal instead of blindly starting from scratch
     document.getElementById('btn-goto-generator')?.addEventListener('click', async () => { showStartBatchModal(); });
+
+    async function loadFarmProfile() {
+        const stored = await api.getEntity('poultryFarmProfile', null);
+        if (stored) {
+            return { ...DEFAULT_FARM_PROFILE, ...stored, alertThresholds: { ...DEFAULT_FARM_PROFILE.alertThresholds, ...(stored.alertThresholds || {}) } };
+        }
+        return { ...DEFAULT_FARM_PROFILE };
+    }
+
+    async function saveFarmProfile(profile) {
+        await api.setEntity('poultryFarmProfile', profile);
+    }
+
+    window.syncBatches = async function() {
+        allBatches = await api.getBatches();
+    }
+
+    // Load initial data asynchronously in the background so we don't block DOM binding execution flow
+    const initDataPromise = (async () => {
+        try {
+            farmProfile = await loadFarmProfile();
+            await syncBatches();
+        } catch (e) {
+            console.error('Failed to load initial data:', e);
+        }
+    })();
+
+
+    async function loadAggregates() {
+        const stored = await api.getEntity('poultryAggregates', null);
+        if (stored) return stored;
+        return { avgLayRateByMonth: {}, avgFeedConversion: 0, avgMortalityCurve: [], seasonalFactor: {}, batchCount: 0 };
+    }
+
+    async function saveAggregates(agg) {
+        await api.setEntity('poultryAggregates', agg);
+    }
+
+    // Functions extracted to engine.js
 
     // ===================== WIZARD & PROPOSAL STATE =====================
     const formSteps = document.querySelectorAll('.form-step');
@@ -523,7 +124,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             step.classList.toggle('active', (i + 1) === currentWizardStep);
             step.classList.toggle('completed', (i + 1) < currentWizardStep);
         });
+
+        // Update Slim Stepper nodes & ribbon
+        const nodes = document.querySelectorAll('.slim-stepper .node');
+        nodes.forEach((node, i) => {
+            node.classList.toggle('active', (i + 1) === currentWizardStep);
+            node.classList.toggle('completed', (i + 1) < currentWizardStep);
+        });
+        const ribbon = document.querySelector('.progress-ribbon');
+        if (ribbon) ribbon.style.width = ((currentWizardStep / 4) * 100) + '%';
         btnPrev.disabled = currentWizardStep === 1;
+        btnPrev.style.display = currentWizardStep === 1 ? 'none' : 'inline-flex';
         btnNext.textContent = currentWizardStep === 4 ? 'Save & Finish' : 'Continue';
         btnSave.style.display = currentWizardStep > 1 ? 'inline-flex' : 'none';
         if (currentWizardStep === 3) calculateFinancials();
@@ -531,18 +142,50 @@ document.addEventListener('DOMContentLoaded', async () => {
         toggleRevenueFields();
     }
 
-    btnNext.addEventListener('click', () => {
-        if (currentWizardStep < 4) { currentWizardStep++; updateWizard(); }
-        else { saveProposal(); switchView('dashboard'); resetWizard(); }
+    btnNext.addEventListener('click', async () => {
+        if (currentWizardStep < 4) {
+            // --- Step-level validation before advancing ---
+            if (currentWizardStep === 1) {
+                const name = $('prop-name').value.trim();
+                const size = parseInt($('prop-size').value);
+                if (!name) {
+                    $('prop-name').focus();
+                    window.showToast('Please enter a project name before continuing.', 'warning');
+                    return;
+                }
+                if (!size || size < 1) {
+                    $('prop-size').focus();
+                    window.showToast('Please enter a valid flock size (≥ 1 bird).', 'warning');
+                    return;
+                }
+            }
+            if (currentWizardStep === 3) {
+                const size = parseInt($('prop-size').value);
+                if (!size || size < 1) {
+                    window.showToast('Flock size is missing — go back to Step 1 and fill it in.', 'danger');
+                    return;
+                }
+            }
+            currentWizardStep++;
+            updateWizard();
+        } else {
+            // Await save before resetting so the form isn't cleared mid-read
+            await saveProposal();
+            switchView('dashboard');
+            resetWizard();
+        }
     });
     btnPrev.addEventListener('click', () => { if (currentWizardStep > 1) { currentWizardStep--; updateWizard(); } });
     btnSave.addEventListener('click', () => { saveProposal(); });
 
     function resetWizard() { 
         currentWizardStep = 1; 
-        currentProposalId = null; // Clear ID for the next new proposal
-        updateWizard(); 
-        document.getElementById('proposal-form').reset(); 
+        currentProposalId = null;
+        updateWizard();
+        document.getElementById('proposal-form').reset();
+        // Clear any stale snapshot note
+        const noteEl = $('snapshot-note');
+        if (noteEl) { noteEl.style.display = 'none'; noteEl.innerHTML = ''; }
         calculateFinancials(); // reset financial spans
     }
 
@@ -559,7 +202,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('feed-layer-bags').style.display = isLayer ? 'grid' : 'none';
         document.getElementById('feed-broiler-bags').style.display = type === 'broiler' ? 'grid' : 'none';
     }
-    document.getElementById('prop-type').addEventListener('change', () => { toggleRevenueFields(); recalcAuto(); });
+    document.getElementById('prop-type').addEventListener('change', () => { toggleRevenueFields(); calculateFinancials(); });
 
     // ===================== FINANCIAL CALCULATIONS =====================
 
@@ -715,7 +358,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 noteEl.innerHTML = `<i data-lucide="alert-circle" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px;"></i> No completed batches found. Finish a batch first to create a success snapshot.`;
                 lucide.createIcons();
             } else {
-                alert('No completed batches found. Finish a batch first to create a success snapshot.');
+                window.showToast('No completed batches found. Finish a batch first to create a success snapshot.', 'danger');
             }
             return;
         }
@@ -765,7 +408,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.body.removeChild(modal);
             toggleRevenueFields();
             calculateFinancials();
-            alert('Model pre-filled with real farm performance data!');
+            window.showToast('Model pre-filled with real farm performance data!', 'primary');
         };
     });
 
@@ -773,112 +416,100 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('btn-generate-preview')?.addEventListener('click', generateProposal);
 
     function generateProposal() {
-        const name = $('prop-name').value || 'Untitled Analysis';
-        const owner = $('prop-owner').value || '—';
-        const type = $('prop-type').value;
-        const batchMode = $('prop-batch-mode')?.value || 'setup';
-        const isRepeat = batchMode === 'repeat';
-        
-        const typeName = type === 'layer' ? 'Layers (Egg Production)' : type === 'broiler' ? 'Broilers (Meat Production)' : 'Dual Purpose';
-        const size = $('prop-size').value || '—';
-        const location = $('prop-location').value || 'Site TBD';
-        const housingName = $('prop-housing').options[$('prop-housing').selectedIndex].text;
-        const waterStrategy = $('prop-water-strategy').value || 'Standard strategy';
-        const today = new Date().toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' });
+        const name = $('prop-name').value || 'Untitled Project';
+        const owner = $('prop-owner').value || 'SME Farmer';
+        const typeEl = $('prop-type');
+        const type = typeEl.value;
+        const typeName = typeEl.options[typeEl.selectedIndex].text;
+        const size = $('prop-size').value || 0;
+        const location = $('prop-location').value || 'Not specified';
+        const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+        const isRepeat = $('prop-batch-mode')?.value === 'repeat';
+        const housingEl = $('prop-housing');
+        const housingName = housingEl?.options[housingEl.selectedIndex]?.text || 'Standard Housing';
+        const waterStrategy = $('prop-water-strategy').value || 'Standard watering';
 
         const html = `
         <div class="proposal">
-            <div class="report-header">
-                <h1>${name.toUpperCase()}</h1>
-                <p class="proposal-subtitle">Knowledge-Based Decision Support Analysis • ${today}</p>
+            <div class="report-header" style="margin-bottom: 40px; border-bottom: 2px solid var(--primary); padding-bottom: 20px;">
+                <h1 style="margin:0; font-size: 28px;">${name.toUpperCase()}</h1>
+                <p class="proposal-subtitle" style="margin:8px 0 0; color: var(--text-muted); font-weight: 500;">
+                    Knowledge-Based Decision Support Analysis • Generated ${today}
+                </p>
             </div>
 
-            <div class="dss-badge">${isRepeat ? 'RECURRING CYCLE ANALYSIS' : 'INITIAL SETUP ANALYSIS'}</div>
+            <div style="margin-bottom: 32px;">
+                <span class="dss-badge" style="background:var(--primary-soft); color:var(--primary); padding:8px 16px; border-radius:20px; font-size:12px; font-weight:700; border: 1px solid var(--primary);">
+                    ${isRepeat ? 'RECURRING CYCLE ANALYSIS' : 'INITIAL ESTABLISHMENT ANALYSIS'}
+                </span>
+            </div>
 
             <h2>1. Strategic Overview</h2>
-            <p>This decision support analysis models the <strong>${isRepeat ? 'subsequent operational cycle' : 'initial establishment'}</strong> of a <strong>${typeName}</strong> farm with <strong>${size} birds</strong> at <strong>${location}</strong>.</p>
+            <p>This decision support analysis models the <strong>${isRepeat ? 'subsequent operational cycle' : 'initial establishment'}</strong> of a <strong>${typeName}</strong> operation with a target flock of <strong>${size} birds</strong> located in <strong>${location}</strong>.</p>
             
-            <div class="analysis-box">
-                <p><strong>Primary Objective:</strong> ${isRepeat ? 'Maximize operating margin and cashflow by leveraging existing infrastructure.' : 'Establish secure, biosecure infrastructure and reach Point of Lay (POL).'}</p>
-                <p><strong>Payback Milestone:</strong> Expected in <strong>${$('calc-breakeven').textContent}</strong> based on current market rates.</p>
+            <div style="background: var(--bg-main); padding: 20px; border-radius: var(--radius-md); border-left: 4px solid var(--primary); margin: 20px 0;">
+                <p style="margin:0;"><strong>Primary Objective:</strong> ${isRepeat ? 'Maximize operating margins by leveraging existing assets.' : 'Establish secure infrastructure and manage birds to Point of Lay (POL).'}</p>
+                <p style="margin:10px 0 0;"><strong>Estimated Payback:</strong> Expected in <strong>${$('calc-breakeven').textContent}</strong> based on current market assumptions.</p>
             </div>
 
-            <h2>2. Infrastructure & Operations</h2>
-            <div class="media-preview-box">
-                <img src="assets/Coop Media/20260322_174218.jpg" style="width:100%; border-radius:8px; margin-bottom:10px;">
-                <p style="font-size:12px; color:#666; text-align:center;">Site Evidence: Validated split-floor coop configuration.</p>
-            </div>
-            <p><strong>Housing System:</strong> ${housingName}</p>
-            <p><strong>Management Strategy:</strong> High-hygiene operations utilizing slatted floor droppings isolation. ${waterStrategy}.</p>
-            ${isRepeat ? '<p class="note"><strong>Note:</strong> This analysis assumes 100% reuse of existing housing and equipment assets (Zero incremental CAPEX for infrastructure).</p>' : ''}
-
-            <h2>3. Financial Projections</h2>
-            <div class="fin-grid">
-                <div class="fin-card">
-                    <span class="fin-label">Total CAPEX</span>
-                    <span class="fin-value">${$('calc-capex').textContent}</span>
+            <h2>2. Financial Projections</h2>
+            <div class="fin-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin: 20px 0;">
+                <div class="fin-card" style="background: var(--bg-main); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Total CAPEX</span>
+                    <div style="font-size: 24px; font-weight: 800; margin-top: 4px;">${$('calc-capex').textContent}</div>
                 </div>
-                <div class="fin-card">
-                    <span class="fin-label">${$('calc-6m-rev-label').textContent}</span>
-                    <span class="fin-value positive">${$('calc-6m-rev').textContent}</span>
+                <div style="background: var(--bg-main); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">${$('calc-6m-rev-label').textContent}</span>
+                    <div style="font-size: 24px; font-weight: 800; margin-top: 4px; color: var(--primary);">${$('calc-6m-rev').textContent}</div>
                 </div>
-                <div class="fin-card">
-                    <span class="fin-label">${$('calc-6m-opex-label').textContent}</span>
-                    <span class="fin-value negative">${$('calc-6m-opex').textContent}</span>
+                <div style="background: var(--bg-main); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">${$('calc-6m-opex-label').textContent}</span>
+                    <div style="font-size: 24px; font-weight: 800; margin-top: 4px; color: var(--danger);">${$('calc-6m-opex').textContent}</div>
                 </div>
-                <div class="fin-card">
-                    <span class="fin-label">${$('calc-profit-label').textContent}</span>
-                    <span class="fin-value ${$('calc-profit').textContent.includes('-') ? 'negative' : 'positive'}">${$('calc-profit').textContent}</span>
+                <div style="background: var(--bg-main); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Projected Margin</span>
+                    <div style="font-size: 24px; font-weight: 800; margin-top: 4px; color: ${$('calc-profit').textContent.includes('-') ? 'var(--danger)' : 'var(--primary)'};">
+                        ${$('calc-profit').textContent}
+                    </div>
                 </div>
             </div>
 
-            <h2>4. Expected Payback & Break-Even</h2>
-            <p>Based on current market rates, break-even is projected at <strong>${$('calc-breakeven').textContent}</strong>.</p>
-            
-            <h2>5. Nutrition & Feeding Strategy</h2>
-            <p>${$('prop-feed-strategy').value || 'Standard commercial feeding.'}</p>
+            <h2>3. Infrastructure & Technical Plan</h2>
+            <div style="display:flex; gap:20px; align-items:flex-start; margin: 20px 0;">
+                <div style="flex:1;">
+                    <p><strong>Housing System:</strong> ${housingName}</p>
+                    <p><strong>Management Strategy:</strong> High-hygiene operations utilizing slatted floor isolation for waste management.</p>
+                    <p><strong>Watering:</strong> ${waterStrategy}</p>
+                </div>
+                <div style="width: 200px; height: 130px; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border-color);">
+                    <img src="assets/Coop Media/20260322_174218.jpg" style="width:100%; height:100%; object-fit:cover;">
+                </div>
+            </div>
 
-            <h2>6. Health & Biosecurity</h2>
-            <p>A rigorous vaccination schedule and strict biosecurity protocols (e.g. footbaths, quarantine) form the backbone of this operation.</p>
-
-            <h2>7. Risk Management</h2>
-            <table>
-                <tr><th>Risk</th><th>Impact</th><th>Mitigation</th></tr>
-                <tr><td>Disease outbreak</td><td>High — can cause total flock loss</td><td>Strict vaccination schedule, biosecurity protocols, footbaths</td></tr>
-                <tr><td>Feed price increase</td><td>Medium — erodes margins</td><td>Buy in bulk, explore alternative protein sources (BSF larvae)</td></tr>
-                <tr><td>Predator attacks</td><td>Medium — loss of birds and eggs</td><td>1/2" galvanized mesh, lockable nest boxes, secure coop structure</td></tr>
-                <tr><td>Egg price drop</td><td>Medium — reduced revenue</td><td>Diversify sales channels (hotels, direct, wholesale)</td></tr>
-                <tr><td>Mortality (5-10%)</td><td>Low-Medium — increases cost-per-surviving-bird</td><td>Budget for 5% mortality buffer, strict brooding management</td></tr>
-                <tr><td>Water contamination</td><td>Medium — disease spread</td><td>External waterers, clean water daily, zero-spill design</td></tr>
+            <h2>4. Risk Management & Mitigation</h2>
+            <table style="width:100%; border-collapse: collapse; margin: 20px 0; font-size: 13px;">
+                <thead>
+                    <tr style="background: var(--primary-soft);">
+                        <th style="padding:12px; text-align:left; border-bottom: 2px solid var(--primary);">Risk Factor</th>
+                        <th style="padding:12px; text-align:left; border-bottom: 2px solid var(--primary);">Mitigation Strategy</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td style="padding:10px; border-bottom:1px solid var(--border-color);"><strong>Disease Outbreak</strong></td><td style="padding:10px; border-bottom:1px solid var(--border-color);">Strict vaccination schedule and mandatory footbaths.</td></tr>
+                    <tr><td style="padding:10px; border-bottom:1px solid var(--border-color);"><strong>Feed Price Volatility</strong></td><td style="padding:10px; border-bottom:1px solid var(--border-color);">Bulk procurement and inventory management.</td></tr>
+                    <tr><td style="padding:10px; border-bottom:1px solid var(--border-color);"><strong>Mortality Losses</strong></td><td style="padding:10px; border-bottom:1px solid var(--border-color);">Budgeted 5% buffer with strict brooding controls.</td></tr>
+                </tbody>
             </table>
 
-            <h2>8. Products & Revenue Streams</h2>
-            <ul>
-                ${type === 'layer' || type === 'dual' ? '<li><strong>Table Eggs:</strong> Primary revenue. ~' + ($('prop-eggs-month').value || 25) + ' eggs/bird/month at KES ' + ($('prop-egg-price').value || 15) + ' each.</li>' : ''}
-                ${type === 'broiler' || type === 'dual' ? '<li><strong>Live Broilers / Dressed Chicken:</strong> Sale after 6-8 week cycle.</li>' : ''}
-                <li><strong>Poultry Manure:</strong> Secondary income. Composted manure sells for KES 200-500 per 50kg bag.</li>
-                <li><strong>Spent Layers:</strong> End-of-cycle birds sold for meat after 18-24 months of laying.</li>
-            </ul>
+            <h2>5. Strategic Recommendation</h2>
+            <p style="font-style: italic; color: var(--text-muted);">
+                ${parseFloat($('calc-profit').textContent.replace(/[^0-9.-]/g, '')) > 0 
+                    ? 'This model demonstrates positive operational viability. We recommend proceeding with the procurement phase focusing on high-quality DOC sources.' 
+                    : 'The current model shows tight or negative margins. We recommend reviewing revenue assumptions or exploring bulk feed procurement to improve the break-even window.'}
+            </p>
 
-            <h2>9. Marketing & Sales Strategy</h2>
-            <ul>
-                <li><strong>Direct sales:</strong> Neighbours, community, word-of-mouth.</li>
-                <li><strong>Local kiosks & shops:</strong> Recurring weekly orders.</li>
-                <li><strong>Hotels & restaurants:</strong> Bulk orders at wholesale price.</li>
-                <li><strong>Branding:</strong> Consistent supply and quality builds reputation over time.</li>
-            </ul>
-
-            <h2>10. Management Plan</h2>
-            <p><strong>Owner-Operator:</strong> ${owner} (sole labour). Daily tasks include:</p>
-            <ul>
-                <li>Morning: Egg collection, feeding, water refill, health check.</li>
-                <li>Afternoon: Second egg collection, feed top-up.</li>
-                <li>Weekly: Manure scraping from droppings pit, footbath solution change.</li>
-                <li>Monthly: Weight sampling, feed consumption tracking, financial review.</li>
-            </ul>
-
-            <div class="footer-note">
-                Generated by Poultry Project Hub • ${today} • For internal and investor use
+            <div class="footer-note" style="margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border-color); text-align: center; font-size: 11px; color: var(--text-muted);">
+                PoultryDSS • Automated Decision Support Output • ${owner} • Confidential
             </div>
         </div>`;
 
@@ -908,7 +539,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 .join('\n');
         } catch(e) {}
         const printWindow = window.open('', '_blank');
-        if (!printWindow) { alert('Pop-up blocked — please allow pop-ups and try again.'); return; }
+        if (!printWindow) { window.showToast('Pop-up blocked — please allow pop-ups and try again.', 'warning'); return; }
         printWindow.document.write(`<!DOCTYPE html>
 <html>
 <head>
@@ -931,8 +562,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
     function parseValue(id) {
-        const val = $(id).textContent.replace(/[^0-9.-]+/g, '');
-        return parseFloat(val) || 0;
+        const el = $(id);
+        if (!el) return 0;
+        const val = el.textContent.replace(/[^0-9.-]/g, '');
+        const num = parseFloat(val);
+        return isNaN(num) ? 0 : num;
     }
 
     window.getBatches = function() {
@@ -953,6 +587,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     async function saveProposal() {
+        // Ensure financials are always fresh before reading DOM spans
+        calculateFinancials();
+
         const proposals = await api.getProposals();
         
         let targetId = currentProposalId;
@@ -972,13 +609,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const proposal = {
             id: targetId,
-            name: $('prop-name').value || 'Untitled',
-            type: $('prop-type').value,
-            size: $('prop-size').value || 0,
-            owner: $('prop-owner').value || '',
-            location: $('prop-location').value || '',
-            capex: $('calc-capex').textContent,
-            profit: $('calc-profit').textContent,
+            name: $('prop-name').value.trim() || 'Untitled',
+            type: $('prop-type').value || 'layer',
+            size: parseInt($('prop-size').value) || 0,
+            owner: $('prop-owner').value.trim() || '',
+            location: $('prop-location').value.trim() || '',
+            capex: $('calc-capex').textContent || 'KES 0',
+            profit: $('calc-profit').textContent || 'KES 0',
             date: new Date().toISOString(),
             raw: {
                 birds: parseValue('calc-birds'),
@@ -989,7 +626,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 cumulativeOpex: parseValue('calc-6m-opex'),
                 cumulativeRev: parseValue('calc-6m-rev'),
                 netProfit: parseValue('calc-profit'),
-                breakeven: parseInt($('calc-breakeven').textContent) || 0
+                // Extract numeric week from "Week 45" or "Beyond Horizon" etc.
+                breakeven: parseInt(($('calc-breakeven').textContent || '').replace(/[^0-9]/g, '')) || 0
             },
             inputs: formInputs
         };
@@ -1011,7 +649,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const proposal = proposals.find(p => p.id === proposalId);
         
         if (!proposal) {
-            alert('Cannot find proposal!');
+            window.showToast('Cannot find proposal!', 'danger');
             return;
         }
 
@@ -1151,8 +789,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="project-item" data-id="${p.id}" onclick="loadProposal(${p.id});">
                     <div class="project-icon ${p.type}"><i data-lucide="${p.type === 'layer' ? 'egg' : 'bird'}"></i></div>
                     <div class="project-info">
-                        <h4>${p.name}</h4>
-                        <p>${p.size} birds • ${p.capex}</p>
+                        <h4>${p.name || 'Untitled'}</h4>
+                        <p>${p.size ? p.size + ' birds' : '—'} &nbsp;·&nbsp; ${p.profit || 'KES 0'}</p>
+                        <div style="margin-top:4px;">
+                            <span class="pill" style="font-size:9px; background:${p.profit?.includes('-') ? 'rgba(239,83,80,0.1)' : 'rgba(91,191,79,0.1)'}; color:${p.profit?.includes('-') ? 'var(--danger)' : 'var(--primary)'}; border: 1px solid ${p.profit?.includes('-') ? 'rgba(239,83,80,0.2)' : 'rgba(91,191,79,0.2)'};">
+                                ${p.profit?.includes('-') ? 'OPTIMIZABLE' : 'PROFITABLE'}
+                            </span>
+                        </div>
                     </div>
                     <div class="project-actions" style="display:flex; gap:4px;">
                         <button class="project-delete" onclick="event.stopPropagation(); window.cloneProposal(${p.id})" title="Clone Proposal">
@@ -1447,6 +1090,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                     
                     <div class="cockpit-actions" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                        <button class="btn btn-secondary btn-sm" onclick="window.open('/api/export/${batch.id}', '_blank')">
+                            <i data-lucide="download" style="width:14px; height:14px;"></i> Export
+                        </button>
                         ${batch.status === 'completed' ? `
                         <span class="pill" style="background:var(--primary-soft); color:var(--primary); font-weight:bold; border:1px solid var(--primary);">Completed</span>
                         ` : batch.status === 'post_batch' ? `
@@ -1809,7 +1455,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const humidity = parseFloat($('log-humidity').value) || null;
         const notes = $('log-notes').value;
 
-        if (!date) { alert("Please select a date."); return; }
+        if (!date) { window.showToast('Please select a date.', 'warning'); return; }
 
         let logs = await api.getLogs(batch.id);
         const existingLog = logs.find(l => l.date === date);
@@ -1894,10 +1540,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if($('price-avg7-sale')) $('price-avg7-sale').innerText = 'KES ' + avg7SalePrice.toFixed(1);
 
+        let lastSalePrice = avg7SalePrice;
         if($('price-last-sale')) {
              const lastSale = txs.find(t => t.type === 'sale' && t.category === 'eggs');
              if (lastSale && lastSale.qty > 0) {
-                 $('price-last-sale').innerText = 'KES ' + (lastSale.amount / lastSale.qty).toFixed(2);
+                 lastSalePrice = lastSale.amount / lastSale.qty;
+                 $('price-last-sale').innerText = 'KES ' + lastSalePrice.toFixed(2);
              } else {
                  $('price-last-sale').innerText = 'KES —';
              }
@@ -1949,9 +1597,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const nextBagPrice = eggsPerBag > 0 ? farmProfile.defaultFeedPrice / eggsPerBag : 0;
         if($('price-next-bag')) $('price-next-bag').innerText = nextBagPrice > 0 ? 'KES ' + nextBagPrice.toFixed(2) : 'KES —';
 
-        // Profit per egg vs 7-day avg
+        // Profit per egg vs last sale price
         const hasRealSaleData = last7DaysSales.length > 0 || txs.some(t => t.type === 'sale' && t.category === 'eggs');
-        const profitPerEgg = avg7SalePrice - breakEvenPrice;
+        const profitPerEgg = lastSalePrice - breakEvenPrice;
         if($('price-profit')) {
             if (!hasRealSaleData) {
                 $('price-profit').innerText = 'KES —';
@@ -2377,7 +2025,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const totalEggs = parseInt($('bf-eggs').value) || 0;
             const totalSacks = parseInt($('bf-sacks').value) || 0;
 
-            if (isNaN(start) || isNaN(end) || end < start) return alert("Invalid date range.");
+            if (isNaN(start) || isNaN(end) || end < start) { window.showToast('Invalid date range.', 'danger'); return; }
 
             const days = [];
             for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -2634,7 +2282,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('tx-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const bid = currentBatchId;
-            if (!bid) { alert("Batch context missing."); return; }
+            if (!bid) { window.showToast('Batch context missing.', 'danger'); return; }
 
             const txs = await api.getTransactions(bid);
             const amount = parseFloat($('tx-amount') ? $('tx-amount').value : 0) || 0;
@@ -2954,7 +2602,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             await api.saveBatch(batch);
             document.body.removeChild(modal);
             switchView('batches');
-            alert(willSoftClose ? 'Batch moved to Winding Down. Only egg sales are permitted.' : 'Batch completed! Success snapshot and farm aggregates updated.');
+            window.showToast(willSoftClose ? 'Batch moved to Winding Down. Only egg sales are permitted.' : 'Batch completed! Success snapshot and farm aggregates updated.');
         });
     };
 
@@ -2978,15 +2626,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
 
-    window.clearAllProposals = async function() {
-        if (confirm('Delete all saved proposals?')) {
-            const proposals = await api.getProposals();
-            for (const p of proposals) {
-                await api.deleteProposal(p.id);
+    window.clearAllProposals = function() {
+        // In-page confirm modal — no browser popup
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content card" style="max-width:400px; padding:28px; text-align:center;">
+                <i data-lucide="trash-2" style="width:40px;height:40px;color:var(--danger);margin-bottom:12px;"></i>
+                <h3 style="margin:0 0 8px;">Delete All Proposals?</h3>
+                <p style="color:var(--text-muted);font-size:14px;margin:0 0 24px;">This will permanently remove all saved scenarios. This cannot be undone.</p>
+                <div style="display:flex;gap:12px;justify-content:center;">
+                    <button class="btn btn-secondary" id="confirm-cancel-clear">Cancel</button>
+                    <button class="btn" id="confirm-do-clear" style="background:var(--danger);color:#fff;">Yes, Delete All</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        lucide.createIcons();
+
+        document.getElementById('confirm-cancel-clear').onclick = () => document.body.removeChild(modal);
+        document.getElementById('confirm-do-clear').onclick = async () => {
+            document.body.removeChild(modal);
+            try {
+                await api.clearAllProposals();
+                await refreshDashboard();
+                renderAnalytics();
+                window.showToast('All proposals deleted.', 'info');
+            } catch(e) {
+                window.showToast('Failed to clear proposals. Please try again.', 'danger');
             }
-            refreshDashboard();
-            renderAnalytics();
-        }
+        };
     };
 
     // ===================== KNOWLEDGE BASE =====================
@@ -3089,42 +2758,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    window.updateGlobalNotifications = function(alerts) {
-        const badge = $('notification-badge');
-        const container = $('notifications-dropdown');
-        if (!container) return;
-
-        // Header for notifications
-        let html = `
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
-                <h4 style="margin:0; color:var(--text-dark);">Notifications (${alerts.length})</h4>
-            </div>
-        `;
-
-        if (alerts.length === 0) {
-            html += `<p style="margin:0; font-size:13px; color:var(--text-muted); text-align:center; padding:12px 0;">No new alerts for your active batches.</p>`;
-            if (badge) badge.style.display = 'none';
-        } else {
-            alerts.forEach(a => {
-                html += `
-                    <div class="notification-item ${a.type}">
-                        <i data-lucide="${a.icon}"></i>
-                        <div>
-                            <div style="font-weight: 500;">${a.text}</div>
-                        </div>
-                    </div>
-                `;
-            });
-            if (badge) {
-                badge.style.display = 'block';
-                badge.innerText = ''; // Or alerts.length if we want a number
-            }
-        }
-
-        container.innerHTML = html;
-        lucide.createIcons();
-    };
-
 
     // ===================== ANALYTICS =====================
     let _capexChartInstance = null;
@@ -3143,7 +2776,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('analytics-content').style.display = 'block';
         $('analytics-empty').style.display = 'none';
 
-        renderBatchLearning(snapshots); // New: §5.1 / §5.3
+        await renderBatchLearning(snapshots); // New: §5.1 / §5.3
 
         if (proposals.length === 0) return; // Only process proposals below
 
@@ -3334,7 +2967,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if($('set-storage-type')) farmProfile.eggStorageType = $('set-storage-type').value;
         
         saveFarmProfile(farmProfile);
-        alert('Farm profile updated successfully!');
+        window.showToast('Farm profile saved successfully!');
     });
 
     $('btn-export-data')?.addEventListener('click', async () => {
@@ -3362,11 +2995,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         a.click();
     });
 
-    function renderBatchLearning(snapshots) {
+    async function renderBatchLearning(snapshots) {
         const container = $('batch-learning-content');
         if (!container || snapshots.length === 0) return;
 
-        const agg = loadAggregates();
+        const agg = await loadAggregates();
         const avgPeak = snapshots.reduce((sum, s) => sum + (s.avgLayRate || 0), 0) / snapshots.length;
         const avgFC = snapshots.reduce((sum, s) => sum + (s.feedConversion || 0), 0) / snapshots.length;
 
@@ -3618,31 +3251,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     };
 
-    window.showConfirmModal = function(message, onConfirm) {
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay active';
-        modal.innerHTML = `
-            <div class="modal-content card" style="max-width:400px; text-align:center; padding:32px;">
-                <div style="width:64px; height:64px; background:#fee2e2; color:#dc2626; border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto 20px;">
-                    <i data-lucide="alert-triangle" style="width:32px; height:32px;"></i>
-                </div>
-                <h3 style="margin-bottom:12px;">Confirm Action</h3>
-                <p style="font-size:14px; color:var(--text-muted); margin-bottom:28px;">${message}</p>
-                <div style="display:flex; gap:12px; justify-content:center;">
-                    <button class="btn btn-secondary" onclick="document.body.removeChild(this.closest('.modal-overlay'))">Cancel</button>
-                    <button class="btn btn-primary" id="modal-confirm-btn" style="background:var(--danger);">Delete Forever</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        lucide.createIcons();
-        
-        $('modal-confirm-btn').onclick = () => {
-            document.body.removeChild(modal);
-            onConfirm();
-        };
-    };
-
     window.deleteBatchUI = async function(id) {
         console.log('Attempting to delete batch:', id);
         window.showConfirmModal('Are you sure you want to delete this batch and all its records? This cannot be undone.', async () => {
@@ -3658,24 +3266,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     window.clearAllBatchesUI = async function() {
-        console.log('Attempting to clear all batches...');
         const batches = await api.getBatches();
         if (batches.length === 0) {
-            console.log('No batches to clear.');
+            window.showToast('No active batches to clear.', 'info');
             return;
         }
         
-        window.showConfirmModal(`Are you sure you want to delete ALL ${batches.length} active batches? This cannot be undone.`, async () => {
+        window.showConfirmModal(`Are you sure you want to delete ALL ${batches.length} active batches and all their records? This cannot be undone.`, async () => {
             try {
-                for (const b of batches) {
-                    console.log('Deleting batch:', b.id);
-                    await api.deleteBatch(b.id);
-                }
-                console.log('All batches deleted from API');
+                await api.clearAllBatches();
+                allBatches = []; // Clear cache
                 await window.syncBatches();
                 await window.refreshBatches();
+                refreshDashboard();
+                window.showToast('All batches cleared successfully.', 'info');
             } catch (err) {
                 console.error('Error clearing batches:', err);
+                window.showToast('Failed to clear batches.', 'danger');
             }
         });
     };
@@ -3686,7 +3293,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.querySelectorAll('input[type="number"]').forEach(input => {
         input.addEventListener('focus', function() { this.select(); });
     });
-    refreshDashboard();
     toggleRevenueFields();
     calculateFinancials();
-});
+
+    // Await database values and sync cache before initial dashboard render
+    initDataPromise.then(() => {
+        refreshDashboard();
+    }).catch(err => {
+        console.error('Error during data init:', err);
+        refreshDashboard();
+    });
+})().catch(err => console.error('[app init error]', err));

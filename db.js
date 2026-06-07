@@ -13,7 +13,9 @@ const db = new sqlite3.Database(dbPath, (err) => {
         console.error('Error opening database', err.message);
     } else {
         console.log('Connected to SQLite database.');
-        initializeDatabase();
+        db.run('PRAGMA journal_mode=WAL;', () => {
+            initializeDatabase();
+        });
     }
 });
 

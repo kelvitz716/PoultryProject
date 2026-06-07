@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Poultry DSS | Decision Support System</title>
     <meta name="description" content="A knowledge-based decision support system for poultry farmers to model infrastructure, financials, and ROI.">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="alternate icon" type="image/png" href="assets/favicon.png">
+    <link rel="apple-touch-icon" href="assets/favicon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -15,6 +18,10 @@
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="css/styles.css">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#18181b">
 </head>
 <body>
     <div class="app-container">
@@ -182,73 +189,78 @@
 
                 <!-- ======================== GENERATOR VIEW ======================== -->
                 <div id="view-generator" class="view">
-                    <div class="wizard-header">
-                        <h2>Decision Support Tool</h2>
-                        <div class="wizard-steps">
-                            <div class="step active" data-idx="1"><span class="step-num">1</span> <span>Configuration</span></div>
-                            <div class="step" data-idx="2"><span class="step-num">2</span> <span>Technical</span></div>
-                            <div class="step" data-idx="3"><span class="step-num">3</span> <span>Financials</span></div>
-                            <div class="step" data-idx="4"><span class="step-num">4</span> <span>Analysis</span></div>
+                    <div class="slim-stepper">
+                        <div class="progress-ribbon"></div>
+                        <div class="step-nodes">
+                            <div class="node active" data-step="1">1</div>
+                            <div class="node" data-step="2">2</div>
+                            <div class="node" data-step="3">3</div>
+                            <div class="node" data-step="4">4</div>
                         </div>
                     </div>
                     <div class="wizard-body">
                         <form id="proposal-form">
                             <!-- Step 1: Project Basics -->
                             <div class="form-step active" data-step="1">
-                                <div class="step-title">
-                                    <h3>Project Basics</h3>
-                                    <p>Tell us about the core of your poultry project.</p>
-                                    <div class="template-actions" style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
-                                        <button type="button" id="btn-template-100" class="btn btn-secondary btn-sm">
-                                            <i data-lucide="zap" style="width:14px; height:14px;"></i> Use 100-Bird Template
-                                        </button>
-                                        <button type="button" id="btn-load-snapshot" class="btn btn-accent btn-sm" style="background: var(--primary-soft); color: var(--primary); border: 1px dashed var(--primary);">
-                                            <i data-lucide="upload-cloud" style="width:14px; height:14px;"></i> Load Success Snapshot
-                                        </button>
-                                    </div>
-                                    <div id="snapshot-note" style="margin-top: 12px; display: none; padding: 10px; background: var(--primary-soft); border-left: 4px solid var(--primary); border-radius: 4px; font-size: 13px; color: var(--primary); font-weight: 500;">
-                                        <!-- Contextual note injected here -->
-                                    </div>
+                                <div class="step-header-slim">
+                                    <span class="step-indicator">STEP 01</span>
+                                    <h3>Project Foundations</h3>
                                 </div>
-                                <div class="input-group">
-                                    <label for="prop-name">Project Name</label>
-                                    <input type="text" id="prop-name" placeholder="e.g. Green Valley Broiler Farm">
-                                </div>
-                                <div class="input-grid">
+                                
+                                <div class="compact-grid">
+                                    <div class="input-group full-width">
+                                        <label for="prop-name"><i data-lucide="tag"></i> Project Name</label>
+                                        <input type="text" id="prop-name" placeholder="e.g. Green Valley Layer Farm">
+                                    </div>
+
                                     <div class="input-group">
-                                        <label for="prop-type">Poultry Type</label>
+                                        <label for="prop-type"><i data-lucide="bird"></i> Poultry Type</label>
                                         <select id="prop-type">
                                             <option value="broiler">Broilers (Meat Production)</option>
                                             <option value="layer" selected>Layers (Egg Production)</option>
                                             <option value="dual">Dual Purpose</option>
                                         </select>
                                     </div>
+                                    
                                     <div class="input-group">
-                                        <label for="prop-batch-mode">Batch Configuration</label>
+                                        <label for="prop-batch-mode"><i data-lucide="refresh-cw"></i> Batch Mode</label>
                                         <select id="prop-batch-mode">
-                                            <option value="setup">Batch 1: Initial Setup (Full CAPEX)</option>
-                                            <option value="repeat">Batch 2+: Subsequent Cycle (Reuse Assets)</option>
+                                            <option value="setup">Initial Setup (Full CAPEX)</option>
+                                            <option value="repeat">Subsequent Cycle (Reuse Assets)</option>
                                         </select>
                                     </div>
+
+                                    <div class="input-group">
+                                        <label for="prop-size"><i data-lucide="hash"></i> Target Flock Size</label>
+                                        <input type="number" id="prop-size" placeholder="e.g. 100" min="1">
+                                    </div>
+
+                                    <div class="input-group">
+                                        <label for="prop-owner"><i data-lucide="user"></i> Owner / Applicant</label>
+                                        <input type="text" id="prop-owner" placeholder="Full name">
+                                    </div>
+
+                                    <div class="input-group full-width">
+                                        <label for="prop-location"><i data-lucide="map-pin"></i> Site Address / Location</label>
+                                        <input type="text" id="prop-location" placeholder="e.g. Nakuru, Rift Valley">
+                                    </div>
                                 </div>
-                                <div class="input-group">
-                                    <label for="prop-size">Target Flock Size</label>
-                                    <input type="number" id="prop-size" placeholder="e.g. 100" min="1">
-                                </div>
-                                <div class="input-group">
-                                    <label for="prop-location">Location / Site Address</label>
-                                    <textarea id="prop-location" rows="2" placeholder="Where will the farm be located?"></textarea>
-                                </div>
-                                <div class="input-group">
-                                    <label for="prop-owner">Owner / Applicant Name</label>
-                                    <input type="text" id="prop-owner" placeholder="Your full name">
+
+                                <div class="template-bar">
+                                    <button type="button" id="btn-template-100" class="btn btn-secondary btn-sm">
+                                        <i data-lucide="zap"></i> 100-Bird Template
+                                    </button>
+                                    <button type="button" id="btn-load-snapshot" class="btn btn-primary btn-sm">
+                                        <i data-lucide="upload-cloud"></i> Load Success Snapshot
+                                    </button>
+                                    <div id="snapshot-note"></div>
                                 </div>
                             </div>
 
                             <!-- Step 2: Technical Plan -->
                             <div class="form-step" data-step="2">
                                 <div class="step-title">
-                                    <h3>Technical & Operations</h3>
+                                    <h3><i data-lucide="component" class="header-icon"></i> Technical & Operations</h3>
                                     <p>Housing, biosecurity, and management details.</p>
                                 </div>
                                 <div class="input-grid">
@@ -287,11 +299,11 @@
                             <!-- Step 3: Financials -->
                             <div class="form-step" data-step="3">
                                 <div class="step-title">
-                                    <h3>Financial Projections</h3>
+                                    <h3><i data-lucide="bar-chart-3" class="header-icon"></i> Financial Projections</h3>
                                     <p>Enter your costs. Fields auto-calculate where possible.</p>
                                 </div>
                                 <div class="financial-inputs">
-                                    <h4 class="section-label">Market Variance Inputs (Prices)</h4>
+                                    <h4 class="section-label"><i data-lucide="trending-up" style="width:12px; height:12px; margin-right:4px;"></i> Market Variance Inputs (Prices)</h4>
                                     <div class="input-row">
                                         <div class="input-group">
                                             <label for="prop-cost-bird">Cost per Day-Old-Chick</label>
@@ -672,6 +684,6 @@
         </div>
         </main>
     </div>
-    <script src="js/app.js"></script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>
