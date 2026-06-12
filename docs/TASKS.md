@@ -149,3 +149,20 @@
 - `[x]` **Date input edge case fix** — hook `blur()` on "Save Log" click before reading `.value` to force browser date parser commit (Safari compatibility)
 - `[x]` **Historical table pagination** — cap `renderHistoryTable()` at 30 rows, add "Load More" trigger; prevents DOM memory lag over 500-day layer cycles
 - `[x]` **Batch Learning engine** — query finished "Snapshot" batch datasets from SQLite; compute `avgDailyFeedPerBird` and peak mortality periods to auto-adjust financial proposal inputs for subsequent batches
+
+---
+
+## Local-First Resiliency & System Enhancements
+
+- `[ ]` **Phone sync bug** — Fix issue where local cache doesn't push to server on refresh (likely service worker `.waitUntil()` or background sync not completing properly).
+- `[ ]` **Medicine logging enhancements**:
+  - `[ ]` Add type labels (dewormer, vaccine, treatment) to logs.
+  - `[ ]` Add per-medicine egg/meat withdrawal period fields (stored as days).
+  - `[ ]` Auto-calculate withdrawal end dates (today + withdrawal_period).
+  - `[ ]` Add dashboard flag for active withdrawals (visual alerts).
+- `[ ]` **Guest read-only access** — Implement role checks with limited UI (view-only dashboards, disable write forms).
+- `[ ]` **Multi-user support** — Add a `users` schema table and session middleware to scope database queries by `user_id`.
+- `[ ]` **Same-day log behavior resolution**:
+  - `[ ]` Egg collections: accumulate (sum multiple entries).
+  - `[ ]` Point-in-time metrics (feed weight, temp, humidity): overwrite (one value per day).
+- `[ ]` **Sensor offline alert via StoryFlow** — Track last sync timestamp, and dispatch Telegram alert if it exceeds a configurable threshold (e.g., 4 hours).
