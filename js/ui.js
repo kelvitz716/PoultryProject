@@ -1,14 +1,31 @@
-// ui.js - Shared UI components and DOM helpers
+/**
+ * @file ui.js
+ * @description Shared UI component controllers and DOM rendering helpers.
+ * Manages toast notifications, confirmation dialog overlays, and global cockpit badge displays.
+ */
 
+/**
+ * Shorthand helper selector to retrieve a DOM element by its ID.
+ * @param {string} id - The element's HTML ID.
+ * @returns {HTMLElement|null} The DOM element reference, or null if not found.
+ */
 export const $ = id => document.getElementById(id);
 
+/**
+ * Renders a self-dismissing toast notification alert on the page.
+ * @param {string} message - Text notification string to display.
+ * @param {string} [type='info'] - Style category ('info', 'warning', 'danger').
+ */
 export function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
+    // Inline styling configurations for layout overlays and dynamic transitions
     toast.style.cssText = 'position:fixed; bottom:20px; right:20px; padding:12px 20px; border-radius:8px; color:#fff; font-weight:500; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); transition: opacity 0.3s, transform 0.3s; transform: translateY(0); opacity: 1;';
     toast.style.background = type === 'danger' ? 'var(--danger)' : type === 'warning' ? '#f59e0b' : 'var(--primary)';
     toast.innerText = message;
     document.body.appendChild(toast);
+    
+    // Smooth transition fade-out after 3 seconds
     setTimeout(() => {
         toast.style.opacity = '0';
         toast.style.transform = 'translateY(10px)';
@@ -16,6 +33,11 @@ export function showToast(message, type = 'info') {
     }, 3000);
 }
 
+/**
+ * Renders a full screen overlay modal requesting validation before committing destructive updates.
+ * @param {string} message - Prompt description text detailing the confirm warning.
+ * @param {function} onConfirm - Callback execution closure dispatched on user verification.
+ */
 export function showConfirmModal(message, onConfirm) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay active';
@@ -41,6 +63,11 @@ export function showConfirmModal(message, onConfirm) {
     };
 }
 
+/**
+ * Renders list notifications inside the global notifications dropdown and updates the indicator badge.
+ * Parses active health, environment, or lifecycle deviation alarms.
+ * @param {Array<Object>} alerts - Array of active warning/alert descriptions.
+ */
 export function updateGlobalNotifications(alerts) {
     const badge = $('notification-badge');
     const container = $('notifications-dropdown');
@@ -69,7 +96,7 @@ export function updateGlobalNotifications(alerts) {
         });
         if (badge) {
             badge.style.display = 'block';
-            badge.innerText = ''; // alerts.length if we want a number
+            badge.innerText = ''; // Display alert counts if needed
         }
     }
     

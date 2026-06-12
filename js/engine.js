@@ -1,3 +1,19 @@
+/**
+ * @file engine.js
+ * @description Core biological, operational, and financial rules engine for PoultryDSS.
+ * Contains breed parameters, vaccination schedules, seasonal environmental calculations,
+ * data parsing engines (CSV), KPI aggregations, and egg inventory aging logic.
+ */
+
+/**
+ * Commercial layer breed constants for Kenchic ISA Brown.
+ * Used for liveability and peak production warning thresholds.
+ * @type {Object}
+ * @property {number} targetLiveability - Targeted liveability rate percentage.
+ * @property {number} targetPeakProduction - Targeted peak laying rate percentage.
+ * @property {Array<number>} pointOfLayWeeks - Start and end week range when layers begin laying eggs.
+ * @property {Array<number>} spentCullingWeeks - Age range (weeks) when spent layers are culled.
+ */
 export const ISA_BROWN_CONSTANTS = {
     targetLiveability: 93.2,
     targetPeakProduction: 95.0,
@@ -5,6 +21,15 @@ export const ISA_BROWN_CONSTANTS = {
     spentCullingWeeks: [72, 78]
 };
 
+/**
+ * Standard regional climate baseline metrics for Kitale, Trans Nzoia, Kenya.
+ * Used as defaults for cold and heat stress evaluations.
+ * @type {Object}
+ * @property {number} ambientDayMin - Minimum comfortable daytime temperature (°C).
+ * @property {number} ambientDayMax - Maximum comfortable daytime temperature (°C).
+ * @property {number} ambientNightMin - Minimum comfortable night temperature (°C).
+ * @property {number} ambientNightMax - Maximum comfortable night temperature (°C).
+ */
 export const KITALE_CLIMATE_BASELINE = {
     ambientDayMin: 16,
     ambientDayMax: 26,
@@ -12,12 +37,25 @@ export const KITALE_CLIMATE_BASELINE = {
     ambientNightMax: 14
 };
 
+/**
+ * Mandatory immunizations based on the Kenchic commercial vaccination guidelines.
+ * @type {Array<Object>}
+ * @property {string} name - Name of the vaccination.
+ * @property {Array<number>} dayRange - Recommended bird age range (days) for the first dose.
+ * @property {number|null} boosterDays - Interval in days for Newcastle boosters (null if not applicable).
+ */
 export const KENCHIC_SCHEDULE = [
     { name: 'Newcastle (HB1/La Sota)', dayRange: [5, 7], boosterDays: 75 },
     { name: 'Gumboro (IBD)', dayRange: [10, 14], boosterDays: 14 },
     { name: 'Fowl Pox', dayRange: [35, 42], boosterDays: null }
 ];
 
+/**
+ * Standard withdrawal tables (in days) before eggs or meat can be safely sold
+ * following therapeutic treatment overrides.
+ * @type {Object<string, Object>}
+ * @property {Object} withdrawal - Withdrawal periods for eggs and meat in days.
+ */
 export const DRUG_WITHDRAWAL_TABLE = {
     'Aliseryl WS': { egg: 1, meat: 7 },
     'Oxytetracycline': { egg: 3, meat: 3 },
@@ -26,6 +64,14 @@ export const DRUG_WITHDRAWAL_TABLE = {
     'Levamisole': { egg: 14, meat: 14 }
 };
 
+/**
+ * Returns Kitale's active agricultural season and disease risk level based on the month.
+ * - Dry Season: December to March (Low environmental disease pressure).
+ * - Long Rains: April to October (High coccidiosis and CRD respiratory disease pressure).
+ * - Short Rains: November (Medium risk).
+ * @param {Date} date - The date to check.
+ * @returns {Object} Season details ({ season: string, riskLevel: string }).
+ */
 export function getKitaleSeason(date) {
     const month = date.getMonth(); // 0-11
     if ([11, 0, 1, 2].includes(month)) return { season: 'dry', riskLevel: 'low' };
@@ -33,12 +79,31 @@ export function getKitaleSeason(date) {
     return { season: 'short-rains', riskLevel: 'medium' };
 }
 
+/**
+ * Operational feed schedule requirements for Kenchic standards from pullet to point of lay.
+ * @type {Array<Object>}
+ * @property {string} phase - Feed developmental phase name.
+ * @property {string} weeks - Bird age range in weeks.
+ * @property {string} type - Feed formula type.
+ * @property {number} kgPerBird - Total kilograms consumed per bird during this phase.
+ * @property {number} bagCost - Reference cost (KES) per 50kg feed bag.
+ * @property {string} [note] - Supplementary phase metrics (e.g., 'per day').
+ */
 export const FEED_SCHEDULE = [
     { phase: 'Chick Mash', weeks: '0 – 8', type: 'High Protein Crumbs', kgPerBird: 2.0, bagCost: 4200 },
     { phase: 'Growers Mash',   weeks: '9 – 18', type: 'Grower Mash',        kgPerBird: 5.5, bagCost: 3800 },
     { phase: 'Layers Complete Meal',    weeks: '18+',     type: 'Layer Mash',         kgPerBird: 0.12, bagCost: 3500, note: 'per day' }
 ];
 
+/**
+ * Full layer flock vaccination calendar roadmap.
+ * Used for knowledge-base documentation displays.
+ * @type {Array<Object>}
+ * @property {string} day - Recommended age window.
+ * @property {string} vaccine - Name of immunization target.
+ * @property {string} method - Administration technique.
+ * @property {string} notes - Operational details.
+ */
 export const VACCINATION_SCHEDULE = [
     { day: 'Day 1',      vaccine: 'Marek\'s Disease',   method: 'Injection (at hatchery)', notes: 'Usually done by Kenchic before pickup' },
     { day: 'Day 5–7',    vaccine: 'Newcastle (HB1/La Sota)', method: 'Eye drop / Drinking water', notes: 'First dose' },
@@ -52,6 +117,12 @@ export const VACCINATION_SCHEDULE = [
     { day: 'Week 16–18', vaccine: 'Deworming',         method: 'Oral (Piperazine)', notes: 'Before point of lay' },
 ];
 
+/**
+ * Static HTML content definitions for the Knowledge Base portal in PoultryDSS.
+ * Includes schemas for lifecycle milestones, split-floor coop designs, feed budgets,
+ * biosecurity best practices, egg handling guides, and composting manure sales.
+ * @type {Object<string, Object>}
+ */
 export const KB_CONTENT = {
     'lifecycle-milestones': {
         title: 'Lifecycle Milestones (ISA Brown)',
@@ -252,6 +323,14 @@ export const KB_CONTENT = {
     }
 };
 
+/**
+ * Standard configuration default settings for a new Poultry farm profile.
+ * @type {Object}
+ * @property {number} flockSize - Standard flock cohort count.
+ * @property {number} defaultFeedPrice - Default feed bag cost (KES).
+ * @property {number} sackWeightKg - Standard feed weight per bag in kg.
+ * @property {Object} alertThresholds - Baseline rules triggering deviation warnings.
+ */
 export const DEFAULT_FARM_PROFILE = {
     flockSize: 49,
     defaultFeedPrice: 3000,   // KES per bag
@@ -268,7 +347,14 @@ export const DEFAULT_FARM_PROFILE = {
     buyers: []
 };
 
-// Sack → kg backfill algorithm (§3.3 Rule)
+/**
+ * Backfills missing daily feed data in kilograms when feed is logged in terms of bags/sacks.
+ * Re-distributes the contents of a newly opened sack evenly backward across preceding days
+ * where no daily feed consumption was entered, complying with specification §3.3 Rules.
+ * @param {Array<Object>} logs - Collection of daily batch logs.
+ * @param {number} [sackWeight=50] - Standard sack weight configuration in kilograms.
+ * @returns {Array<Object>} Chronologically sorted logs with populated feed consumption numbers.
+ */
 export function sackBackfill(logs, sackWeight) {
     const weight = sackWeight || 50; // Fallback
     const sorted = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -292,7 +378,13 @@ export function sackBackfill(logs, sackWeight) {
     return sorted;
 }
 
-// CSV Parser for 2025 Egg Tracker format
+/**
+ * Parses historical CSV records formatted under the 2025 Egg Tracker design pattern.
+ * Performs date mappings (MM/DD/YYYY to ISO YYYY-MM-DD) and aggregates lay counts.
+ * @param {string} csvText - Raw comma-separated values from upload.
+ * @param {number} [farmProfileFlockSize=49] - Flock count to attribute.
+ * @returns {Array<Object>} List of daily tracking records parsed for database migration.
+ */
 export function parseEggTrackerCSV(csvText, farmProfileFlockSize = 49) {
     const lines = csvText.trim().replace(/\r/g, '').split('\n');
     const header = lines[0].split(',').map(h => h.trim());
@@ -328,7 +420,14 @@ export function parseEggTrackerCSV(csvText, farmProfileFlockSize = 49) {
     return records;
 }
 
-// Utility: compute KPIs from log data
+/**
+ * Calculates essential cohort KPIs from historical log telemetry and configuration limits.
+ * Compiles lay rates, 7-day averages, trends, feed conversion index (kg/doz), and monthly projection forecasts.
+ * @param {Array<Object>} logs - Collection of active daily tracking logs.
+ * @param {Object} batch - Active cohort config.
+ * @param {Object} profile - Farm profile limits.
+ * @returns {Object} Computed KPI dataset containing todayLayRate, avg7LayRate, layRateTrend, feedConversion, etc.
+ */
 export function computeKPIs(logs, batch, profile) {
     const batchSize = batch.size || profile.flockSize;
     const liveBirds = batch.stats && batch.stats.birdsAlive !== undefined ? batch.stats.birdsAlive : batchSize;
@@ -374,7 +473,14 @@ export function computeKPIs(logs, batch, profile) {
     };
 }
 
-// Module 6a: FIFO Egg Aging Engine
+/**
+ * Computes egg inventory shelf-life age tiers using a First-In, First-Out (FIFO) algorithm.
+ * Accounts for total sales and write-offs, deducting them from the oldest production dates first,
+ * and compiles remaining inventory bins with their current age in days (Module 6a specifications).
+ * @param {Array<Object>} logs - Chronological production logs.
+ * @param {Array<Object>} txs - Transaction history (sales and write-offs).
+ * @returns {Object} Inventory summary ({ totalUnsold: number, unsoldBatches: Array<{date, qty, ageDays}> }).
+ */
 export function computeEggInventoryAging(logs, txs) {
     // 1. Calculate total eggs removed from inventory (sold + written off)
     const totalEggsSold = txs.filter(t => t.type === 'sale' && t.category === 'eggs').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);

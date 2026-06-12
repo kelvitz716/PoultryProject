@@ -17,7 +17,7 @@
 
 const { chromium } = require('playwright');
 
-const BASE_URL = 'http://localhost:8089';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:8089';
 const TIMEOUT   = 30_000;
 
 // ─── helpers ───────────────────────────────────────────────────────────────

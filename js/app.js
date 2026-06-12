@@ -1,3 +1,11 @@
+/**
+ * @file app.js
+ * @description Main frontend application controller orchestrating the Single Page Application (SPA).
+ * Binds page navigation elements, manages the multi-step project proposal generator wizard,
+ * controls the live batch cockpit dashboard, maps historical database data to analytics,
+ * and maintains reactive UI bindings (Lucide icons, Chart.js datasets, modals, and tables).
+ */
+
 import { api } from './api.js';
 import {
     ISA_BROWN_CONSTANTS, KITALE_CLIMATE_BASELINE, KENCHIC_SCHEDULE,
@@ -211,6 +219,10 @@ if ('serviceWorker' in navigator) {
         $(id)?.addEventListener('input', calculateFinancials);
     });
 
+    /**
+     * Calculates the estimated project financials (CAPEX, OPEX, expected revenues, profit margins, 
+     * and payback period) based on wizard form inputs and displays the results in real-time.
+     */
     function calculateFinancials() {
         const size = parseInt($('prop-size').value) || 100;
         const type = $('prop-type').value;
@@ -764,6 +776,11 @@ if ('serviceWorker' in navigator) {
         if (nameEl) nameEl.value = nameEl.value + ' (Copy)';
     };
 
+    /**
+     * Refreshes the cockpit dashboard overview.
+     * Fetches saved economic proposals and active cohorts, updating metrics widgets,
+     * lists of saved project proposals, and summary panels.
+     */
     async function refreshDashboard() {
         const proposals = await api.getProposals();
         const batches = getBatches().filter(b => b.status === 'active');
@@ -2183,6 +2200,12 @@ if ('serviceWorker' in navigator) {
         updateGlobalNotifications(alerts);
     }
 
+    /**
+     * Renders a line chart displaying lay rates over the last 14 days.
+     * Utilizes Chart.js, updates scales depending on active dark/light visual theme,
+     * and handles memory cleaning by destroying previous chart instances.
+     * @param {Array<Object>} recentLogs - List of recent daily production logs.
+     */
     async function renderCockpitChart(recentLogs) {
         const ctx = $('cockpit-layrate-chart')?.getContext('2d');
         if (!ctx) return;
@@ -3025,6 +3048,15 @@ if ('serviceWorker' in navigator) {
         });
     };
 
+    /**
+     * Recalculates historical farm-wide aggregates upon the closure of a flock batch cohort.
+     * Computes rolling feed conversions, seasonality multipliers (monthly average lay rates),
+     * and mortality curves to improve subsequent proposal predictions.
+     * @param {Object} batch - Completed cohort configuration properties.
+     * @param {Array<Object>} logs - Collection of operational logs.
+     * @param {Array<Object>} txs - Collection of transaction ledger records.
+     * @param {Object} kpis - Final calculated cohort KPIs.
+     */
     async function updateAggregates(batch, logs, txs, kpis) {
         const agg = await loadAggregates();
         agg.batchCount = (agg.batchCount || 0) + 1;
