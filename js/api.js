@@ -318,6 +318,22 @@ export const api = {
             return null;
         }
     },
+
+    /**
+     * Retrieves aggregated Tuya sensor history (avg/min/max temperature and humidity) for a
+     * given date, for backfilling daily logs that were missed and entered later.
+     * Limited to Tuya's free-edition 7-day device log retention.
+     * @param {string} date - Date in YYYY-MM-DD format.
+     * @returns {Promise<Object|null>} { success, date, temperature, humidity }, or null if failed.
+     */
+    async getTuyaHistory(date) {
+        try {
+            const r = await fetch('/api/sensors/tuya-history?date=' + encodeURIComponent(date));
+            return r.ok ? await r.json() : null;
+        } catch (e) {
+            return null;
+        }
+    },
     
     /**
      * Fallback lookup retrieving the visual interface theme preference.

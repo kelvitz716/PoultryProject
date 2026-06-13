@@ -1195,7 +1195,7 @@ if ('serviceWorker' in navigator) {
                     ` : ''}
                     <div class="card-header">
                         <h3><i data-lucide="clipboard-check" style="width:18px;height:18px;"></i> Today's Log</h3>
-                        <input type="date" id="log-date" value="${new Date().toISOString().split('T')[0]}" class="input-sm" style="width:auto;">
+                        <input type="date" id="log-date" value="${new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0]}" max="${new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0]}" class="input-sm" style="width:auto;" onchange="window.handleLogDateChange()">
                     </div>
                     <div class="log-form-grid" style="flex:1;">
                         <div class="log-field">
@@ -1232,10 +1232,12 @@ if ('serviceWorker' in navigator) {
                         <div class="log-field">
                             <label>Temp (°C)</label>
                             <input type="number" id="log-temp" step="0.1" placeholder="Optional" class="input-md" onfocus="this.select()">
+                            <span id="log-temp-hint" class="field-hint" style="display:none;"></span>
                         </div>
                         <div class="log-field">
                             <label>Humidity (%)</label>
                             <input type="number" id="log-humidity" placeholder="Optional" class="input-md" min="0" max="100" onfocus="this.select()">
+                            <span id="log-humidity-hint" class="field-hint" style="display:none;"></span>
                         </div>
                     </div>
                     <div class="log-notes-row" style="margin-top:auto;">
@@ -1537,6 +1539,11 @@ if ('serviceWorker' in navigator) {
         });
         $('log-sacks').value = '0';
         $('log-mortality').value = '0';
+        // Clear and hide historical sensor average hints from the UI as the form resets
+        const tempHint = $('log-temp-hint');
+        const humHint = $('log-humidity-hint');
+        if (tempHint) tempHint.style.display = 'none';
+        if (humHint) humHint.style.display = 'none';
         // Show brief confirmation feedback  
         const btn = document.querySelector('.btn-save-log');
         if (btn) { btn.textContent = '✓ Saved!'; btn.disabled = true; setTimeout(() => { btn.innerHTML = '<i data-lucide="save"></i> Save Log'; btn.disabled = false; lucide.createIcons(); }, 1800); }
@@ -1715,6 +1722,79 @@ if ('serviceWorker' in navigator) {
         renderCockpitTransactions(txs, initialCash);
         await renderHealthTable(batch.id);
         await window.updateLiveSensorWidget();
+    }
+
+    /**
+     * Handles changes to the daily log date selector. When backdating a log to a past date
+     * (e.g. entering data from paper notes for a missed day), fetches that day's Tuya sensor
+     * history and prefills the temperature/humidity fields with the daily average, showing
+     * the min/max range as a hint. For today's date, restores the live-sensor prefill.
+     * Always clears the temp/humidity fields first so estimates from a previously-selected
+     * date aren't carried over.
+     * @returns {Promise<void>}
+     */
+    window.handleLogDateChange = async function() {
+        const dateInput = $('log-date');
+        const tempInput = $('log-temp');
+        const humInput = $('log-humidity');
+        const tempHint = $('log-temp-hint');
+        const humHint = $('log-humidity-hint');
+        if (!dateInput || !tempInput || !humInput) return;
+
+        const date = dateInput.value;
+        if (!date) {
+            tempInput.value = '';
+            humInput.value = '';
+            if (tempHint) tempHint.style.display = 'none';
+            if (humHint) humHint.style.display = 'none';
+            return;
+        }
+
+        // Resolve local EAT today (UTC+3)
+        const today = new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0];
+
+        // Clear any estimate/value tied to the previously-selected date.
+        tempInput.value = '';
+        humInput.value = '';
+        if (tempHint) tempHint.style.display = 'none';
+        if (humHint) humHint.style.display = 'none';
+
+        if (date === today) {
+            // Restore live-sensor prefill for today.
+            await window.updateLiveSensorWidget();
+            return;
+        }
+
+        const res = await api.getTuyaHistory(date);
+
+        if (!res || !res.success) {
+            const msg = (res && res.error) || 'No sensor history available';
+            if (tempHint) { tempHint.innerText = msg; tempHint.style.display = 'block'; }
+            if (humHint) { humHint.innerText = msg; humHint.style.display = 'block'; }
+            return;
+        }
+
+        if (res.temperature) {
+            tempInput.value = res.temperature.avg;
+            if (tempHint) {
+                tempHint.innerText = `Sensor avg (${res.temperature.min}–${res.temperature.max}°C, n=${res.temperature.count})`;
+                tempHint.style.display = 'block';
+            }
+        } else if (tempHint) {
+            tempHint.innerText = 'No sensor readings for this date';
+            tempHint.style.display = 'block';
+        }
+
+        if (res.humidity) {
+            humInput.value = res.humidity.avg;
+            if (humHint) {
+                humHint.innerText = `Sensor avg (${res.humidity.min}–${res.humidity.max}%, n=${res.humidity.count})`;
+                humHint.style.display = 'block';
+            }
+        } else if (humHint) {
+            humHint.innerText = 'No sensor readings for this date';
+            humHint.style.display = 'block';
+        }
     }
 
     window.updateLiveSensorWidget = async function() {
