@@ -1,0 +1,33 @@
+name: CI/CD kwa OCI (Dockhand)
+
+on:
+  push:
+    branches:
+      - main # Badilisha na tawi lako la msingi (mfano: master, develop)
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Ruhusu kusukuma picha kwenye GitHub Container Registry
+
+    steps:
+    - name: Angalia msimbo wa chanzo
+      uses: actions/checkout@v4
+
+    - name: Ingia kwenye GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Jenga na sukuma picha ya Docker
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ghcr.io/${{ github.repository }}:latest
+          ghcr.io/${{ github.repository }}:${{ github.sha }}
