@@ -13,7 +13,7 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
+          tags: ci # 👈 Changed from 'tag:ci' to just 'ci'
 
       - name: Rebuild and redeploy on OCI
         uses: appleboy/ssh-action@v1.0.3
