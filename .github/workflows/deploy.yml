@@ -2,32 +2,27 @@ name: CI/CD kwa OCI (Dockhand)
 
 on:
   push:
-    branches:
-      - main # Badilisha na tawi lako la msingi (mfano: master, develop)
+    branches: [master]
 
 jobs:
-  build-and-push:
+  deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write # Ruhusu kusukuma picha kwenye GitHub Container Registry
-
     steps:
-    - name: Angalia msimbo wa chanzo
-      uses: actions/checkout@v4
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
 
-    - name: Ingia kwenye GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Jenga na sukuma picha ya Docker
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: |
-          ghcr.io/${{ github.repository }}:latest
-          ghcr.io/${{ github.repository }}:${{ github.sha }}
+      - name: Rebuild and redeploy on OCI
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 100.68.227.114
+          username: opc
+          key: ${{ secrets.OCI_SSH_KEY }}
+          script: |
+            cd ~/stacks/poultryproject
+            git pull origin master
+            docker compose build poultry-dss
+            docker compose up -d --force-recreate poultry-dss
