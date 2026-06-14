@@ -4,6 +4,11 @@ on:
   push:
     branches: [master]
 
+# Define the lowercase image name once for the entire workflow.
+# ghcr.io requires all-lowercase image references.
+env:
+  IMAGE: ghcr.io/kelvitz716/poultryproject
+
 jobs:
   # ── Job 1: Build the Docker image and push it to GitHub Container Registry ──
   build:
@@ -11,10 +16,6 @@ jobs:
     permissions:
       contents: read
       packages: write   # Required to push to ghcr.io
-
-    outputs:
-      # Pass the exact image tag to the deploy job so it pulls the right version
-      image: ghcr.io/${{ github.repository }}:${{ github.sha }}
 
     steps:
       - name: Checkout source code
@@ -32,15 +33,17 @@ jobs:
         with:
           context: .
           push: true
-          # Tag with both the commit SHA (immutable) and :latest (rolling)
+          # Tag with both the commit SHA (immutable) and :latest (rolling).
+          # Using the env.IMAGE variable ensures the name is always lowercase,
+          # avoiding the "invalid reference format" error from ghcr.io.
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
 
   # ── Job 2: SSH into OCI via Tailscale and redeploy the new image ──
   deploy:
     runs-on: ubuntu-latest
-    needs: build   # Only run after the image is successfully pushed
+    needs: build   # Only runs after the image is successfully pushed
 
     steps:
       - name: Connect to Tailscale VPN
@@ -56,20 +59,21 @@ jobs:
           host: 100.68.227.114
           username: opc
           key: ${{ secrets.OCI_SSH_KEY }}
-          # Pull the new image from ghcr.io and recreate only the poultry-dss
-          # container, leaving all other stacks (nextcloud, immich, etc.) untouched.
-          # ghcr.io images are public so no docker login is required on the OCI host.
+          envs: IMAGE
+          # Pull the pre-built image from ghcr.io and recreate only the
+          # poultry-dss container, leaving all other stacks untouched.
+          # The GITHUB_TOKEN-published package is public by default.
           script: |
             cd ~/data/poultryproject
 
-            echo "Pulling latest image from ghcr.io..."
-            docker pull ghcr.io/${{ github.repository }}:latest
+            echo "Pulling latest image..."
+            docker pull $IMAGE:latest
 
-            echo "Restarting poultry-dss container with new image..."
+            echo "Restarting container with new image..."
             docker compose up -d --pull always --force-recreate poultry-dss
 
-            echo "Removing unused dangling images to save disk space..."
+            echo "Pruning dangling images to free disk space..."
             docker image prune -f
 
-            echo "Deploy complete. Container status:"
+            echo "=== Deploy complete. Container status: ==="
             docker ps --filter name=poultry-dss --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
