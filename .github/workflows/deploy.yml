@@ -1,28 +1,75 @@
-name: CI/CD kwa OCI (Dockhand)
+name: Build and Deploy to OCI
 
 on:
   push:
     branches: [master]
 
 jobs:
+  # ── Job 1: Build the Docker image and push it to GitHub Container Registry ──
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # Required to push to ghcr.io
+
+    outputs:
+      # Pass the exact image tag to the deploy job so it pulls the right version
+      image: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # Tag with both the commit SHA (immutable) and :latest (rolling)
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  # ── Job 2: SSH into OCI via Tailscale and redeploy the new image ──
   deploy:
     runs-on: ubuntu-latest
+    needs: build   # Only run after the image is successfully pushed
+
     steps:
-      - name: Connect to Tailscale
+      - name: Connect to Tailscale VPN
         uses: tailscale/github-action@v2
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci # 👈 Changed from 'ci' to just 'tag:ci'
+          tags: tag:ci
 
-      - name: Rebuild and redeploy on OCI
+      - name: Deploy new image on OCI via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: 100.68.227.114
           username: opc
           key: ${{ secrets.OCI_SSH_KEY }}
+          # Pull the new image from ghcr.io and recreate only the poultry-dss
+          # container, leaving all other stacks (nextcloud, immich, etc.) untouched.
+          # ghcr.io images are public so no docker login is required on the OCI host.
           script: |
             cd ~/data/poultryproject
-            git pull origin master
-            docker compose build poultry-dss
-            docker compose up -d --force-recreate poultry-dss
+
+            echo "Pulling latest image from ghcr.io..."
+            docker pull ghcr.io/${{ github.repository }}:latest
+
+            echo "Restarting poultry-dss container with new image..."
+            docker compose up -d --pull always --force-recreate poultry-dss
+
+            echo "Removing unused dangling images to save disk space..."
+            docker image prune -f
+
+            echo "Deploy complete. Container status:"
+            docker ps --filter name=poultry-dss --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"

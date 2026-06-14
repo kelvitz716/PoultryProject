@@ -2,6 +2,10 @@ version: '3.8'
 
 services:
   poultry-dss:
+    # In CI/CD deployments the pre-built image from ghcr.io is pulled by the
+    # GitHub Actions deploy job. For local development, comment the `image:`
+    # line and uncomment `build:` to build directly from the Dockerfile.
+    image: ghcr.io/kelvitz716/poultryproject:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,8 +14,7 @@ services:
       - "8089:80"
     restart: always
     volumes:
-      # Specifically persist the SQLite database volume securely
+      # Persist the SQLite database so it survives container recreations
       - ./data:/app/data
     env_file:
       - .env
-
