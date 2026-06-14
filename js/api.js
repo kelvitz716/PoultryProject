@@ -349,5 +349,248 @@ export const api = {
      */
     setTheme(t) {
         localStorage.setItem('poultryTheme', t);
+    },
+
+
+    // ── STAGING LAYER ──────────────────────────────────────────────────────────
+
+    /**
+     * Adds a new intra-day event to the staging buffer on the server.
+     * Server assigns the EAT date/timestamp. Client never supplies these.
+     * On network failure, queues the payload in IndexedDB for Background Sync replay.
+     * @param {string} batchId - Target batch.
+     * @param {string} module - Event type: 'eggs'|'feed'|'mortality'|'sensors'|'gases'|'health'|'notes'
+     * @param {Object} data - Event payload.
+     * @param {string} [amendDate] - Optional YYYY-MM-DD to backfill a past date.
+     * @returns {Promise<Object>} { success, id, date, timestamp } or { queued: true } if offline.
+     */
+    async addStagingEvent(batchId, module, data, amendDate = null) {
+        const url = `/api/staging/${batchId}/${module}${amendDate ? `?amend=${amendDate}` : ''}`;
+        return this._writeWithFallback(url, data);
+    },
+
+    /**
+     * Edits the data payload of a pending (uncommitted) staging event.
+     * @param {string} batchId - Target batch.
+     * @param {string} stagingId - The staging row ID.
+     * @param {Object} data - Updated payload.
+     * @returns {Promise<Object>} { success: true }
+     */
+    async editStagingEvent(batchId, stagingId, data) {
+        try {
+            const r = await fetch(`/api/staging/${batchId}/${stagingId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return r.ok ? await r.json() : { success: false, error: await r.text() };
+        } catch (e) { return { success: false, error: e.message }; }
+    },
+
+    /**
+     * Deletes a pending staging event (before midnight commit).
+     * @param {string} batchId - Target batch.
+     * @param {string} stagingId - The staging row ID.
+     * @returns {Promise<Object>} { success: true }
+     */
+    async deleteStagingEvent(batchId, stagingId) {
+        try {
+            const r = await fetch(`/api/staging/${batchId}/${stagingId}`, { method: 'DELETE' });
+            return r.ok ? await r.json() : { success: false, error: await r.text() };
+        } catch (e) { return { success: false, error: e.message }; }
+    },
+
+    /**
+     * Retrieves the computed intra-day summary for today (EAT).
+     * Contains collections[], feed events, mortality, sensor aggregates, health, notes.
+     * @param {string} batchId - Target batch.
+     * @returns {Promise<Object|null>}
+     */
+    async getTodayStaging(batchId) {
+        try {
+            const r = await fetch(`/api/staging/${batchId}/today`);
+            return r.ok ? await r.json() : null;
+        } catch (e) { return null; }
+    },
+
+
+    // ── AUTH ───────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns the current session user, or { setupRequired: true } on first run.
+     * @returns {Promise<Object>} { user: {id, username, role} } | { setupRequired: true } | { user: null }
+     */
+    async getMe() {
+        try {
+            const r = await fetch('/api/auth/me');
+            return r.ok ? await r.json() : { user: null };
+        } catch (e) { return { user: null }; }
+    },
+
+    /**
+     * Creates the initial super_admin account (first-run wizard only).
+     * @param {string} username
+     * @param {string} password
+     * @returns {Promise<Object>} { success, user } | { error }
+     */
+    async setupAccount(username, password) {
+        try {
+            const r = await fetch('/api/auth/setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    },
+
+    /**
+     * Authenticates a user with username + password.
+     * @param {string} username
+     * @param {string} password
+     * @returns {Promise<Object>} { success, user } | { error }
+     */
+    async login(username, password) {
+        try {
+            const r = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    },
+
+    /**
+     * Validates a guest share token and creates a viewer session.
+     * @param {string} token - Guest token from the ?guest=TOKEN URL param.
+     * @returns {Promise<Object>} { success, user } | { error }
+     */
+    async loginGuest(token) {
+        try {
+            const r = await fetch(`/api/auth/guest?token=${encodeURIComponent(token)}`);
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    },
+
+    /**
+     * Destroys the current session.
+     * @returns {Promise<void>}
+     */
+    async logout() {
+        await fetch('/api/auth/logout', { method: 'POST' });
+    },
+
+    /**
+     * Lists all user accounts (admin/super_admin only).
+     * @returns {Promise<Array>}
+     */
+    async getUsers() {
+        try {
+            const r = await fetch('/api/auth/users');
+            return r.ok ? await r.json() : [];
+        } catch (e) { return []; }
+    },
+
+    /**
+     * Creates a new user account.
+     * @param {string} username
+     * @param {string} password
+     * @param {string} role - 'farmer'|'viewer'|'admin'|'super_admin'
+     * @returns {Promise<Object>}
+     */
+    async createUser(username, password, role) {
+        try {
+            const r = await fetch('/api/auth/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, role })
+            });
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    },
+
+    /**
+     * Changes a user's role (super_admin only).
+     * @param {string} userId
+     * @param {string} role
+     * @returns {Promise<Object>}
+     */
+    async updateUserRole(userId, role) {
+        try {
+            const r = await fetch(`/api/auth/users/${userId}/role`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role })
+            });
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    },
+
+    /**
+     * Resets a password (self or admin).
+     * @param {string} userId
+     * @param {string} password
+     * @returns {Promise<Object>}
+     */
+    async changePassword(userId, password) {
+        try {
+            const r = await fetch(`/api/auth/users/${userId}/password`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+            });
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    },
+
+    /**
+     * Regenerates the guest share token (admin only).
+     * @returns {Promise<{ success: true, token: string } | { error: string }>}
+     */
+    async regenerateGuestToken() {
+        try {
+            const r = await fetch('/api/auth/guest-token/regenerate', { method: 'POST' });
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    },
+
+
+    // ── BACKGROUND SYNC ────────────────────────────────────────────────────────
+
+    /**
+     * Wraps a staging POST with offline fallback:
+     * - On success: returns server response.
+     * - On network failure: queues payload in IndexedDB and registers a Background Sync tag.
+     * @param {string} url - The fetch URL.
+     * @param {Object} body - JSON body payload.
+     * @returns {Promise<Object>}
+     */
+    async _writeWithFallback(url, body) {
+        try {
+            const r = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return await r.json();
+        } catch (e) {
+            // Queue in IndexedDB for Background Sync replay
+            try {
+                const { idbPush } = await import('/js/idb-queue.js');
+                const queueId = await idbPush({ url, method: 'POST', body, headers: { 'Content-Type': 'application/json' } });
+                if ('serviceWorker' in navigator) {
+                    const reg = await navigator.serviceWorker.ready;
+                    if (reg.sync) await reg.sync.register('pending-writes');
+                }
+                console.warn(`[api] Write queued offline (id=${queueId}): ${url}`);
+                return { queued: true, error: e.message };
+            } catch (queueErr) {
+                console.error('[api] Failed to queue offline write:', queueErr.message);
+                return { success: false, error: e.message };
+            }
+        }
     }
 };
+

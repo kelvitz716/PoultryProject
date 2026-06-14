@@ -17,23 +17,41 @@ if (!fs.existsSync(dataDir)) {
 
 // Establish connection to the persistent SQLite database
 const dbPath = path.join(dataDir, 'poultry.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.error('Error opening database:', err.message);
-    } else {
-        console.log('Connected to SQLite database.');
-        // Configure Write-Ahead Logging (WAL) mode to allow concurrent reads and atomic commits
-        db.run('PRAGMA journal_mode=WAL;', () => {
-            initializeDatabase();
-        });
-    }
+
+/**
+ * Module-level db reference. Set synchronously when the connection opens.
+ * Helper functions (runQuery, allQuery, getQuery) reference this variable.
+ * @type {sqlite3.Database|null}
+ */
+let db = null;
+
+/**
+ * Resolves when the DB connection is open and all schema tables have been created.
+ * Awaited by server.js before the server begins listening or running recovery.
+ * @type {Promise<void>}
+ */
+const dbReady = new Promise((resolve, reject) => {
+    db = new sqlite3.Database(dbPath, (err) => {
+        if (err) {
+            console.error('Error opening database:', err.message);
+            reject(err);
+        } else {
+            console.log('Connected to SQLite database.');
+            db.run('PRAGMA journal_mode=WAL;', () => {
+                initializeDatabase(db, resolve, reject);
+            });
+        }
+    });
 });
 
 /**
  * Initializes the database tables and schemas if they do not already exist.
  * Executes sequentially inside db.serialize to avoid race conditions during creation.
+ * @param {sqlite3.Database} db - Open database instance.
+ * @param {Function} resolve - Promise resolve callback (called after all tables created).
+ * @param {Function} reject - Promise reject callback.
  */
-function initializeDatabase() {
+function initializeDatabase(db, resolve, reject) {
     db.serialize(() => {
         // Core configuration, settings, and aggregate key-value store
         db.run(`
@@ -101,7 +119,56 @@ function initializeDatabase() {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         `);
+
+        // ── STAGING LAYER ────────────────────────────────────────────────────────
+        // Persistent intra-day event buffer. All operational writes land here first.
+        // A midnight commit job aggregates and finalises records into the permanent
+        // tables (logs, health_logs, transactions). Rows are never deleted — they
+        // form an immutable audit trail. status: 'pending'|'committed'|'orphaned'|'amendment'
+        db.run(`
+            CREATE TABLE IF NOT EXISTS staging (
+                id          TEXT PRIMARY KEY,
+                batch_id    TEXT NOT NULL,
+                module      TEXT NOT NULL,
+                date        TEXT NOT NULL,
+                timestamp   TEXT NOT NULL,
+                data        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                sensor_id   TEXT NOT NULL DEFAULT 'primary',
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        db.run(`
+            CREATE INDEX IF NOT EXISTS idx_staging_batch_date
+            ON staging (batch_id, date, status)
+        `);
+        db.run(`
+            CREATE INDEX IF NOT EXISTS idx_staging_module_date
+            ON staging (module, date, status)
+        `);
+
+        // ── AUTH ─────────────────────────────────────────────────────────────────
+        // User accounts and role-based access control.
+        // roles: 'super_admin' | 'admin' | 'farmer' | 'viewer'
+        db.run(`
+            CREATE TABLE IF NOT EXISTS users (
+                id            TEXT PRIMARY KEY,
+                username      TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'viewer',
+                created_by    TEXT,
+                must_change_password INTEGER NOT NULL DEFAULT 0,
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
         console.log('Database schema initialized.');
+        // Final no-op run to confirm all prior CREATE TABLE runs have completed
+        db.run('SELECT 1', [], (err) => {
+            if (err) reject(err); else resolve();
+        });
     });
 }
 
@@ -151,8 +218,13 @@ function getQuery(sql, params = []) {
 }
 
 module.exports = {
-    db,
+    dbReady,
     runQuery,
     allQuery,
     getQuery
 };
+
+// Export db as a live getter so callers always get the current value
+// (db is assigned synchronously when new sqlite3.Database() is called)
+Object.defineProperty(module.exports, 'db', { get: () => db, enumerable: true });
+

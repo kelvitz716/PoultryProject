@@ -3,6 +3,8 @@
  * @description Main application entry point and Express backend server for PoultryDSS.
  * Handles API routing for configurations, proposals, batches, daily logs, transactions, and completed snapshots.
  * Integrates an automated background synchronization loop for environmental telemetry from the Tuya Cloud API.
+ * Incorporates the day staging layer (persistent intra-day event buffer with midnight commit),
+ * role-based auth (super_admin/admin/farmer/viewer), and Telegram sensor offline alerts.
  * Configured with strict CORS origin verification and static file path directory traversal guards.
  */
 
@@ -10,7 +12,11 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { runQuery, allQuery, getQuery } = require('./db');
+const bcrypt = require('bcrypt');
+const session = require('express-session');
+const ConnectSQLite3 = require('connect-sqlite3')(session);
+const { runQuery, allQuery, getQuery, dbReady } = require('./db');
+
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -34,6 +40,27 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+/**
+ * Session middleware — sessions persisted in the same SQLite database via connect-sqlite3.
+ * Secure cookie and rolling expiry; sameSite=lax is appropriate for same-origin LAN/Tailscale usage.
+ */
+app.use(session({
+    store: new ConnectSQLite3({
+        db: 'poultry.db',
+        dir: path.join(__dirname, 'data'),
+        table: 'sessions'
+    }),
+    secret: process.env.SESSION_SECRET || 'poultry-dss-default-secret-change-me',
+    resave: false,
+    saveUninitialized: false,
+    rolling: true,
+    cookie: {
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        httpOnly: true,
+        sameSite: 'lax'
+    }
+}));
 
 /**
  * Middleware: Intercepts and blocks unauthorized access to sensitive backend source code,
@@ -109,6 +136,99 @@ const validateBody = (req, res, next) => {
     }
     next();
 };
+
+/**
+ * Middleware: Requires a valid user session. Returns 401 if unauthenticated.
+ * Guest tokens (viewer role) set req.session.userId = 'guest' and pass this check.
+ */
+const requireAuth = (req, res, next) => {
+    if (!req.session || !req.session.userId) {
+        return res.status(401).json({ error: 'Unauthorized — please log in.' });
+    }
+    next();
+};
+
+/**
+ * Middleware factory: Requires the session user to hold one of the specified roles.
+ * Role hierarchy: super_admin > admin > farmer > viewer
+ * @param {...string} roles - Allowed role names.
+ */
+const requireRole = (...roles) => (req, res, next) => {
+    if (!req.session || !req.session.userId) {
+        return res.status(401).json({ error: 'Unauthorized — please log in.' });
+    }
+    if (!roles.includes(req.session.userRole)) {
+        return res.status(403).json({ error: `Forbidden — requires role: ${roles.join(' or ')}.` });
+    }
+    next();
+};
+
+// ── EAT TIMEZONE HELPERS ──────────────────────────────────────────────────────
+// All date/time assignments are server-side, always using East Africa Time (UTC+3).
+// Never trust client-supplied dates for new staging events.
+
+/**
+ * Returns the current date string in YYYY-MM-DD format (EAT, UTC+3).
+ * @returns {string}
+ */
+function getEATDate() {
+    return new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0];
+}
+
+/**
+ * Returns a human-readable EAT timestamp (HH:MM) for display in staging event data.
+ * @returns {string} e.g. "14:32"
+ */
+function getEATTime() {
+    const d = new Date(Date.now() + 3 * 3600 * 1000);
+    return d.toISOString().substring(11, 16); // HH:MM
+}
+
+/**
+ * Returns the full ISO8601 timestamp in EAT for the staging row's `timestamp` column.
+ * @returns {string}
+ */
+function getEATTimestamp() {
+    const now = new Date(Date.now() + 3 * 3600 * 1000);
+    // Reconstruct as EAT ISO string (offset +03:00)
+    return now.toISOString().replace('Z', '+03:00');
+}
+
+/**
+ * Returns the EAT date for *yesterday* — used by the midnight commit scheduler.
+ * @returns {string} YYYY-MM-DD
+ */
+function getYesterdayEATDate() {
+    return new Date(Date.now() + 3 * 3600 * 1000 - 86400000).toISOString().split('T')[0];
+}
+
+// ── ENTITY VALUE HELPERS ──────────────────────────────────────────────────────
+
+/**
+ * Reads a typed value from the entities key-value store.
+ * @param {string} key - Entity key.
+ * @param {*} defaultVal - Fallback if not found.
+ * @returns {Promise<*>}
+ */
+async function getEntityValue(key, defaultVal) {
+    try {
+        const row = await getQuery('SELECT value FROM entities WHERE key = ?', [key]);
+        return row ? JSON.parse(row.value) : defaultVal;
+    } catch { return defaultVal; }
+}
+
+/**
+ * Writes a typed value to the entities key-value store.
+ * @param {string} key - Entity key.
+ * @param {*} val - Value to persist (will be JSON-stringified).
+ * @returns {Promise<void>}
+ */
+async function setEntityValue(key, val) {
+    await runQuery(
+        'INSERT INTO entities (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP',
+        [key, JSON.stringify(val)]
+    );
+}
 
 
 // ===================== ENTITIES (Farm Profile, Aggregates) =====================
@@ -661,8 +781,37 @@ async function syncTuyaSensor() {
             ['live_sensors', JSON.stringify(sensorData)]
         );
 
-        // Update today's daily log with fetched data
-        await autoFillTodayLog(sensorData);
+        // Write a sensor staging event for the active batch (replaces autoFillTodayLog)
+        try {
+            const batchesRows = await allQuery('SELECT data FROM batches');
+            const activeBatch = batchesRows.map(r => JSON.parse(r.data)).find(b => b.status === 'Active');
+            if (activeBatch) {
+                const stagingId = `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+                const ts = getEATTimestamp();
+                const date = getEATDate();
+                const payload = {
+                    time: getEATTime(),
+                    temperature: sensorData.temperature,
+                    humidity: sensorData.humidity,
+                    battery: sensorData.battery,
+                    suspect: false
+                };
+                // Bounds check
+                let suspect = false;
+                if (payload.temperature != null && (payload.temperature < -5 || payload.temperature > 50)) suspect = true;
+                if (payload.humidity != null && (payload.humidity < 0 || payload.humidity > 100)) suspect = true;
+                payload.suspect = suspect;
+                await runQuery(
+                    'INSERT OR IGNORE INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    [stagingId, activeBatch.id, 'sensors', date, ts, JSON.stringify(payload), 'pending', 'primary']
+                );
+                if (suspect) console.warn(`Tuya Sync: suspect sensor values flagged for staging row ${stagingId}`);
+            }
+        } catch (stagingErr) {
+            console.error('Tuya Sync: failed to write sensor staging event:', stagingErr.message);
+        }
+
+        await checkSensorOfflineAlert(sensorData);
 
     } catch (err) {
         console.error('Tuya Sync failed:', err.message, err.apiRaw || '');
@@ -679,6 +828,7 @@ async function syncTuyaSensor() {
             'INSERT INTO entities (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP',
             ['live_sensors', JSON.stringify(cached)]
         );
+        await checkSensorOfflineAlert(cached);
     }
 }
 
@@ -771,49 +921,8 @@ async function fetchTuyaSensorHistory(dateStr) {
     }
 }
 
-/**
- * Automates the recording of daily logs by backfilling live sensor values.
- * Identifies the active batch and inserts/updates daily records based on East Africa Time (EAT).
- * @param {Object} sensorData - Temperature and humidity logs payload.
- * @returns {Promise<void>}
- */
-async function autoFillTodayLog(sensorData) {
-    if (!sensorData.temperature && !sensorData.humidity) return;
-    try {
-        const batchesRows = await allQuery('SELECT data FROM batches');
-        const activeBatch = batchesRows
-            .map(r => JSON.parse(r.data))
-            .find(b => b.status === 'Active');
-            
-        if (!activeBatch) return;
-        
-        // Resolve date for East Africa Time (GMT+3 / Nairobi offset)
-        const tzOffset = 3 * 60;
-        const localDate = new Date(Date.now() + tzOffset * 60 * 1000).toISOString().split('T')[0];
-        
-        const logRow = await getQuery('SELECT data FROM logs WHERE batch_id = ? AND date = ?', [activeBatch.id, localDate]);
-        if (logRow) {
-            const log = JSON.parse(logRow.data);
-            let updated = false;
-            
-            if (sensorData.humidity !== null && (log.humidity === null || log.humidity === undefined)) {
-                log.humidity = sensorData.humidity;
-                updated = true;
-            }
-            if (sensorData.temperature !== null && (log.temperature === null || log.temperature === undefined)) {
-                log.temperature = sensorData.temperature;
-                updated = true;
-            }
-            
-            if (updated) {
-                await runQuery('UPDATE logs SET data = ? WHERE batch_id = ? AND date = ?', [JSON.stringify(log), activeBatch.id, localDate]);
-                console.log(`Tuya Sync: Updated today's log (${localDate}) with temperature: ${log.temperature}°C, humidity: ${log.humidity}%`);
-            }
-        }
-    } catch (e) {
-        console.error('Failed to auto-fill today\'s log:', e.message);
-    }
-}
+// autoFillTodayLog() has been replaced by the staging layer.
+// syncTuyaSensor() now writes a sensor staging event; commitDayStaging() aggregates at midnight.
 
 /**
  * GET /api/sensors/history
@@ -895,19 +1004,682 @@ app.post('/api/sensors/sync', async (req, res) => {
     }
 });
 
-/**
- * GET *
- * Catch-all route mapping unhandled requests back to the single-page application index.html.
- */
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Start listening and register background sync interval
-app.listen(PORT, () => {
-    console.log(`Poultry DSS backend running on port ${PORT}`);
-    // Sync immediately on boot-up
-    syncTuyaSensor();
-    // Re-trigger sync loop telemetry every 15 minutes
-    setInterval(syncTuyaSensor, 15 * 60 * 1000);
+
+// ===================== AUTH ROUTES =====================
+
+/**
+ * GET /api/auth/me
+ * Returns the current session user info (id, username, role) or null if not authenticated.
+ * Also returns a 'setupRequired' flag if no users exist yet (first-run wizard).
+ */
+app.get('/api/auth/me', async (req, res) => {
+    try {
+        const userCount = await getQuery('SELECT COUNT(*) as cnt FROM users');
+        if (userCount && userCount.cnt === 0) {
+            return res.json({ setupRequired: true });
+        }
+        if (!req.session || !req.session.userId) {
+            return res.json({ user: null });
+        }
+        res.json({
+            user: {
+                id: req.session.userId,
+                username: req.session.username,
+                role: req.session.userRole,
+                mustChangePassword: req.session.mustChangePassword || false
+            }
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/auth/setup
+ * First-run only: creates the initial super_admin account.
+ * Returns 403 if any users already exist.
+ */
+app.post('/api/auth/setup', async (req, res) => {
+    try {
+        const userCount = await getQuery('SELECT COUNT(*) as cnt FROM users');
+        if (userCount && userCount.cnt > 0) {
+            return res.status(403).json({ error: 'Setup already complete. Use /api/auth/login.' });
+        }
+        const { username, password } = req.body;
+        if (!username || !password || password.length < 8) {
+            return res.status(400).json({ error: 'Username required; password must be at least 8 characters.' });
+        }
+        const hash = await bcrypt.hash(password, 12);
+        const id = `user_${Date.now()}`;
+        await runQuery(
+            'INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+            [id, username.trim(), hash, 'super_admin']
+        );
+        req.session.userId = id;
+        req.session.username = username.trim();
+        req.session.userRole = 'super_admin';
+        res.json({ success: true, user: { id, username: username.trim(), role: 'super_admin' } });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/auth/login
+ * Authenticates with username + password. Sets session on success.
+ * Also handles ?guest=TOKEN query param for viewer-only access.
+ */
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password required.' });
+        }
+        const row = await getQuery('SELECT * FROM users WHERE username = ?', [username.trim()]);
+        if (!row) return res.status(401).json({ error: 'Invalid username or password.' });
+        const match = await bcrypt.compare(password, row.password_hash);
+        if (!match) return res.status(401).json({ error: 'Invalid username or password.' });
+        req.session.userId = row.id;
+        req.session.username = row.username;
+        req.session.userRole = row.role;
+        req.session.mustChangePassword = row.must_change_password === 1;
+        res.json({ success: true, user: { id: row.id, username: row.username, role: row.role, mustChangePassword: row.must_change_password === 1 } });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * GET /api/auth/guest
+ * Validates a guest token from the URL (?guest=TOKEN) and creates a viewer session.
+ */
+app.get('/api/auth/guest', async (req, res) => {
+    try {
+        const token = req.query.token;
+        if (!token) return res.status(400).json({ error: 'Token required.' });
+        const storedToken = await getEntityValue('guest_token', null);
+        if (!storedToken || token !== storedToken) {
+            return res.status(403).json({ error: 'Invalid or expired guest token.' });
+        }
+        req.session.userId = 'guest';
+        req.session.username = 'Guest';
+        req.session.userRole = 'viewer';
+        res.json({ success: true, user: { id: 'guest', username: 'Guest', role: 'viewer' } });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/auth/logout
+ * Destroys the current session.
+ */
+app.post('/api/auth/logout', (req, res) => {
+    req.session.destroy(() => res.json({ success: true }));
+});
+
+/**
+ * GET /api/auth/users
+ * Lists all user accounts. Requires admin or super_admin.
+ */
+app.get('/api/auth/users', requireRole('super_admin', 'admin'), async (req, res) => {
+    try {
+        const rows = await allQuery('SELECT id, username, role, created_at FROM users ORDER BY created_at ASC');
+        res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/auth/users
+ * Creates a new user. Role assignment depends on caller's role:
+ *   super_admin can assign any role; admin can only create farmer/viewer.
+ */
+app.post('/api/auth/users', requireRole('super_admin', 'admin'), async (req, res) => {
+    try {
+        const { username, password, role } = req.body;
+        if (!username || !password || !role) {
+            return res.status(400).json({ error: 'username, password, and role are required.' });
+        }
+        const allowedRoles = req.session.userRole === 'super_admin'
+            ? ['super_admin', 'admin', 'farmer', 'viewer']
+            : ['farmer', 'viewer'];
+        if (!allowedRoles.includes(role)) {
+            return res.status(403).json({ error: `You cannot assign role: ${role}` });
+        }
+        const existing = await getQuery('SELECT id FROM users WHERE username = ?', [username.trim()]);
+        if (existing) return res.status(409).json({ error: 'Username already exists.' });
+        const hash = await bcrypt.hash(password, 12);
+        const id = `user_${Date.now()}`;
+        await runQuery(
+            'INSERT INTO users (id, username, password_hash, role, created_by, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+            [id, username.trim(), hash, role, req.session.userId]
+        );
+        res.json({ success: true, user: { id, username: username.trim(), role } });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * PUT /api/auth/users/:id/role
+ * Changes a user's role. super_admin only.
+ */
+app.put('/api/auth/users/:id/role', requireRole('super_admin'), async (req, res) => {
+    try {
+        const { role } = req.body;
+        const validRoles = ['super_admin', 'admin', 'farmer', 'viewer'];
+        if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role.' });
+        await runQuery('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [role, req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * PUT /api/auth/users/:id/password
+ * Resets a user's password. super_admin can reset any; users can reset their own.
+ */
+app.put('/api/auth/users/:id/password', requireAuth, async (req, res) => {
+    try {
+        const isSelf = req.params.id === req.session.userId;
+        const isAdmin = ['super_admin', 'admin'].includes(req.session.userRole);
+        if (!isSelf && !isAdmin) return res.status(403).json({ error: 'Forbidden.' });
+        const { password } = req.body;
+        if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+        const hash = await bcrypt.hash(password, 12);
+        await runQuery('UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [hash, req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/auth/guest-token/regenerate
+ * Generates a new random guest token. Old links immediately stop working.
+ */
+app.post('/api/auth/guest-token/regenerate', requireRole('super_admin', 'admin'), async (req, res) => {
+    try {
+        const token = require('crypto').randomBytes(24).toString('hex');
+        await setEntityValue('guest_token', token);
+        res.json({ success: true, token });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ===================== STAGING ROUTES =====================
+
+// Valid modules and which fields require sanity bounds (sensors)
+const STAGING_MODULES = ['eggs', 'feed', 'mortality', 'sensors', 'gases', 'health', 'notes'];
+const SENSOR_BOUNDS = { temperature: [-5, 50], humidity: [0, 100], battery: [0, 100] };
+
+/**
+ * POST /api/staging/:batchId/:module
+ * Adds a new intra-day event to the staging buffer.
+ * Server assigns the EAT date and timestamp — client never supplies these for new events.
+ * Supports ?amend=YYYY-MM-DD query param for backfilling past dates.
+ */
+app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
+    try {
+        const { batchId, module } = req.params;
+        if (!STAGING_MODULES.includes(module)) {
+            return res.status(400).json({ error: `Unknown module: ${module}` });
+        }
+
+        const amendDate = req.query.amend;
+        const isAmendment = !!amendDate && /^\d{4}-\d{2}-\d{2}$/.test(amendDate);
+        const today = getEATDate();
+
+        // Block future dates
+        const targetDate = isAmendment ? amendDate : today;
+        if (targetDate > today) {
+            return res.status(400).json({ error: 'Cannot stage events for future dates.' });
+        }
+
+        const data = req.body;
+
+        // Sensor-specific: bounds check and suspect flagging
+        if (module === 'sensors') {
+            let suspect = false;
+            for (const [field, [min, max]] of Object.entries(SENSOR_BOUNDS)) {
+                if (data[field] !== undefined && data[field] !== null) {
+                    if (data[field] < min || data[field] > max) {
+                        suspect = true;
+                        console.warn(`Staging: suspect ${field} value ${data[field]} (bounds: ${min}–${max})`);
+                    }
+                }
+            }
+            data.suspect = suspect;
+        }
+
+        // Mortality: prevent birdsAlive going below zero
+        if (module === 'mortality' && data.count) {
+            const batchRow = await getQuery('SELECT data FROM batches WHERE id = ?', [batchId]);
+            if (batchRow) {
+                const batch = JSON.parse(batchRow.data);
+                const initialBirds = batch.size || 0;
+                const committedMortality = await getQuery(
+                    'SELECT SUM(json_extract(data, \"$.mortality\")) as total FROM logs WHERE batch_id = ?',
+                    [batchId]
+                );
+                const pendingMortality = await getQuery(
+                    'SELECT SUM(json_extract(data, \"$.count\")) as total FROM staging WHERE batch_id = ? AND module = ? AND status = ?',
+                    [batchId, 'mortality', 'pending']
+                );
+                const totalMortality = (committedMortality?.total || 0) + (pendingMortality?.total || 0) + (data.count || 0);
+                if (totalMortality > initialBirds) {
+                    return res.status(400).json({ error: `Total mortality (${totalMortality}) exceeds initial flock size (${initialBirds}).` });
+                }
+            }
+        }
+
+        const id = `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        const timestamp = getEATTimestamp();
+        const status = isAmendment ? 'amendment' : 'pending';
+        const sensorId = data.sensor_id || 'primary';
+        delete data.sensor_id;
+
+        await runQuery(
+            'INSERT INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [id, batchId, module, targetDate, timestamp, JSON.stringify(data), status, sensorId]
+        );
+
+        // Amendments for past dates commit immediately (date is already closed)
+        if (isAmendment) {
+            await commitDayStaging(amendDate, batchId);
+        }
+
+        res.json({ success: true, id, date: targetDate, timestamp, status });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * PUT /api/staging/:batchId/:stagingId
+ * Edits the data payload of a pending staging event.
+ */
+app.put('/api/staging/:batchId/:stagingId', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
+    try {
+        const { batchId, stagingId } = req.params;
+        const row = await getQuery('SELECT * FROM staging WHERE id = ? AND batch_id = ?', [stagingId, batchId]);
+        if (!row) return res.status(404).json({ error: 'Staging event not found.' });
+        if (row.status === 'committed') return res.status(409).json({ error: 'Cannot edit a committed event. Use amendment instead.' });
+        await runQuery(
+            'UPDATE staging SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [JSON.stringify(req.body), stagingId]
+        );
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * DELETE /api/staging/:batchId/:stagingId
+ * Removes a pending staging event (hard delete — allowed only before commit).
+ */
+app.delete('/api/staging/:batchId/:stagingId', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
+    try {
+        const { batchId, stagingId } = req.params;
+        const row = await getQuery('SELECT status FROM staging WHERE id = ? AND batch_id = ?', [stagingId, batchId]);
+        if (!row) return res.status(404).json({ error: 'Staging event not found.' });
+        if (row.status === 'committed') return res.status(409).json({ error: 'Cannot delete a committed event. Committed events are immutable audit records.' });
+        await runQuery('DELETE FROM staging WHERE id = ?', [stagingId]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * GET /api/staging/:batchId/today
+ * Returns a computed summary of all pending staging events for today (EAT).
+ * This is the cockpit's primary data source for the current day.
+ */
+app.get('/api/staging/:batchId/today', requireAuth, async (req, res) => {
+    try {
+        const today = getEATDate();
+        const rows = await allQuery(
+            'SELECT * FROM staging WHERE batch_id = ? AND date = ? AND status IN (?, ?) ORDER BY timestamp ASC',
+            [req.params.batchId, today, 'pending', 'amendment']
+        );
+
+        const byModule = {};
+        for (const row of rows) {
+            if (!byModule[row.module]) byModule[row.module] = [];
+            byModule[row.module].push({ id: row.id, timestamp: row.timestamp, ...JSON.parse(row.data) });
+        }
+
+        // Eggs: list + sum
+        const eggEvents = byModule.eggs || [];
+        const eggTotal = eggEvents.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+
+        // Feed: list + totals
+        const feedEvents = byModule.feed || [];
+        const feedTotalKg = feedEvents.reduce((s, e) => s + (parseFloat(e.amount_kg) || 0), 0);
+        const feedSacks = feedEvents.reduce((s, e) => s + (parseInt(e.sacks_opened) || 0), 0);
+
+        // Mortality: list + sum
+        const mortalityEvents = byModule.mortality || [];
+        const mortalityTotal = mortalityEvents.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+
+        // Sensors: current reading + daily aggregates (exclude suspect readings from stats)
+        const sensorEvents = (byModule.sensors || []).filter(e => !e.suspect);
+        const allSensorEvents = byModule.sensors || [];
+        const latestSensor = allSensorEvents.length ? allSensorEvents[allSensorEvents.length - 1] : null;
+        const temps = sensorEvents.map(e => e.temperature).filter(v => v != null);
+        const hums = sensorEvents.map(e => e.humidity).filter(v => v != null);
+        const thiPeak = sensorEvents.reduce((max, e) => {
+            if (e.temperature == null || e.humidity == null) return max;
+            const thi = e.temperature - (0.31 - 0.31 * (e.humidity / 100)) * (e.temperature - 14.4);
+            return thi > max ? thi : max;
+        }, -Infinity);
+
+        const sensors = {
+            current: latestSensor ? { temperature: latestSensor.temperature, humidity: latestSensor.humidity, battery: latestSensor.battery } : null,
+            temperature_min: temps.length ? Math.round(Math.min(...temps) * 10) / 10 : null,
+            temperature_avg: temps.length ? Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 10) / 10 : null,
+            temperature_max: temps.length ? Math.round(Math.max(...temps) * 10) / 10 : null,
+            humidity_max: hums.length ? Math.round(Math.max(...hums)) : null,
+            thi_peak: isFinite(thiPeak) ? Math.round(thiPeak * 10) / 10 : null,
+            sample_count: sensorEvents.length,
+            low_confidence: sensorEvents.length < 48
+        };
+
+        res.json({
+            date: today,
+            eggs: { total: eggTotal, collections: eggEvents },
+            feed: { total_kg: Math.round(feedTotalKg * 10) / 10, sacks_opened: feedSacks, events: feedEvents },
+            mortality: { total: mortalityTotal, events: mortalityEvents },
+            sensors,
+            gases: byModule.gases || [],
+            health: byModule.health || [],
+            notes: byModule.notes || []
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ===================== STAGING COMMIT ENGINE =====================
+
+/**
+ * Aggregates all pending staging rows for a given date+batch into the permanent tables.
+ * Runs inside a single SQLite transaction for crash safety (all-or-nothing).
+ * @param {string} date - YYYY-MM-DD (EAT)
+ * @param {string} batchId - The batch to commit for.
+ * @param {boolean} isRecovery - If true, sends admin alert on completion.
+ */
+async function commitDayStaging(date, batchId, isRecovery = false) {
+    const rows = await allQuery(
+        'SELECT * FROM staging WHERE batch_id = ? AND date = ? AND status IN (?, ?) ORDER BY timestamp ASC',
+        [batchId, date, 'pending', 'amendment']
+    );
+    if (rows.length === 0) return;
+
+    console.log(`Commit: processing ${rows.length} staging events for ${date} / batch ${batchId}`);
+
+    const byModule = {};
+    for (const row of rows) {
+        if (!byModule[row.module]) byModule[row.module] = [];
+        byModule[row.module].push({ _id: row.id, ...JSON.parse(row.data) });
+    }
+
+    // Load or create the log record for this date
+    const logId = `${batchId}_${date}`;
+    const existingLogRow = await getQuery('SELECT data FROM logs WHERE id = ?', [logId]);
+    const logData = existingLogRow ? JSON.parse(existingLogRow.data) : { date, batch_id: batchId };
+
+    // ── Eggs: sum + preserve collection events array ──
+    if (byModule.eggs) {
+        const existingCollections = logData.collections || [];
+        const incomingIds = new Set(byModule.eggs.map(e => e._id));
+        const merged = existingCollections.filter(c => !incomingIds.has(c._id));
+        byModule.eggs.forEach(e => merged.push(e));
+        merged.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+        logData.collections = merged;
+        logData.eggs = merged.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+    }
+
+    // ── Feed: sum ──
+    if (byModule.feed) {
+        const prevKg = logData.feedGiven || 0;
+        const prevSacks = logData.sacks || 0;
+        // For amendments, replace; for initial commit, accumulate
+        const kg = byModule.feed.reduce((s, e) => s + (parseFloat(e.amount_kg) || 0), 0);
+        const sacks = byModule.feed.reduce((s, e) => s + (parseInt(e.sacks_opened) || 0), 0);
+        logData.feedGiven = (existingLogRow ? prevKg : 0) + kg;
+        logData.sacks = (existingLogRow ? prevSacks : 0) + sacks;
+    }
+
+    // ── Mortality: sum ──
+    if (byModule.mortality) {
+        const prevMortality = logData.mortality || 0;
+        const newMortality = byModule.mortality.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+        logData.mortality = (existingLogRow ? prevMortality : 0) + newMortality;
+        logData.mortality_events = (logData.mortality_events || []).concat(
+            byModule.mortality.map(e => ({ time: e.time, count: e.count, cause: e.cause, note: e.note }))
+        );
+    }
+
+    // ── Sensors: min/max/avg/thi_peak ──
+    if (byModule.sensors) {
+        const validReadings = byModule.sensors.filter(e => !e.suspect);
+        const temps = validReadings.map(e => e.temperature).filter(v => v != null);
+        const hums = validReadings.map(e => e.humidity).filter(v => v != null);
+        if (temps.length) {
+            logData.temperature_min = Math.round(Math.min(...temps) * 10) / 10;
+            logData.temperature_avg = Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 10) / 10;
+            logData.temperature_max = Math.round(Math.max(...temps) * 10) / 10;
+            logData.temperature = logData.temperature_avg; // legacy compat
+        }
+        if (hums.length) {
+            logData.humidity_min = Math.round(Math.min(...hums));
+            logData.humidity_avg = Math.round(hums.reduce((a, b) => a + b, 0) / hums.length);
+            logData.humidity_max = Math.round(Math.max(...hums));
+            logData.humidity = logData.humidity_avg; // legacy compat
+        }
+        const thiPeak = validReadings.reduce((max, e) => {
+            if (e.temperature == null || e.humidity == null) return max;
+            const thi = e.temperature - (0.31 - 0.31 * (e.humidity / 100)) * (e.temperature - 14.4);
+            return thi > max ? thi : max;
+        }, -Infinity);
+        if (isFinite(thiPeak)) logData.thi_peak = Math.round(thiPeak * 10) / 10;
+        logData.sample_count = (logData.sample_count || 0) + validReadings.length;
+    }
+
+    // ── Gases: first reading of day (morning pre-ventilation peak) ──
+    if (byModule.gases && byModule.gases.length > 0) {
+        const first = byModule.gases[0];
+        if (first.nh3 != null) logData.nh3 = first.nh3;
+        if (first.co2 != null) logData.co2 = first.co2;
+    }
+
+    // ── Notes: chronological concat ──
+    if (byModule.notes) {
+        const newNotes = byModule.notes.map(n => `[${n.time || '?'}] ${n.text}`).join(' | ');
+        logData.notes = logData.notes ? `${logData.notes} | ${newNotes}` : newNotes;
+    }
+
+    // ── All writes inside one SQLite transaction ──
+    try {
+        await runQuery('BEGIN TRANSACTION');
+
+        // Upsert the daily log
+        await runQuery(
+            'INSERT INTO logs (id, batch_id, data, date, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP',
+            [logId, batchId, JSON.stringify(logData), date]
+        );
+
+        // Health events → health_logs
+        if (byModule.health) {
+            for (const h of byModule.health) {
+                const hId = h._id || `${batchId}_h_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+                const { _id, ...hData } = h;
+                hData.date = date;
+                await runQuery(
+                    'INSERT INTO health_logs (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP',
+                    [hId, batchId, JSON.stringify(hData)]
+                );
+            }
+        }
+
+        // Mark all staging rows as committed
+        const stagingIds = rows.map(r => r.id);
+        const placeholders = stagingIds.map(() => '?').join(',');
+        await runQuery(
+            `UPDATE staging SET status = 'committed', updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
+            stagingIds
+        );
+
+        await runQuery('COMMIT');
+    } catch (err) {
+        await runQuery('ROLLBACK').catch(() => {});
+        throw err;
+    }
+
+
+    console.log(`Commit: ${date} / batch ${batchId} committed successfully.`);
+
+    if (isRecovery) {
+        // Alert admin that a missed day was recovered
+        const msg = `ℹ️ PoultryDSS: Recovered missed commit for ${date} (batch ${batchId}). Server may have been offline at midnight.`;
+        await sendTelegramAlert(msg).catch(e => console.error('Telegram recovery alert failed:', e.message));
+    }
+}
+
+/**
+ * Checks for any pending staging rows from dates before today and commits them.
+ * Called on server boot. Each recovered day sends an admin Telegram alert.
+ */
+async function recoverMissedCommits() {
+    try {
+        const today = getEATDate();
+        const missed = await allQuery(
+            'SELECT DISTINCT date, batch_id FROM staging WHERE status IN (?, ?) AND date < ? ORDER BY date ASC',
+            ['pending', 'amendment', today]
+        );
+        if (missed.length === 0) {
+            console.log('Recovery: no missed commits found.');
+            return;
+        }
+        console.log(`Recovery: found ${missed.length} missed date(s) to commit.`);
+        for (const row of missed) {
+            await commitDayStaging(row.date, row.batch_id, true);
+        }
+    } catch (e) {
+        console.error('Recovery: failed to process missed commits:', e.message);
+    }
+}
+
+/**
+ * Schedules a recursive midnight commit using precise setTimeout (no drift).
+ * Called once on boot; reschedules itself after each commit.
+ */
+function scheduleMidnightCommit() {
+    const eatNow = new Date(Date.now() + 3 * 3600 * 1000);
+    const nextMidnightEAT = new Date(eatNow);
+    nextMidnightEAT.setDate(nextMidnightEAT.getDate() + 1);
+    nextMidnightEAT.setHours(0, 1, 0, 0); // 00:01 EAT
+    const nextMidnightUTC = nextMidnightEAT.getTime() - 3 * 3600 * 1000;
+    const msUntil = nextMidnightUTC - Date.now();
+    console.log(`Midnight commit scheduled in ${Math.round(msUntil / 60000)} minutes (at 00:01 EAT).`);
+    setTimeout(async () => {
+        const yesterday = getYesterdayEATDate();
+        try {
+            const activeBatches = await allQuery(
+                'SELECT DISTINCT batch_id FROM staging WHERE date = ? AND status = ?',
+                [yesterday, 'pending']
+            );
+            for (const row of activeBatches) {
+                await commitDayStaging(yesterday, row.batch_id, false);
+            }
+        } catch (e) {
+            console.error('Midnight commit failed:', e.message);
+        }
+        scheduleMidnightCommit(); // reschedule for next midnight
+    }, msUntil);
+}
+
+
+// ===================== TELEGRAM ALERT =====================
+
+/**
+ * Sends a text message to the configured Telegram chat via the Bot API.
+ * Uses the TELEGRAM_BOT_TOKEN from .env and the chat_id stored in entities.
+ * Fails silently with a console error so sensor sync is never blocked by it.
+ * @param {string} message - The message text to send.
+ */
+async function sendTelegramAlert(message) {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) {
+        console.warn('Telegram alert: TELEGRAM_BOT_TOKEN not set — skipping.');
+        return;
+    }
+    const chatId = await getEntityValue('telegram_chat_id', null);
+    if (!chatId) {
+        console.warn('Telegram alert: telegram_chat_id not configured — skipping.');
+        return;
+    }
+    return new Promise((resolve, reject) => {
+        const body = JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' });
+        const req = require('https').request({
+            hostname: 'api.telegram.org',
+            port: 443,
+            path: `/bot${token}/sendMessage`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+        }, (res) => {
+            let data = '';
+            res.on('data', c => data += c);
+            res.on('end', () => {
+                try { const r = JSON.parse(data); if (!r.ok) reject(new Error(r.description)); else resolve(); }
+                catch (e) { reject(e); }
+            });
+        });
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+    });
+}
+
+/**
+ * After each Tuya sync, checks if the sensor has been offline longer than the
+ * configured threshold (default 4h) and sends a debounced Telegram alert.
+ * @param {Object} sensorData - The current sensor payload (includes .success, .last_updated)
+ */
+async function checkSensorOfflineAlert(sensorData) {
+    try {
+        const thresholdHours = await getEntityValue('sensor_alert_threshold_hours', 4);
+        if (sensorData.success) {
+            await setEntityValue('sensor_last_success_ts', sensorData.last_updated);
+            return;
+        }
+        const lastSuccess = await getEntityValue('sensor_last_success_ts', null);
+        const lastAlertSent = await getEntityValue('sensor_last_alert_ts', null);
+        const hoursSinceSuccess = lastSuccess
+            ? (Date.now() - new Date(lastSuccess).getTime()) / 3600000
+            : Infinity;
+        if (hoursSinceSuccess < thresholdHours) return;
+        const hoursSinceAlert = lastAlertSent
+            ? (Date.now() - new Date(lastAlertSent).getTime()) / 3600000
+            : Infinity;
+        if (hoursSinceAlert < thresholdHours) return; // debounce
+        const msg = `⚠️ <b>PoultryDSS Sensor Offline</b>\nNo readings for <b>${Math.round(hoursSinceSuccess)}h</b>.\nLast seen: ${lastSuccess || 'never'}\nError: ${sensorData.error || 'unknown'}`;
+        await sendTelegramAlert(msg);
+        await setEntityValue('sensor_last_alert_ts', new Date().toISOString());
+        console.log('Telegram: sensor offline alert sent.');
+    } catch (e) {
+        console.error('Sensor alert check failed:', e.message);
+    }
+}
+
+
+// ── Server Boot ────────────────────────────────────────────────────────────────
+// Wait for schema init to complete before binding the port or running queries.
+dbReady.then(() => {
+    app.listen(PORT, async () => {
+        console.log(`Poultry DSS backend running on port ${PORT}`);
+        console.log(`EAT boot time: ${getEATDate()} ${getEATTime()}`);
+
+        // Recover any staging rows from missed midnight commits (e.g. server was offline)
+        await recoverMissedCommits();
+
+        // Schedule next midnight aggregation commit
+        scheduleMidnightCommit();
+
+        // Sync Tuya sensor immediately on boot-up
+        syncTuyaSensor();
+
+        // Re-trigger sensor sync loop every 15 minutes
+        setInterval(syncTuyaSensor, 15 * 60 * 1000);
+    });
+}).catch(err => {
+    console.error('Fatal: database failed to initialize:', err.message);
+    process.exit(1);
 });
