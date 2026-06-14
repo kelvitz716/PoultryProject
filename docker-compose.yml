@@ -1,20 +1,53 @@
+# docker-compose.yml — PoultryDSS Stack Definition
+#
+# Usage:
+#   Production (OCI):  docker compose up -d --pull always --force-recreate poultry-dss
+#   Local development: comment `image:` line, uncomment `build:` block, then: docker compose up -d
+
 version: '3.8'
 
 services:
   poultry-dss:
-    # In CI/CD deployments the pre-built image from ghcr.io is pulled by the
-    # GitHub Actions deploy job. For local development, comment the `image:`
-    # line and uncomment `build:` to build directly from the Dockerfile.
+    # ── Image ──────────────────────────────────────────────────────────────
+    # In CI/CD deployments the GitHub Actions workflow pushes a pre-built
+    # multi-arch image (linux/amd64 + linux/arm64) to ghcr.io and then
+    # instructs OCI to pull it. OCI (Ampere A1, ARM64) automatically selects
+    # the native arm64 layer from the manifest — no emulation overhead.
+    #
+    # For local development: comment this line and uncomment the build block
+    # below to build the image directly from the local Dockerfile.
     image: ghcr.io/kelvitz716/poultryproject:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
+
+    # ── Local development build (alternative to the image: line above) ─────
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+
     container_name: poultry-dss
+
+    # ── Port mapping ───────────────────────────────────────────────────────
+    # The Express server binds to port 80 inside the container.
+    # Externally it is served on 8089 to avoid conflicts with other HTTP
+    # services (Nextcloud, Immich, etc.) sharing the same OCI host.
     ports:
       - "8089:80"
+
+    # ── Restart policy ─────────────────────────────────────────────────────
+    # `always` ensures the container restarts automatically after an OCI
+    # instance reboot or Docker daemon restart.
     restart: always
+
+    # ── Volumes ────────────────────────────────────────────────────────────
+    # Bind-mounts the host ./data directory to /app/data inside the container.
+    # This keeps the SQLite database (poultry.db) on the host filesystem so
+    # it persists across container recreations and image upgrades.
     volumes:
-      # Persist the SQLite database so it survives container recreations
       - ./data:/app/data
+
+    # ── Environment ────────────────────────────────────────────────────────
+    # Loads environment variables from the .env file in the project root.
+    # Required keys: PORT, TUYA_CLIENT_ID, TUYA_CLIENT_SECRET,
+    #                TUYA_DEVICE_ID, TUYA_REGION
+    # See README.md for full variable reference.
     env_file:
       - .env
