@@ -46,12 +46,169 @@ if ('serviceWorker' in navigator) {
         }
     }
 
-    // Toast Notification logic
+    // ── Toast + modal helpers ───────────────────────────────────────────────
     window.showToast = showToast;
     window.showConfirmModal = showConfirmModal;
     window.updateGlobalNotifications = updateGlobalNotifications;
 
-    // ===================== NAVIGATION =====================
+    // ── AUTH GATE ─────────────────────────────────────────────────────────────
+    // Determine user identity before rendering anything else.
+    // USER_ROLE is referenced throughout the UI to hide/disable write controls.
+    window.USER_ROLE = 'viewer'; // safe default until confirmed
+    window.CURRENT_USER = null;
+
+    const authState = await api.getMe();
+
+    if (authState.setupRequired) {
+        // First launch — no users exist — show setup wizard
+        _showSetupWizard();
+        return; // halt remaining init until setup completes
+    }
+
+    if (!authState.user) {
+        // Check for guest token in URL (?guest=TOKEN)
+        const guestToken = new URLSearchParams(window.location.search).get('guest');
+        if (guestToken) {
+            const guestResult = await api.loginGuest(guestToken);
+            if (guestResult.success) {
+                window.USER_ROLE = 'viewer';
+                window.CURRENT_USER = guestResult.user;
+            } else {
+                _showLoginModal('Invalid or expired guest link.');
+                return;
+            }
+        } else {
+            _showLoginModal();
+            return;
+        }
+    } else {
+        window.USER_ROLE = authState.user.role;
+        window.CURRENT_USER = authState.user;
+        if (authState.user.mustChangePassword) {
+            showToast('⚠️ Please change your password in Settings.', 'warning');
+        }
+    }
+
+    _initApp(); // proceed with full app initialization
+})();
+
+// ── AUTH MODAL HELPERS ─────────────────────────────────────────────────────────
+
+function _showLoginModal(errorMsg = '') {
+    const overlay = document.createElement('div');
+    overlay.id = 'auth-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.innerHTML = `
+        <div style="background:var(--card-bg,#1e2535);border-radius:16px;padding:36px 32px;min-width:340px;max-width:94vw;box-shadow:0 24px 64px rgba(0,0,0,0.5);">
+            <div style="text-align:center;margin-bottom:24px;">
+                <div style="font-size:2rem;margin-bottom:8px;">🐔</div>
+                <h2 style="margin:0;font-size:1.4rem;">PoultryDSS</h2>
+                <p style="margin:6px 0 0;opacity:0.6;font-size:0.85rem;">Sign in to continue</p>
+            </div>
+            ${errorMsg ? `<div style="background:#fef2f2;color:#dc2626;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:0.85rem;">${errorMsg}</div>` : ''}
+            <div style="margin-bottom:14px;">
+                <label style="display:block;font-size:0.8rem;opacity:0.7;margin-bottom:6px;">Username</label>
+                <input id="auth-username" type="text" autocomplete="username" placeholder="Enter username"
+                    style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:1rem;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:20px;">
+                <label style="display:block;font-size:0.8rem;opacity:0.7;margin-bottom:6px;">Password</label>
+                <input id="auth-password" type="password" autocomplete="current-password" placeholder="Enter password"
+                    style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:1rem;box-sizing:border-box;">
+            </div>
+            <div id="auth-error" style="display:none;color:#ef4444;font-size:0.82rem;margin-bottom:12px;"></div>
+            <button id="auth-submit" style="width:100%;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;font-size:1rem;font-weight:600;cursor:pointer;">
+                Sign In
+            </button>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    const doLogin = async () => {
+        const username = document.getElementById('auth-username').value.trim();
+        const password = document.getElementById('auth-password').value;
+        document.getElementById('auth-error').style.display = 'none';
+        document.getElementById('auth-submit').textContent = 'Signing in…';
+        const result = await api.login(username, password);
+        if (result.success) {
+            window.USER_ROLE = result.user.role;
+            window.CURRENT_USER = result.user;
+            overlay.remove();
+            _initApp();
+        } else {
+            document.getElementById('auth-error').textContent = result.error || 'Login failed.';
+            document.getElementById('auth-error').style.display = 'block';
+            document.getElementById('auth-submit').textContent = 'Sign In';
+        }
+    };
+    document.getElementById('auth-submit').addEventListener('click', doLogin);
+    overlay.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    setTimeout(() => document.getElementById('auth-username')?.focus(), 100);
+}
+
+function _showSetupWizard() {
+    const overlay = document.createElement('div');
+    overlay.id = 'auth-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.innerHTML = `
+        <div style="background:var(--card-bg,#1e2535);border-radius:16px;padding:36px 32px;min-width:360px;max-width:94vw;box-shadow:0 24px 64px rgba(0,0,0,0.5);">
+            <div style="text-align:center;margin-bottom:24px;">
+                <div style="font-size:2.5rem;margin-bottom:8px;">🐔</div>
+                <h2 style="margin:0;font-size:1.5rem;">Welcome to PoultryDSS</h2>
+                <p style="margin:8px 0 0;opacity:0.65;font-size:0.88rem;">First launch detected — create your super-admin account</p>
+            </div>
+            <div style="margin-bottom:14px;">
+                <label style="display:block;font-size:0.8rem;opacity:0.7;margin-bottom:6px;">Choose a username</label>
+                <input id="setup-username" type="text" autocomplete="username" placeholder="e.g. admin"
+                    style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:1rem;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:14px;">
+                <label style="display:block;font-size:0.8rem;opacity:0.7;margin-bottom:6px;">Password (min 8 characters)</label>
+                <input id="setup-password" type="password" autocomplete="new-password" placeholder="Strong password"
+                    style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:1rem;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:20px;">
+                <label style="display:block;font-size:0.8rem;opacity:0.7;margin-bottom:6px;">Confirm password</label>
+                <input id="setup-confirm" type="password" autocomplete="new-password" placeholder="Repeat password"
+                    style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:1rem;box-sizing:border-box;">
+            </div>
+            <div id="setup-error" style="display:none;color:#ef4444;font-size:0.82rem;margin-bottom:12px;"></div>
+            <button id="setup-submit" style="width:100%;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#fff;font-size:1rem;font-weight:600;cursor:pointer;">
+                Create Account &amp; Continue
+            </button>
+            <p style="margin:14px 0 0;text-align:center;font-size:0.78rem;opacity:0.5;">You can add more users and adjust roles in Settings after setup.</p>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    document.getElementById('setup-submit').addEventListener('click', async () => {
+        const username = document.getElementById('setup-username').value.trim();
+        const password = document.getElementById('setup-password').value;
+        const confirm  = document.getElementById('setup-confirm').value;
+        const errEl = document.getElementById('setup-error');
+        errEl.style.display = 'none';
+
+        if (!username) { errEl.textContent = 'Username is required.'; errEl.style.display = 'block'; return; }
+        if (password.length < 8) { errEl.textContent = 'Password must be at least 8 characters.'; errEl.style.display = 'block'; return; }
+        if (password !== confirm) { errEl.textContent = 'Passwords do not match.'; errEl.style.display = 'block'; return; }
+
+        document.getElementById('setup-submit').textContent = 'Creating account…';
+        const result = await api.setupAccount(username, password);
+        if (result.success) {
+            window.USER_ROLE = 'super_admin';
+            window.CURRENT_USER = result.user;
+            overlay.remove();
+            _initApp();
+        } else {
+            errEl.textContent = result.error || 'Setup failed — try again.';
+            errEl.style.display = 'block';
+            document.getElementById('setup-submit').textContent = 'Create Account & Continue';
+        }
+    });
+    setTimeout(() => document.getElementById('setup-username')?.focus(), 100);
+}
+
+// ── MAIN APP INIT ──────────────────────────────────────────────────────────────
+async function _initApp() {
+
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view');
 
@@ -1198,15 +1355,21 @@ if ('serviceWorker' in navigator) {
                         <input type="date" id="log-date" value="${new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0]}" max="${new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0]}" class="input-sm" style="width:auto;" onchange="window.handleLogDateChange()">
                     </div>
                     <div class="log-form-grid" style="flex:1;">
-                        <div class="log-field">
-                            <label>Eggs Collected</label>
-                            <input type="number" id="log-eggs" placeholder="Total" class="input-lg" style="font-size:24px; font-weight:800; text-align:center;" onfocus="this.select()" oninput="window.distributeEggs()">
-                            <div class="egg-subtotals">
-                                <div class="sub-input"><label>Morning</label><input type="number" id="log-eggs-morning" placeholder="0" oninput="window.autoSumEggs()" onfocus="this.select()"></div>
-                                <div class="sub-input"><label>Evening</label><input type="number" id="log-eggs-evening" placeholder="0" oninput="window.autoSumEggs()" onfocus="this.select()"></div>
-                                <div class="sub-input"><label>Other</label><input type="number" id="log-eggs-other" placeholder="0" oninput="window.autoSumEggs()" onfocus="this.select()"></div>
+                        <div class="log-field" style="grid-column:1/-1;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                                <label style="margin:0;">🥚 Egg Collections</label>
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <span id="egg-total-display" style="font-size:1.4rem;font-weight:800;color:var(--primary);">0 eggs</span>
+                                    <button type="button" id="btn-add-collection" onclick="window.addEggCollection()" class="btn btn-secondary btn-sm" style="padding:4px 12px;">
+                                        <i data-lucide="plus" style="width:13px;height:13px;"></i> Add Collection
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="egg-collection-list" style="display:flex;flex-direction:column;gap:6px;min-height:32px;">
+                                <p id="egg-empty-hint" style="opacity:0.45;font-size:0.82rem;margin:0;font-style:italic;">No collections yet — tap Add Collection to log your first round.</p>
                             </div>
                         </div>
+
                         <div class="log-field">
                             <label>Sacks Finished Today</label>
                             <input type="number" id="log-sacks" value="0" min="0" class="input-lg" style="font-size:24px; font-weight:800; text-align:center;" onfocus="this.select()">
@@ -1222,11 +1385,11 @@ if ('serviceWorker' in navigator) {
                             <input type="hidden" id="log-birds" value="${hens}">
                         </div>
                         <div class="log-field">
-                            <label>NH₃ (ppm)</label>
+                            <label>NH₃ Morning Peak (ppm – pre-ventilation)</label>
                             <input type="number" id="log-nh3" placeholder="Optional" class="input-md" onfocus="this.select()">
                         </div>
                         <div class="log-field">
-                            <label>CO₂ (ppm)</label>
+                            <label>CO₂ Morning Peak (ppm – pre-ventilation)</label>
                             <input type="number" id="log-co2" placeholder="Optional" class="input-md" onfocus="this.select()">
                         </div>
                         <div class="log-field">
@@ -1471,22 +1634,115 @@ if ('serviceWorker' in navigator) {
         });
     };
 
-    window.autoSumEggs = function() {
-        const morning = parseInt($('log-eggs-morning').value) || 0;
-        const evening = parseInt($('log-eggs-evening').value) || 0;
-        const other = parseInt($('log-eggs-other').value) || 0;
-        const total = morning + evening + other;
-        $('log-eggs').value = total > 0 ? total : '';
+    // ── EGG COLLECTION CARD ────────────────────────────────────────────────────
+    // In-memory list of pending egg collection events for today.
+    // Each entry: { _tempId, time, count, label }
+    // This list is synced to /api/staging/:batchId/eggs via addStagingEvent.
+    let _eggCollections = []; // loaded from today's staging on cockpit open
+
+    function _renderEggCollectionList() {
+        const list = document.getElementById('egg-collection-list');
+        const hint = document.getElementById('egg-empty-hint');
+        const totalEl = document.getElementById('egg-total-display');
+        if (!list) return;
+        const total = _eggCollections.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+        if (totalEl) totalEl.textContent = `${total.toLocaleString()} eggs`;
+        if (_eggCollections.length === 0) {
+            list.innerHTML = '<p id="egg-empty-hint" style="opacity:0.45;font-size:0.82rem;margin:0;font-style:italic;">No collections yet — tap Add Collection to log your first round.</p>';
+            return;
+        }
+        list.innerHTML = _eggCollections.map((ev, idx) => `
+            <div class="egg-collection-row" style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border-radius:8px;padding:8px 12px;">
+                <span style="font-size:1.1rem;font-weight:700;min-width:54px;">${parseInt(ev.count)||0} 🥚</span>
+                <span style="opacity:0.55;font-size:0.82rem;min-width:42px;">${ev.time || '—'}</span>
+                <span style="flex:1;opacity:0.7;font-size:0.82rem;font-style:italic;">${ev.label || ''}</span>
+                <button type="button" onclick="window.editEggCollection(${idx})" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:0.75rem;">Edit</button>
+                <button type="button" onclick="window.deleteEggCollection(${idx})" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:0.75rem;color:var(--danger);">✕</button>
+            </div>`).join('');
+    }
+
+    window.addEggCollection = function() {
+        const now = new Date(Date.now() + 3 * 3600 * 1000);
+        const defaultTime = now.toISOString().substring(11, 16);
+        _showEggCollectionModal({ time: defaultTime, count: '', label: '' }, null);
     };
 
-    // When total is typed directly, distribute proportionally into morning/evening (leave other=0)
-    window.distributeEggs = function() {
-        const total = parseInt($('log-eggs').value) || 0;
-        const half = Math.floor(total / 2);
-        $('log-eggs-morning').value = half > 0 ? half : '';
-        $('log-eggs-evening').value = (total - half) > 0 ? (total - half) : '';
-        $('log-eggs-other').value = '';
+    window.editEggCollection = function(idx) {
+        _showEggCollectionModal({ ..._eggCollections[idx] }, idx);
     };
+
+    window.deleteEggCollection = async function(idx) {
+        const ev = _eggCollections[idx];
+        if (ev._stagingId) {
+            await api.deleteStagingEvent(currentBatchId, ev._stagingId);
+        }
+        _eggCollections.splice(idx, 1);
+        _renderEggCollectionList();
+    };
+
+    function _showEggCollectionModal(data, editIdx) {
+        const isEdit = editIdx !== null && editIdx !== undefined;
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:8000;';
+        modal.innerHTML = `
+            <div style="background:var(--card-bg,#1e2535);border-radius:14px;padding:28px 24px;min-width:300px;max-width:94vw;box-shadow:0 20px 48px rgba(0,0,0,0.5);">
+                <h3 style="margin:0 0 18px;">${isEdit ? 'Edit' : 'Add'} Collection</h3>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Count (eggs)</label>
+                    <input id="ecm-count" type="number" min="1" value="${data.count||''}" placeholder="e.g. 120"
+                        style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:1.1rem;font-weight:700;box-sizing:border-box;">
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Time</label>
+                    <input id="ecm-time" type="time" value="${data.time||''}" 
+                        style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:0.95rem;box-sizing:border-box;">
+                </div>
+                <div style="margin-bottom:20px;">
+                    <label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Label (optional)</label>
+                    <input id="ecm-label" type="text" value="${data.label||''}" placeholder="e.g. Morning, After rain…"
+                        style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:0.9rem;box-sizing:border-box;">
+                </div>
+                <div id="ecm-error" style="display:none;color:#ef4444;font-size:0.82rem;margin-bottom:10px;"></div>
+                <div style="display:flex;gap:10px;">
+                    <button id="ecm-cancel" style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:inherit;cursor:pointer;">Cancel</button>
+                    <button id="ecm-save" style="flex:2;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;font-weight:600;cursor:pointer;">${isEdit ? 'Update' : 'Add Collection'}</button>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        setTimeout(() => document.getElementById('ecm-count')?.focus(), 80);
+
+        document.getElementById('ecm-cancel').onclick = () => modal.remove();
+        document.getElementById('ecm-save').onclick = async () => {
+            const count = parseInt(document.getElementById('ecm-count').value);
+            const time  = document.getElementById('ecm-time').value;
+            const label = document.getElementById('ecm-label').value.trim();
+            if (!count || count < 1) {
+                document.getElementById('ecm-error').textContent = 'Enter a valid egg count.';
+                document.getElementById('ecm-error').style.display = 'block';
+                return;
+            }
+            document.getElementById('ecm-save').textContent = 'Saving…';
+            const eventData = { count, time, label };
+
+            if (isEdit) {
+                const existing = _eggCollections[editIdx];
+                if (existing._stagingId) {
+                    await api.editStagingEvent(currentBatchId, existing._stagingId, eventData);
+                }
+                _eggCollections[editIdx] = { ...existing, ...eventData };
+            } else {
+                const result = await api.addStagingEvent(currentBatchId, 'eggs', eventData);
+                _eggCollections.push({ ...eventData, _stagingId: result?.id || null });
+            }
+            modal.remove();
+            _renderEggCollectionList();
+        };
+        modal.addEventListener('keydown', e => { if (e.key === 'Escape') modal.remove(); });
+    }
+
+    // Legacy helpers preserved for any existing code that may still reference them
+    window.autoSumEggs = function() {};
+    window.distributeEggs = function() {};
 
     window.submitDailyLog = async function(event) {
         if (event) event.preventDefault();
@@ -1495,60 +1751,83 @@ if ('serviceWorker' in navigator) {
 
         $('log-date').blur();
         const date = $('log-date').value;
-        const eggs = parseInt($('log-eggs').value) || 0;
-        const morning = parseInt($('log-eggs-morning').value) || 0;
-        const evening = parseInt($('log-eggs-evening').value) || 0;
-        const other = parseInt($('log-eggs-other').value) || 0;
-        const sacks = parseInt($('log-sacks').value) || 0;
-        const feedGiven = parseFloat($('log-feed').value) || 0;
+        const today = new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0];
+        const isBackfill = date && date < today;
+        const amendDate = isBackfill ? date : null;
+
+        const sacks     = parseInt($('log-sacks').value) || 0;
+        const feedGiven = parseFloat($('log-feed').value) || null;
         const mortality = parseInt($('log-mortality').value) || 0;
-        const nh3 = parseFloat($('log-nh3').value) || null;
-        const co2 = parseFloat($('log-co2').value) || null;
+        const nh3       = parseFloat($('log-nh3').value) || null;
+        const co2       = parseFloat($('log-co2').value) || null;
         const temperature = parseFloat($('log-temp').value) || null;
-        const humidity = parseFloat($('log-humidity').value) || null;
-        const notes = $('log-notes').value;
+        const humidity    = parseFloat($('log-humidity').value) || null;
+        const notesVal    = $('log-notes').value.trim();
 
         if (!date) { window.showToast('Please select a date.', 'warning'); return; }
 
-        let logs = await api.getLogs(batch.id);
-        const existingLog = logs.find(l => l.date === date);
-        const previousMortality = existingLog ? (parseInt(existingLog.mortality) || 0) : 0;
-        const mortalityDiff = mortality - previousMortality;
-        
-        if (mortalityDiff !== 0) {
-            batch.stats.birdsAlive = Math.max(0, batch.stats.birdsAlive - mortalityDiff);
-            batch.stats.totalMortality = (batch.stats.totalMortality || 0) + mortalityDiff;
-            updateBatch(batch);
+        const promises = [];
+
+        // Stage egg collections (today's are already staged individually via addEggCollection)
+        // For backfill, emit each collection from _eggCollections as an amendment
+        if (isBackfill && _eggCollections.length > 0) {
+            for (const ev of _eggCollections) {
+                promises.push(api.addStagingEvent(batch.id, 'eggs', { count: ev.count, time: ev.time, label: ev.label }, amendDate));
+            }
         }
 
-        const newEntry = {
-            date, eggs, morning, evening, other,
-            sacks, feedGiven, nh3, co2, humidity, temperature, notes,
-            birds: batch.stats.birdsAlive,
-            mortality,
-            feed: feedGiven 
-        };
+        // Feed
+        if (feedGiven || sacks) {
+            promises.push(api.addStagingEvent(batch.id, 'feed',
+                { amount_kg: feedGiven || (sacks * (farmProfile.sackWeightKg || 50)), sacks_opened: sacks }, amendDate));
+        }
 
-        await api.saveLog(batch.id, newEntry);
+        // Mortality
+        if (mortality > 0) {
+            promises.push(api.addStagingEvent(batch.id, 'mortality', { count: mortality }, amendDate));
+        }
 
-        // Reset UI — preserve the date for consecutive same-day edits
-        const savedDate = $('log-date').value;
-        ['log-eggs', 'log-eggs-morning', 'log-eggs-evening', 'log-eggs-other', 'log-feed', 'log-notes', 'log-nh3', 'log-co2', 'log-temp', 'log-humidity'].forEach(id => {
-            const el = $(id);
-            if (el) el.value = '';
+        // Gases
+        if (nh3 || co2) {
+            promises.push(api.addStagingEvent(batch.id, 'gases', { nh3, co2 }, amendDate));
+        }
+
+        // Manual sensor override
+        if (temperature || humidity) {
+            promises.push(api.addStagingEvent(batch.id, 'sensors', { temperature, humidity }, amendDate));
+        }
+
+        // Notes
+        if (notesVal) {
+            promises.push(api.addStagingEvent(batch.id, 'notes', {
+                time: new Date(Date.now() + 3 * 3600 * 1000).toISOString().substring(11, 16),
+                text: notesVal
+            }, amendDate));
+        }
+
+        await Promise.all(promises);
+
+        // Reset form fields
+        ['log-feed', 'log-notes', 'log-nh3', 'log-co2', 'log-temp', 'log-humidity'].forEach(id => {
+            const el = $(id); if (el) el.value = '';
         });
         $('log-sacks').value = '0';
         $('log-mortality').value = '0';
-        // Clear and hide historical sensor average hints from the UI as the form resets
-        const tempHint = $('log-temp-hint');
-        const humHint = $('log-humidity-hint');
+        const tempHint = $('log-temp-hint'); const humHint = $('log-humidity-hint');
         if (tempHint) tempHint.style.display = 'none';
         if (humHint) humHint.style.display = 'none';
-        // Show brief confirmation feedback  
+
+        // If today's log, clear collection card for fresh start (already saved to staging)
+        if (!isBackfill) {
+            _eggCollections = [];
+            _renderEggCollectionList();
+        }
+
         const btn = document.querySelector('.btn-save-log');
         if (btn) { btn.textContent = '✓ Saved!'; btn.disabled = true; setTimeout(() => { btn.innerHTML = '<i data-lucide="save"></i> Save Log'; btn.disabled = false; lucide.createIcons(); }, 1800); }
 
         refreshCockpitData(batch);
+        window.showToast(isBackfill ? `Backfill for ${date} submitted.` : 'Log saved!', 'success');
     };
 
     window.refreshCockpitData = async function(batch) {
@@ -3483,8 +3762,130 @@ if ('serviceWorker' in navigator) {
         $('set-low-inv').value = p.alertThresholds.lowInventoryDays;
         $('set-prod-drop').value = p.alertThresholds.productionDropPercent;
         if($('set-storage-type')) $('set-storage-type').value = p.eggStorageType || 'room';
+
+        // Sensor alert threshold + Telegram Chat ID
+        if ($('set-sensor-offline-mins')) $('set-sensor-offline-mins').value = p.sensorOfflineMinutes || 30;
+        if ($('set-telegram-chat-id'))   $('set-telegram-chat-id').value   = p.telegramChatId || '';
+
         renderBuyersList();
+
+        // User Management panel (admin+ only)
+        const umContainer = $('user-management-panel');
+        if (umContainer && ['admin','super_admin'].includes(window.USER_ROLE)) {
+            umContainer.style.display = 'block';
+            _renderUserManagementPanel(umContainer);
+        } else if (umContainer) {
+            umContainer.style.display = 'none';
+        }
     }
+
+    async function _renderUserManagementPanel(container) {
+        container.innerHTML = '<p style="opacity:0.5;font-size:0.85rem;">Loading users…</p>';
+        const users = await api.getUsers();
+        const isSuperAdmin = window.USER_ROLE === 'super_admin';
+        container.innerHTML = `
+            <h4 style="margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;">
+                <span><i data-lucide="users" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;"></i>User Accounts</span>
+                ${isSuperAdmin ? '<button class="btn btn-secondary btn-sm" id="btn-add-user">+ Add User</button>' : ''}
+            </h4>
+            <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+                <thead><tr>
+                    <th style="padding:6px 10px;text-align:left;opacity:0.55;">Username</th>
+                    <th style="padding:6px 10px;text-align:left;opacity:0.55;">Role</th>
+                    <th style="padding:6px 10px;text-align:right;opacity:0.55;">Actions</th>
+                </tr></thead>
+                <tbody>
+                    ${users.map(u => `
+                    <tr style="border-top:1px solid var(--border-color);">
+                        <td style="padding:8px 10px;font-weight:600;">${u.username}${u.id === window.CURRENT_USER?.id ? ' <span style="font-size:0.7rem;opacity:0.5;">(you)</span>' : ''}</td>
+                        <td style="padding:8px 10px;">
+                            ${isSuperAdmin && u.id !== window.CURRENT_USER?.id ? `
+                            <select data-uid="${u.id}" class="role-select input-sm" style="font-size:0.82rem;padding:3px 6px;">
+                                ${['farmer','viewer','admin','super_admin'].map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}
+                            </select>
+                            ` : `<span class="pill">${u.role}</span>`}
+                        </td>
+                        <td style="padding:8px 10px;text-align:right;">
+                            <button class="btn btn-ghost btn-sm" onclick="window._changeUserPassword('${u.id}','${u.username}')">Reset PW</button>
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>
+            <div id="guest-token-section" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-color);">
+                <label style="font-size:0.82rem;opacity:0.65;">Guest Share Link</label>
+                <div style="display:flex;gap:8px;margin-top:6px;">
+                    <input id="guest-token-display" readonly style="flex:1;padding:7px 10px;border-radius:7px;border:1px solid var(--border-color);background:rgba(255,255,255,0.04);color:inherit;font-size:0.8rem;font-family:monospace;" placeholder="Regenerate to create a link">
+                    <button class="btn btn-secondary btn-sm" onclick="window._regenGuestToken()">Regenerate</button>
+                </div>
+                <p style="font-size:0.75rem;opacity:0.45;margin:6px 0 0;">Share this URL with read-only viewers. Regenerating invalidates the old link.</p>
+            </div>`;
+        lucide.createIcons();
+
+        // Role change handler
+        container.querySelectorAll('.role-select').forEach(sel => {
+            sel.addEventListener('change', async (e) => {
+                const uid = e.target.dataset.uid;
+                const res = await api.updateUserRole(uid, e.target.value);
+                if (!res.success) { showToast('Role update failed.', 'error'); e.target.value = users.find(u => u.id == uid)?.role; }
+                else showToast('Role updated.', 'success');
+            });
+        });
+
+        document.getElementById('btn-add-user')?.addEventListener('click', () => _showAddUserModal(() => _renderUserManagementPanel(container)));
+    }
+
+    window._changeUserPassword = function(uid, username) {
+        const pw = prompt(`New password for "${username}" (min 8 chars):`);
+        if (!pw || pw.length < 8) { showToast('Password too short (min 8).', 'warning'); return; }
+        api.changePassword(uid, pw).then(r => showToast(r.success ? 'Password changed.' : (r.error || 'Failed.'), r.success ? 'success' : 'error'));
+    };
+
+    window._regenGuestToken = async function() {
+        const res = await api.regenerateGuestToken();
+        if (res.token) {
+            const url = `${window.location.origin}/?guest=${res.token}`;
+            const inp = document.getElementById('guest-token-display');
+            if (inp) inp.value = url;
+            showToast('Guest link regenerated! Copy it above.', 'success');
+        } else {
+            showToast(res.error || 'Failed to regenerate.', 'error');
+        }
+    };
+
+    function _showAddUserModal(onSuccess) {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:8000;';
+        overlay.innerHTML = `
+            <div style="background:var(--card-bg,#1e2535);border-radius:14px;padding:28px 24px;min-width:320px;max-width:94vw;">
+                <h3 style="margin:0 0 18px;">Add User</h3>
+                <div style="margin-bottom:11px;"><label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Username</label>
+                    <input id="nu-username" type="text" style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;box-sizing:border-box;"></div>
+                <div style="margin-bottom:11px;"><label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Password (min 8)</label>
+                    <input id="nu-password" type="password" style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;box-sizing:border-box;"></div>
+                <div style="margin-bottom:18px;"><label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Role</label>
+                    <select id="nu-role" style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;box-sizing:border-box;">
+                        <option value="farmer">Farmer</option><option value="viewer">Viewer</option><option value="admin">Admin</option>
+                    </select></div>
+                <div id="nu-error" style="display:none;color:#ef4444;font-size:0.82rem;margin-bottom:10px;"></div>
+                <div style="display:flex;gap:10px;">
+                    <button id="nu-cancel" style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:inherit;cursor:pointer;">Cancel</button>
+                    <button id="nu-save" style="flex:2;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,#10b981,#3b82f6);color:#fff;font-weight:600;cursor:pointer;">Create User</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        document.getElementById('nu-cancel').onclick = () => overlay.remove();
+        document.getElementById('nu-save').onclick = async () => {
+            const username = document.getElementById('nu-username').value.trim();
+            const password = document.getElementById('nu-password').value;
+            const role = document.getElementById('nu-role').value;
+            const errEl = document.getElementById('nu-error');
+            if (!username || password.length < 8) { errEl.textContent = 'Username required and password ≥ 8 chars.'; errEl.style.display = 'block'; return; }
+            const res = await api.createUser(username, password, role);
+            if (res.success) { overlay.remove(); showToast('User created.', 'success'); if (onSuccess) onSuccess(); }
+            else { errEl.textContent = res.error || 'Failed.'; errEl.style.display = 'block'; }
+        };
+    }
+
 
     $('settings-form')?.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -3495,8 +3896,9 @@ if ('serviceWorker' in navigator) {
         farmProfile.alertThresholds.maxFeedConversion = parseFloat($('set-max-fc').value);
         farmProfile.alertThresholds.lowInventoryDays = parseInt($('set-low-inv').value);
         farmProfile.alertThresholds.productionDropPercent = parseInt($('set-prod-drop').value);
-        if($('set-storage-type')) farmProfile.eggStorageType = $('set-storage-type').value;
-        
+        if ($('set-storage-type')) farmProfile.eggStorageType = $('set-storage-type').value;
+        if ($('set-sensor-offline-mins')) farmProfile.sensorOfflineMinutes = parseInt($('set-sensor-offline-mins').value);
+        if ($('set-telegram-chat-id')) farmProfile.telegramChatId = $('set-telegram-chat-id').value.trim();
         saveFarmProfile(farmProfile);
         window.showToast('Farm profile saved successfully!');
     });
@@ -3557,100 +3959,6 @@ if ('serviceWorker' in navigator) {
         `;
         lucide.createIcons();
     }
-
-    window.openHealthModal = function(type) {
-        const isVaccine = type === 'vaccine';
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay active';
-        modal.innerHTML = `
-            <div class="modal-content card" style="max-width:400px; padding:24px; position:relative;">
-                <button type="button" class="btn btn-secondary btn-sm" style="position:absolute; top:16px; right:16px;" onclick="document.body.removeChild(this.closest('.modal-overlay'))"><i data-lucide="x" style="width:14px;height:14px;"></i></button>
-                <h3>${isVaccine ? 'Log Vaccination' : 'Log Medication'}</h3>
-                <form id="health-form" style="display:flex; flex-direction:column; gap:12px; margin-top:16px;">
-                    <div class="input-group">
-                        <label>Date</label>
-                        <input type="date" id="h-date" value="${new Date().toISOString().split('T')[0]}" required class="input-md">
-                    </div>
-                    <div class="input-group">
-                        <label>${isVaccine ? 'Vaccine Name' : 'Drug Name'}</label>
-                        ${isVaccine ? `
-                        <select id="h-name" required class="input-md">
-                            <option value="Marek\\'s Disease">Marek\\'s Disease</option>
-                            <option value="Newcastle (HB1/La Sota)">Newcastle (HB1/La Sota)</option>
-                            <option value="Gumboro (IBD)">Gumboro (IBD)</option>
-                            <option value="Fowl Pox">Fowl Pox</option>
-                            <option value="Fowl Typhoid">Fowl Typhoid</option>
-                            <option value="Deworming">Deworming</option>
-                            <option value="Other">Other</option>
-                        </select>
-                        ` : `
-                        <select id="h-name" required class="input-md">
-                            ${Object.keys(DRUG_WITHDRAWAL_TABLE).map(d => `<option value="${d}">${d}</option>`).join('')}
-                            <option value="Other">Other</option>
-                        </select>
-                        `}
-                    </div>
-                    <div class="input-group" id="h-name-other-group" style="display:none;">
-                        <label>Specify Name</label>
-                        <input type="text" id="h-name-other" class="input-md">
-                    </div>
-                    <div class="input-group">
-                        <label>Dosage</label>
-                        <input type="text" id="h-dosage" placeholder="e.g. 1 vial / 200L water" required class="input-md">
-                    </div>
-                    <div class="input-group">
-                        <label>Route of Administration</label>
-                        <select id="h-route" required class="input-md">
-                            <option value="Drinking Water">Drinking Water</option>
-                            <option value="Intramuscular">Intramuscular Injection</option>
-                            <option value="Subcutaneous">Subcutaneous Injection</option>
-                            <option value="Eye Drop">Eye Drop</option>
-                            <option value="Spray">Spray</option>
-                        </select>
-                    </div>
-                    <div class="input-group">
-                        <label>Administrator / Vet</label>
-                        <input type="text" id="h-admin" placeholder="Name" required class="input-md">
-                    </div>
-                    ${!isVaccine ? `
-                    <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-                        <input type="checkbox" id="h-offlabel" style="width:auto; height:auto;">
-                        <label for="h-offlabel" style="margin:0; cursor:pointer;">Off-label use (forces 14-day egg withdrawal)</label>
-                    </div>
-                    ` : ''}
-                    <div style="display:flex; gap:12px; margin-top:16px;">
-                        <button type="submit" class="btn btn-primary" style="flex:1;">Save Record</button>
-                    </div>
-                </form>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        lucide.createIcons();
-        
-        $('h-name').addEventListener('change', (e) => {
-            $('h-name-other-group').style.display = e.target.value === 'Other' ? 'block' : 'none';
-        });
-
-        $('health-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            let drugName = $('h-name').value;
-            if (drugName === 'Other') drugName = $('h-name-other').value || 'Unknown';
-            
-            await api.saveHealthLog(currentBatchId, {
-                id: Date.now(),
-                type: type,
-                date: $('h-date').value,
-                drug: drugName,
-                dosage: $('h-dosage').value,
-                route: $('h-route').value,
-                admin: $('h-admin').value,
-                offLabel: $('h-offlabel') ? $('h-offlabel').checked : false
-            });
-            document.body.removeChild(modal);
-            const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
-            if (batch) refreshCockpitData(batch);
-        });
-    };
 
     window.renderHealthTable = async function(batchId) {
         const container = $('health-log-table');
@@ -3834,4 +4142,4 @@ if ('serviceWorker' in navigator) {
         console.error('Error during data init:', err);
         refreshDashboard();
     });
-})().catch(err => console.error('[app init error]', err));
+} // end _initApp
