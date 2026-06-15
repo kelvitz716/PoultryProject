@@ -29,9 +29,10 @@ const PORT = process.env.PORT || 80;
 app.use(cors({
     origin: (origin, callback) => {
         if (!origin) return callback(null, true);
-        const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-        const isLan = /^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin);
-        if (isLocalhost || isLan) {
+        const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+        const isLan = /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin);
+        const isTailscale = /^https?:\/\/.*\.ts\.net(:\d+)?$/.test(origin);
+        if (isLocalhost || isLan || isTailscale) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
