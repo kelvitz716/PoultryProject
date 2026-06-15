@@ -403,7 +403,11 @@ export const api = {
      * @returns {Promise<Object>} { success, id, date, timestamp } or { queued: true } if offline.
      */
     async addStagingEvent(batchId, module, data, amendDate = null) {
-        const url = `/api/staging/${batchId}/${module}${amendDate ? `?amend=${amendDate}` : ''}`;
+        if (!data.id) {
+            data.id = `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        }
+        const clientDate = new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0];
+        const url = `/api/staging/${batchId}/${module}?clientDate=${clientDate}${amendDate ? `&amend=${amendDate}` : ''}`;
         return this._writeWithFallback(url, data);
     },
 
@@ -628,6 +632,47 @@ export const api = {
                 console.error('[api] Failed to queue offline write:', queueErr.message);
                 return { success: false, error: e.message };
             }
+        }
+    },
+
+    /**
+     * Replays all queued offline writes from IndexedDB when network becomes available.
+     * Useful as a fallback on devices/browsers that do not support Background Sync (e.g., iOS Safari).
+     * @returns {Promise<void>}
+     */
+    async replayOfflineQueue() {
+        if (!navigator.onLine) return;
+        try {
+            const { idbGetAll, idbRemove } = await import('./idb-queue.js');
+            const items = await idbGetAll();
+            if (items.length === 0) return;
+            console.log(`[api] Replaying ${items.length} queued write(s) programmatically.`);
+            for (const item of items) {
+                try {
+                    const r = await fetch(item.url, {
+                        method: item.method || 'POST',
+                        headers: item.headers || { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(item.body)
+                    });
+                    if (r.ok) {
+                        await idbRemove(item.id);
+                        console.log(`[api] Replayed and removed queue item ${item.id}: ${item.url}`);
+                    } else {
+                        console.warn(`[api] Server returned HTTP ${r.status} during replay for item ${item.id}.`);
+                    }
+                } catch (e) {
+                    console.warn(`[api] Failed to replay queue item ${item.id}: ${e.message}`);
+                    break; // network might have dropped again, abort remaining
+                }
+            }
+            // Refresh cockpit if we are currently looking at it
+            if (window.currentBatchId && typeof window.refreshCockpitData === 'function') {
+                const batches = typeof window.getBatches === 'function' ? window.getBatches() : [];
+                const batch = batches.find(b => String(b.id) === String(window.currentBatchId));
+                if (batch) window.refreshCockpitData(batch);
+            }
+        } catch (e) {
+            console.error('[api] Error replaying offline queue:', e.message);
         }
     }
 };

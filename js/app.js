@@ -36,6 +36,20 @@ if ('serviceWorker' in navigator) {
 (async () => {
     lucide.createIcons();
 
+    // ── Offline status & Background Sync Fallback ────────────────────────────────
+    const updateOfflineStatus = () => {
+        const banner = document.getElementById('offline-banner');
+        if (banner) {
+            banner.style.display = navigator.onLine ? 'none' : 'block';
+        }
+        if (navigator.onLine) {
+            api.replayOfflineQueue();
+        }
+    };
+    window.addEventListener('online', updateOfflineStatus);
+    window.addEventListener('offline', updateOfflineStatus);
+    updateOfflineStatus(); // run initial check
+
     // Request Persistent Storage to prevent mobile OS from clearing cache
     if (navigator.storage && navigator.storage.persist) {
         const isPersisted = await navigator.storage.persisted();
@@ -2207,7 +2221,7 @@ async function _initApp() {
         }
 
         // Module 6a: Egg Inventory Aging
-        const inventoryAging = computeEggInventoryAging(logs, txs);
+        const inventoryAging = computeEggInventoryAging(logs, txs, stagingToday);
         if($('info-unsoldeggs')) $('info-unsoldeggs').innerText = `(${inventoryAging.totalUnsold.toLocaleString()} in stock)`;
         
         const maxAgeDays = farmProfile.eggStorageType === 'refrigerated' ? 35 : 12;
@@ -3112,6 +3126,7 @@ async function _initApp() {
         if (!bid) return;
         const logs = await api.getLogs(bid);
         const txs = await api.getTransactions(bid);
+        const stagingToday = await api.getTodayStaging(bid).catch(() => null);
         
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
@@ -3168,7 +3183,7 @@ async function _initApp() {
              let html = '';
              if (type === 'sale') {
                   if (cat === 'eggs') {
-                       const inventoryAging = computeEggInventoryAging(logs, txs);
+                       const inventoryAging = computeEggInventoryAging(logs, txs, stagingToday);
                        const oldestBatch = inventoryAging.unsoldBatches.length > 0 ? inventoryAging.unsoldBatches[0].ageDays : 0;
                        
                        const buyers = farmProfile.buyers || [];
@@ -3431,11 +3446,12 @@ async function _initApp() {
         
         const logs = await api.getLogs(id);
         const txs = await api.getTransactions(id);
+        const stagingToday = await api.getTodayStaging(id).catch(() => null);
         const kpis = computeKPIs(logs, batch, farmProfile);
         
         // 1. Inventory Math
         const birdsAlive = kpis.currentBirds;
-        const inventoryAging = computeEggInventoryAging(logs, txs);
+        const inventoryAging = computeEggInventoryAging(logs, txs, stagingToday);
         const unsoldEggs = inventoryAging.totalUnsold;
         
         const totalFeedPurchased = txs.filter(t => t.type === 'purchase' && t.category.toLowerCase() === 'feed').reduce((s, t) => s + (parseFloat(t.qty) || 0), 0);

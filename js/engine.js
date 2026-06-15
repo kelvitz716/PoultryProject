@@ -540,13 +540,38 @@ export function computeKPIs(logs, batch, profile, stagingToday = null) {
  * @param {Array<Object>} txs - Transaction history (sales and write-offs).
  * @returns {Object} Inventory summary ({ totalUnsold: number, unsoldBatches: Array<{date, qty, ageDays}> }).
  */
-export function computeEggInventoryAging(logs, txs) {
+export function computeEggInventoryAging(logs, txs, stagingToday = null) {
     // 1. Calculate total eggs removed from inventory (sold + written off)
     const totalEggsSold = txs.filter(t => t.type === 'sale' && t.category === 'eggs').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
     const totalEggsWrittenOff = txs.filter(t => t.type === 'write_off' && t.category === 'eggs').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
     
+    const sortedLogs = [...logs];
+
+    // Include today's staged eggs if available
+    if (stagingToday && stagingToday.eggs && stagingToday.eggs.total > 0) {
+        const todayDate = stagingToday.date || new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0];
+        const existingTodayIdx = sortedLogs.findIndex(l => l.date === todayDate);
+        
+        const intact = stagingToday.eggs.intact ?? (stagingToday.eggs.total - (stagingToday.eggs.broken || 0));
+        const broken = stagingToday.eggs.broken ?? 0;
+        
+        if (existingTodayIdx >= 0) {
+            sortedLogs[existingTodayIdx] = {
+                ...sortedLogs[existingTodayIdx],
+                eggs: (sortedLogs[existingTodayIdx].eggs || 0) + intact + broken,
+                eggs_broken: (sortedLogs[existingTodayIdx].eggs_broken || 0) + broken
+            };
+        } else {
+            sortedLogs.push({
+                date: todayDate,
+                eggs: intact + broken,
+                eggs_broken: broken
+            });
+        }
+    }
+    
     // 2. Iterate through logs chronologically (oldest first) to find unsold stock
-    const sortedLogs = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+    sortedLogs.sort((a, b) => new Date(a.date) - new Date(b.date));
     
     let eggsToDeduct = totalEggsSold + totalEggsWrittenOff;
     let unsoldBatches = [];
