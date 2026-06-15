@@ -524,86 +524,100 @@ app.delete('/api/logs/:batchId', async (req, res) => {
 async function syncTransactionToLedger(batchId, tx, isDelete = false) {
     if (!tx || !tx.id) return;
     
-    // Delete existing entries first
-    await runQuery('DELETE FROM ledger_transactions WHERE id = ?', [tx.id]);
-    if (isDelete) return;
-
-    // Insert transaction header
-    const desc = tx.notes || `${tx.type} ${tx.category || ''}`;
-    const date = tx.date || new Date().toISOString();
-    const refType = tx.type || 'unknown';
-    const refId = tx.mpesa_code || tx.id;
-    
-    await runQuery(
-        'INSERT INTO ledger_transactions (id, date, description, ref_type, ref_id) VALUES (?, ?, ?, ?, ?)',
-        [tx.id, date, desc, refType, refId]
-    );
-
-    const amount = parseFloat(tx.amount || 0) || 0;
-    if (amount <= 0) return; // No entries for zero amount
-
-    let drAccount = '1000'; // Default Cash
-    let crAccount = '4000'; // Default Revenue
-
-    const type = tx.type;
-    const cat = tx.category || '';
-    const terms = tx.buyerTerms || 'COD';
-    const payment = tx.payment_method || 'cash';
-
-    if (type === 'sale') {
-        if (terms !== 'COD' && terms !== 'cash') {
-            drAccount = '1200'; // Accounts Receivable
-        } else if (payment === 'mpesa') {
-            drAccount = '1010'; // M-Pesa Till
-        } else {
-            drAccount = '1000'; // Cash
+    await runQuery('BEGIN TRANSACTION');
+    try {
+        // Delete existing entries first
+        await runQuery('DELETE FROM ledger_transactions WHERE id = ?', [tx.id]);
+        if (isDelete) {
+            await runQuery('COMMIT');
+            return;
         }
-        crAccount = '4000'; // Egg Sales
-    } else if (type === 'purchase') {
-        if (cat === 'feed') {
-            drAccount = '1310'; // Feed Inventory
-        } else if (cat === 'labor') {
-            drAccount = '5010'; // Labor
-        } else if (cat === 'electricity' || cat === 'water' || cat === 'utility') {
-            drAccount = '5020'; // Utilities
-        } else if (cat === 'vaccines' || cat === 'meds' || cat === 'health') {
-            drAccount = '5030'; // Meds
-        } else if (cat === 'chicks') {
-            drAccount = '5040'; // Chicks
-        } else {
-            drAccount = '5000'; // Feed Expense
-        }
+
+        // Insert transaction header
+        const desc = tx.notes || `${tx.type} ${tx.category || ''}`;
+        const date = tx.date || new Date().toISOString();
+        const refType = tx.type || 'unknown';
+        const refId = tx.mpesa_code || tx.id;
         
-        if (payment === 'mpesa') {
-            crAccount = '1010'; // M-Pesa Till
-        } else {
-            crAccount = '1000'; // Cash
+        await runQuery(
+            'INSERT INTO ledger_transactions (id, date, description, ref_type, ref_id) VALUES (?, ?, ?, ?, ?)',
+            [tx.id, date, desc, refType, refId]
+        );
+
+        const amount = parseFloat(tx.amount || 0) || 0;
+        if (amount <= 0) {
+            await runQuery('COMMIT');
+            return; // No entries for zero amount
         }
-    } else if (type === 'return') {
-        drAccount = '4000';
-        if (payment === 'mpesa') {
-            crAccount = '1010';
-        } else {
-            crAccount = '1000';
+
+        let drAccount = '1000'; // Default Cash
+        let crAccount = '4000'; // Default Revenue
+
+        const type = tx.type;
+        const cat = tx.category || '';
+        const terms = tx.buyerTerms || 'COD';
+        const payment = tx.payment_method || 'cash';
+
+        if (type === 'sale') {
+            if (terms !== 'COD' && terms !== 'cash') {
+                drAccount = '1200'; // Accounts Receivable
+            } else if (payment === 'mpesa') {
+                drAccount = '1010'; // M-Pesa Till
+            } else {
+                drAccount = '1000'; // Cash
+            }
+            crAccount = '4000'; // Egg Sales
+        } else if (type === 'purchase') {
+            if (cat === 'feed') {
+                drAccount = '1310'; // Feed Inventory
+            } else if (cat === 'labor') {
+                drAccount = '5010'; // Labor
+            } else if (cat === 'electricity' || cat === 'water' || cat === 'utility') {
+                drAccount = '5020'; // Utilities
+            } else if (cat === 'vaccines' || cat === 'meds' || cat === 'health') {
+                drAccount = '5030'; // Meds
+            } else if (cat === 'chicks') {
+                drAccount = '5040'; // Chicks
+            } else {
+                drAccount = '5000'; // Feed Expense
+            }
+            
+            if (payment === 'mpesa') {
+                crAccount = '1010'; // M-Pesa Till
+            } else {
+                crAccount = '1000'; // Cash
+            }
+        } else if (type === 'return') {
+            drAccount = '4000';
+            if (payment === 'mpesa') {
+                crAccount = '1010';
+            } else {
+                crAccount = '1000';
+            }
+        } else if (type === 'write_off') {
+            drAccount = '5000';
+            if (cat === 'feed') {
+                crAccount = '1310';
+            } else {
+                crAccount = '1300'; // Eggs
+            }
         }
-    } else if (type === 'write_off') {
-        drAccount = '5000';
-        if (cat === 'feed') {
-            crAccount = '1310';
-        } else {
-            crAccount = '1300'; // Eggs
-        }
+
+        await runQuery(
+            'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
+            [`${tx.id}_dr`, tx.id, drAccount, 'debit', amount]
+        );
+
+        await runQuery(
+            'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
+            [`${tx.id}_cr`, tx.id, crAccount, 'credit', amount]
+        );
+
+        await runQuery('COMMIT');
+    } catch (err) {
+        await runQuery('ROLLBACK').catch(() => {});
+        throw err;
     }
-
-    await runQuery(
-        'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
-        [`${tx.id}_dr`, tx.id, drAccount, 'debit', amount]
-    );
-
-    await runQuery(
-        'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
-        [`${tx.id}_cr`, tx.id, crAccount, 'credit', amount]
-    );
 }
 
 /**
@@ -727,6 +741,8 @@ app.post('/api/ledger/reconcile', requireRole('super_admin', 'admin'), async (re
             return res.status(400).json({ error: 'Missing transactionId or targetAccountId' });
         }
 
+        await runQuery('BEGIN TRANSACTION');
+
         await runQuery(
             "UPDATE ledger_entries SET account_id = ? WHERE transaction_id = ? AND account_id = '9999' AND entry_type = 'credit'",
             [targetAccountId, transactionId]
@@ -751,8 +767,12 @@ app.post('/api/ledger/reconcile', requireRole('super_admin', 'admin'), async (re
             }
         }
 
+        await runQuery('COMMIT');
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) {
+        await runQuery('ROLLBACK').catch(() => {});
+        res.status(500).json({ error: e.message });
+    }
 });
 
 /**
@@ -818,47 +838,55 @@ app.post('/api/payments/mpesa-callback', async (req, res) => {
         const txId = `mpesa_${Date.now()}_${mpesaCode}`;
         const desc = `M-Pesa payment from ${phone}${matchedBuyer ? ` (${matchedBuyer.name})` : ''} - Ref: ${mpesaCode}`;
         
-        await runQuery(
-            'INSERT INTO ledger_transactions (id, date, description, ref_type, ref_id) VALUES (?, ?, ?, ?, ?)',
-            [txId, new Date().toISOString(), desc, 'mpesa', mpesaCode]
-        );
+        await runQuery('BEGIN TRANSACTION');
+        try {
+            await runQuery(
+                'INSERT INTO ledger_transactions (id, date, description, ref_type, ref_id) VALUES (?, ?, ?, ?, ?)',
+                [txId, new Date().toISOString(), desc, 'mpesa', mpesaCode]
+            );
 
-        let drAccount = '1010';
-        let crAccount = '9999';
+            let drAccount = '1010';
+            let crAccount = '9999';
 
-        if (matchedBuyer) {
-            crAccount = '1200';
+            if (matchedBuyer) {
+                crAccount = '1200';
+            }
+
+            await runQuery(
+                'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
+                [`${txId}_dr`, txId, drAccount, 'debit', amount]
+            );
+
+            await runQuery(
+                'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
+                [`${txId}_cr`, txId, crAccount, 'credit', amount]
+            );
+
+            await runQuery(
+                'INSERT INTO transactions (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+                [
+                    txId,
+                    batchId,
+                    JSON.stringify({
+                        id: txId,
+                        date: new Date().toISOString(),
+                        type: 'sale',
+                        category: 'eggs',
+                        amount: amount,
+                        qty: 0,
+                        buyerName: matchedBuyer ? matchedBuyer.name : 'M-Pesa Unmatched',
+                        buyerTerms: 'COD',
+                        payment_method: 'mpesa',
+                        notes: `M-Pesa Ref: ${mpesaCode}. Phone: ${phone}`
+                    })
+                ]
+            );
+
+            await runQuery('COMMIT');
+        } catch (dbErr) {
+            await runQuery('ROLLBACK').catch(() => {});
+            throw dbErr;
         }
-
-        await runQuery(
-            'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
-            [`${txId}_dr`, txId, drAccount, 'debit', amount]
-        );
-
-        await runQuery(
-            'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
-            [`${txId}_cr`, txId, crAccount, 'credit', amount]
-        );
-
-        await runQuery(
-            'INSERT INTO transactions (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-            [
-                txId,
-                batchId,
-                JSON.stringify({
-                    id: txId,
-                    date: new Date().toISOString(),
-                    type: 'sale',
-                    category: 'eggs',
-                    amount: amount,
-                    qty: 0,
-                    buyerName: matchedBuyer ? matchedBuyer.name : 'M-Pesa Unmatched',
-                    buyerTerms: 'COD',
-                    payment_method: 'mpesa',
-                    notes: `M-Pesa Ref: ${mpesaCode}. Phone: ${phone}`
-                })
-            ]
-        );
 
         console.log(`M-Pesa transaction ${mpesaCode} processed successfully. Match: ${matchedBuyer ? matchedBuyer.name : 'None (Suspense)'}`);
         res.json({ ResultCode: 0, ResultDesc: "Accepted" });
@@ -1571,9 +1599,12 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
         const amendDate = req.query.amend;
         const isAmendment = !!amendDate && /^\d{4}-\d{2}-\d{2}$/.test(amendDate);
         const today = getEATDate();
+        
+        const clientDate = req.query.clientDate;
+        const isClientDateValid = !!clientDate && /^\d{4}-\d{2}-\d{2}$/.test(clientDate);
 
         // Block future dates
-        const targetDate = isAmendment ? amendDate : today;
+        const targetDate = isAmendment ? amendDate : (isClientDateValid ? clientDate : today);
         if (targetDate > today) {
             return res.status(400).json({ error: 'Cannot stage events for future dates.' });
         }
@@ -1615,14 +1646,16 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
             }
         }
 
-        const id = `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        const id = data.id || `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        delete data.id; // remove from internal data payload to save space
+        
         const timestamp = getEATTimestamp();
         const status = isAmendment ? 'amendment' : 'pending';
         const sensorId = data.sensor_id || 'primary';
         delete data.sensor_id;
 
         await runQuery(
-            'INSERT INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT OR IGNORE INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [id, batchId, module, targetDate, timestamp, JSON.stringify(data), status, sensorId]
         );
 
@@ -1785,21 +1818,21 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
     if (byModule.feed) {
         const prevKg = logData.feedGiven || 0;
         const prevSacks = logData.sacks || 0;
-        // For amendments, replace; for initial commit, accumulate
+        const hasAmendment = rows.some(r => r.status === 'amendment');
         const kg = byModule.feed.reduce((s, e) => s + (parseFloat(e.amount_kg) || 0), 0);
         const sacks = byModule.feed.reduce((s, e) => s + (parseInt(e.sacks_opened) || 0), 0);
-        logData.feedGiven = (existingLogRow ? prevKg : 0) + kg;
-        logData.sacks = (existingLogRow ? prevSacks : 0) + sacks;
+        logData.feedGiven = (existingLogRow && !hasAmendment ? prevKg : 0) + kg;
+        logData.sacks = (existingLogRow && !hasAmendment ? prevSacks : 0) + sacks;
     }
 
     // ── Mortality: sum ──
     if (byModule.mortality) {
         const prevMortality = logData.mortality || 0;
+        const hasAmendment = rows.some(r => r.status === 'amendment');
         const newMortality = byModule.mortality.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
-        logData.mortality = (existingLogRow ? prevMortality : 0) + newMortality;
-        logData.mortality_events = (logData.mortality_events || []).concat(
-            byModule.mortality.map(e => ({ time: e.time, count: e.count, cause: e.cause, note: e.note }))
-        );
+        logData.mortality = (existingLogRow && !hasAmendment ? prevMortality : 0) + newMortality;
+        const newEvents = byModule.mortality.map(e => ({ time: e.time, count: e.count, cause: e.cause, note: e.note }));
+        logData.mortality_events = (existingLogRow && !hasAmendment ? (logData.mortality_events || []) : []).concat(newEvents);
     }
 
     // ── Sensors: min/max/avg/thi_peak ──

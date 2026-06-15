@@ -38,7 +38,11 @@ const dbReady = new Promise((resolve, reject) => {
         } else {
             console.log('Connected to SQLite database.');
             db.run('PRAGMA journal_mode=WAL;', () => {
-                initializeDatabase(db, resolve, reject);
+                db.run('PRAGMA foreign_keys=ON;', () => {
+                    db.run('PRAGMA busy_timeout=5000;', () => {
+                        initializeDatabase(db, resolve, reject);
+                    });
+                });
             });
         }
     });
@@ -207,6 +211,12 @@ function initializeDatabase(db, resolve, reject) {
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5030', 'Medication Expense', 'expense', '5030')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5040', 'Chicks Expense', 'expense', '5040')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('9999', 'Suspense Account', 'asset', '9999')");
+
+        // Add a unique index to handle existing/new databases and enforce ref_id uniqueness
+        db.run(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_ref_type_id
+            ON ledger_transactions (ref_type, ref_id)
+        `);
 
         console.log('Database schema initialized.');
         // Final no-op run to confirm all prior CREATE TABLE runs have completed
