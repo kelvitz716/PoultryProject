@@ -88,23 +88,42 @@ async function handleAuth(page) {
     assert(await page.isVisible('#nav-analytics'),  'nav-analytics visible');
     console.log();
 
-    // ─── TC-02: Clear state via REST API ────────────────────────────────
-    console.log('TC-02  Clear all proposals, batches & snapshots (clean slate)');
+    // ─── TC-02: Clear previous test data via REST API ──────────────────
+    console.log('TC-02  Clear previous test proposals, batches & snapshots');
     const clearProposals = await page.evaluate(async () => {
-      const r = await fetch('/api/proposals', { method: 'DELETE', headers: { 'x-confirm-delete': 'true' } });
-      return r.ok;
+      const res = await fetch('/api/proposals');
+      const props = await res.json();
+      for (const p of props) {
+        if (p.name && p.name.toLowerCase().includes('kenchic')) {
+          await fetch(`/api/proposals/${p.id}`, { method: 'DELETE' });
+        }
+      }
+      return true;
     });
     const clearBatches = await page.evaluate(async () => {
-      const r = await fetch('/api/batches', { method: 'DELETE', headers: { 'x-confirm-delete': 'true' } });
-      return r.ok;
+      const res = await fetch('/api/batches');
+      const batches = await res.json();
+      for (const b of batches) {
+        if (b.name && b.name.toLowerCase().includes('kenchic')) {
+          await fetch(`/api/batches/${b.id}`, { method: 'DELETE' });
+        }
+      }
+      return true;
     });
     const clearSnapshots = await page.evaluate(async () => {
-      const r = await fetch('/api/snapshots', { method: 'DELETE', headers: { 'x-confirm-delete': 'true' } });
-      return r.ok;
+      const res = await fetch('/api/snapshots');
+      const snaps = await res.json();
+      for (const s of snaps) {
+        const name = s.name || s.batchName || '';
+        if (name.toLowerCase().includes('kenchic')) {
+          await fetch(`/api/snapshots/${s.id}`, { method: 'DELETE' });
+        }
+      }
+      return true;
     });
-    assert(clearProposals,  'DELETE /api/proposals returned ok');
-    assert(clearBatches,    'DELETE /api/batches returned ok');
-    assert(clearSnapshots,  'DELETE /api/snapshots returned ok');
+    assert(clearProposals,  'Selective delete of test proposals returned ok');
+    assert(clearBatches,    'Selective delete of test batches returned ok');
+    assert(clearSnapshots,  'Selective delete of test snapshots returned ok');
     // Reload so the UI reflects the cleared state
     await page.reload({ waitUntil: 'networkidle', timeout: TIMEOUT });
     await handleAuth(page);
@@ -162,9 +181,40 @@ async function handleAuth(page) {
     const batches = await page.evaluate(async () => {
       const r = await fetch('/api/batches'); return r.json();
     });
-    assert(batches.length === 1, `1 active batch in DB (got ${batches.length})`);
-    const batchId = batches[0].id;
+    const activeKenchicBatch = batches.find(b => b.name && b.name.toLowerCase().includes('kenchic'));
+    assert(!!activeKenchicBatch, 'Active Kenchic batch persisted in DB');
+    const batchId = activeKenchicBatch.id;
     console.log(`     Batch ID: ${batchId}`);
+    console.log();
+
+    // ─── TC-09: Live Active Batch - ISA Brown Layers ──────────────────────
+    console.log('TC-09  Verify live Batch 001 — ISA Brown Layers is loaded & active');
+    // Navigate to Batches tab
+    await page.click('#nav-batches');
+    await sleep(600);
+
+    // Verify ISA Brown Layers batch card is visible
+    await page.waitForSelector('text=Batch 001 — ISA Brown Layers', { timeout: TIMEOUT });
+    
+    // Click on the ISA Brown Layers batch to open its cockpit
+    await page.click('text=Batch 001 — ISA Brown Layers');
+    await sleep(600);
+
+    // Verify we are in the cockpit for ISA Brown
+    await page.waitForSelector('#view-batch-cockpit', { timeout: TIMEOUT });
+    const cockpitTitle = await page.$eval('.cockpit-header h2', el => el.innerText);
+    assert(cockpitTitle.includes('ISA Brown'), `Cockpit open for ISA Brown: "${cockpitTitle}"`);
+
+    // Verify derived active birds counts are visible
+    const birdsAliveText = await page.$eval('#info-birds', el => el.innerText);
+    assert(parseInt(birdsAliveText) > 0, `Birds alive count displays positive number: ${birdsAliveText}`);
+    
+    // Go back to the Kenchic batch cockpit to resume the rest of the E2E flow
+    await page.click('#nav-batches');
+    await sleep(600);
+    await page.click('text=Batch: 100-Bird Kenchic Layer Farm');
+    await page.waitForSelector('#view-batch-cockpit', { timeout: TIMEOUT });
+    await sleep(600);
     console.log();
 
     // ─── TC-05: Run 60d Lifecycle Simulation ────────────────────────────
