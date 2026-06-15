@@ -1004,11 +1004,6 @@ app.post('/api/sensors/sync', async (req, res) => {
     }
 });
 
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-
 // ===================== AUTH ROUTES =====================
 
 /**
@@ -1658,6 +1653,11 @@ async function checkSensorOfflineAlert(sensorData) {
         console.error('Sensor alert check failed:', e.message);
     }
 }
+
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 
 // ── Server Boot ────────────────────────────────────────────────────────────────

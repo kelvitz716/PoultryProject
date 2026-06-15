@@ -212,6 +212,17 @@ async function _initApp() {
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view');
 
+    if (window.USER_ROLE === 'viewer') {
+        const genNav = document.getElementById('nav-generator');
+        if (genNav) genNav.style.display = 'none';
+        const newProjBtn = document.getElementById('btn-new-project');
+        if (newProjBtn) newProjBtn.style.display = 'none';
+        const firstPropBtn = document.getElementById('btn-first-proposal');
+        if (firstPropBtn) firstPropBtn.style.display = 'none';
+        const gotoGenBtn = document.getElementById('btn-goto-generator');
+        if (gotoGenBtn) gotoGenBtn.style.display = 'none';
+    }
+
     window.switchView = function(viewId) {
         navItems.forEach(item => item.classList.toggle('active', item.id === `nav-${viewId}`));
         views.forEach(view => view.classList.toggle('active', view.id === `view-${viewId}`));
@@ -1271,7 +1282,7 @@ async function _initApp() {
                         <span class="pill" style="background:var(--primary-soft); color:var(--primary); font-weight:bold; border:1px solid var(--primary);">Completed</span>
                         ` : batch.status === 'post_batch' ? `
                         <span class="pill" style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d;">Winding Down</span>
-                        ` : `
+                        ` : window.USER_ROLE === 'viewer' ? '' : `
                         <button class="btn btn-secondary btn-sm" onclick="window.openCSVImportModal(${batch.id})">
                             <i data-lucide="upload" style="width:14px; height:14px;"></i> Import
                         </button>
@@ -1345,9 +1356,9 @@ async function _initApp() {
             <div class="cockpit-grid-spec">
                 <!-- ROW 1 -->
                 <div class="card log-form-card" style="height:100%; display:flex; flex-direction:column; position:relative;">
-                    ${batch.status === 'post_batch' || batch.status === 'completed' ? `
-                    <div style="position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(255,255,255,0.85); z-index:10; display:flex; align-items:center; justify-content:center; border-radius:8px;">
-                        <span style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d; padding:8px 16px; border-radius:8px; display:flex; align-items:center;"><i data-lucide="lock" style="width:14px;height:14px;margin-right:6px;"></i>Daily Logging Disabled (${batch.status === 'completed' ? 'Completed' : 'Winding Down'})</span>
+                    ${batch.status === 'post_batch' || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? `
+                    <div style="position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); backdrop-filter:blur(2px); z-index:10; display:flex; align-items:center; justify-content:center; border-radius:8px;">
+                        <span style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d; padding:8px 16px; border-radius:8px; display:flex; align-items:center;"><i data-lucide="lock" style="width:14px;height:14px;margin-right:6px;"></i>Daily Logging Disabled (${window.USER_ROLE === 'viewer' ? 'Read-Only Viewer' : batch.status === 'completed' ? 'Completed' : 'Winding Down'})</span>
                     </div>
                     ` : ''}
                     <div class="card-header">
@@ -1426,7 +1437,7 @@ async function _initApp() {
                         </div>
                         <div>
                             <div class="price-advisory" id="price-advisory" style="margin-bottom:12px;">Enter logs to see pricing recommendations.</div>
-                            ${batch.status === 'completed' ? '' : `
+                             ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
                             <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="openTxModal('sale')"><i data-lucide="plus-circle" style="width:14px;height:14px;"></i> Record a Sale</button>
                             <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px; border-color:#f87171; color:#f87171;" onclick="openTxModal('write_off')"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> Log Write-off</button>
                             `}
@@ -1455,7 +1466,7 @@ async function _initApp() {
                             <div class="feed-metric"><span>Days Left</span><strong id="feed-days-left">—</strong></div>
                             <div class="feed-metric"><span>Daily Consumption</span><strong id="feed-daily">—</strong></div>
                         </div>
-                        ${batch.status === 'post_batch' || batch.status === 'completed' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
+                         ${batch.status === 'post_batch' || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
                     </div>
                 </div>
 
@@ -1480,7 +1491,7 @@ async function _initApp() {
                 <div class="card" style="height:100%; display:flex; flex-direction:column; grid-column: 1 / -1;">
                     <div class="card-header">
                         <h3><i data-lucide="activity" style="width:16px;height:16px;"></i> Health & Immunization Log</h3>
-                        ${batch.status === 'completed' ? '' : `
+                        ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
                         <div>
                             <button class="btn btn-primary btn-sm" onclick="openHealthModal('vaccine')"><i data-lucide="syringe" style="width:14px; height:14px;"></i> Log Vaccine</button>
                             <button class="btn btn-secondary btn-sm" onclick="openHealthModal('meds')"><i data-lucide="pill" style="width:14px; height:14px;"></i> Log Meds</button>
@@ -3847,6 +3858,14 @@ async function _initApp() {
             if (umContainer) _renderUserManagementPanel(umContainer);
         } else if (outerPanel) {
             outerPanel.style.display = 'none';
+        }
+
+        if (window.USER_ROLE === 'viewer') {
+            const settingsView = document.getElementById('view-settings');
+            const inputs = settingsView?.querySelectorAll('input, select, textarea, button:not(#btn-logout)');
+            inputs?.forEach(inp => inp.disabled = true);
+            const submitBtn = settingsView?.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.style.display = 'none';
         }
     }
 
