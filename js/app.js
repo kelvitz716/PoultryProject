@@ -1376,11 +1376,21 @@ async function _initApp() {
 
             <!-- Secondary Info Bar -->
             <div class="info-bar" id="info-bar">
-                <div class="info-chip"><i data-lucide="bird" style="width:14px;height:14px;"></i> <strong id="info-birds">${hens}</strong> birds alive</div>
+                <div class="info-chip" id="info-birds-chip" style="cursor:pointer;" onclick="window.showAdjustFlockModal()" title="Click to adjust flock composition">
+                    <i data-lucide="bird" style="width:14px;height:14px;"></i> 
+                    <strong id="info-birds">${hens}</strong> birds alive 
+                    <span id="info-birds-breakdown" style="font-size:11px; margin-left:4px; opacity:0.85;">(Hens: 0, Roosters: 0)</span>
+                    <i data-lucide="edit-2" style="width:10px;height:10px;margin-left:4px;opacity:0.6;"></i>
+                </div>
                 <div class="info-chip"><i data-lucide="package" style="width:14px;height:14px;"></i> Feed: <strong id="info-feed">0 kg</strong></div>
                 <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash: <strong id="info-cash">KES 0</strong></div>
                 <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Credit: <strong id="info-credit">KES 0</strong></div>
                 <div class="info-chip"><i data-lucide="egg" style="width:14px;height:14px;"></i> Total: <strong id="info-totaleggs">0</strong> <span id="info-unsoldeggs" style="font-size:11px; margin-left:4px;">(0 in stock)</span></div>
+                <div class="info-chip" style="cursor:pointer;" onclick="window.showEggLossModal()" title="Click to view Egg Loss & Reconciliation details">
+                    <i data-lucide="alert-triangle" style="width:14px;height:14px;color:var(--danger, #ef4444);"></i> 
+                    Losses: <strong id="info-egg-losses">0</strong> 
+                    <span id="info-egg-losses-breakdown" style="font-size:11px; margin-left:4px; opacity:0.85;">(0 harvest, 0 storage)</span>
+                </div>
                 <div class="info-chip" id="info-sensor-container" style="display:none; cursor:pointer;" onclick="window.triggerSensorSync()">
                     <i data-lucide="thermometer" style="width:14px;height:14px;"></i> 
                     Coop: <strong id="info-sensor-temp">— °C</strong> / <strong id="info-sensor-hum">—% RH</strong> 
@@ -1436,9 +1446,16 @@ async function _initApp() {
                             <label>Feed Given (kg) <span style="font-size:10px;color:var(--text-muted);font-weight:400;" id="feed-kg-hint">— or enter sacks above</span></label>
                             <input type="number" id="log-feed" step="0.1" placeholder="Leave blank if entering sacks" class="input-md" onfocus="this.select()" oninput="window._onFeedKgInput(this)">
                         </div>
-                        <div class="log-field">
-                            <label>Deaths Today</label>
-                            <input type="number" id="log-mortality" value="0" min="0" class="input-md" style="color:var(--danger); font-weight:bold;" onfocus="this.select()">
+                        <div class="log-field" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                            <div style="display:flex; flex-direction:column;">
+                                <label>Hen Deaths</label>
+                                <input type="number" id="log-mortality-hens" value="0" min="0" class="input-md" style="color:var(--danger); font-weight:bold;" onfocus="this.select()" oninput="document.getElementById('log-mortality').value = parseInt(this.value || 0) + parseInt(document.getElementById('log-mortality-roosters').value || 0)">
+                            </div>
+                            <div style="display:flex; flex-direction:column;">
+                                <label>Rooster Deaths</label>
+                                <input type="number" id="log-mortality-roosters" value="0" min="0" class="input-md" style="color:var(--danger); font-weight:bold;" onfocus="this.select()" oninput="document.getElementById('log-mortality').value = parseInt(document.getElementById('log-mortality-hens').value || 0) + parseInt(this.value || 0)">
+                            </div>
+                            <input type="number" id="log-mortality" value="0" style="opacity:0.01; position:absolute; width:1px; height:1px; pointer-events:none; padding:0; margin:0; border:0;" oninput="document.getElementById('log-mortality-hens').value = this.value">
                             <input type="hidden" id="log-birds" value="${hens}">
                         </div>
                         <div class="log-field" style="grid-column: 1 / -1; margin-top: 4px; border-top: 1px dashed var(--border-color); padding-top: 8px;">
@@ -1922,7 +1939,9 @@ async function _initApp() {
 
         const sacks     = parseInt($('log-sacks').value) || 0;
         const feedGiven = parseFloat($('log-feed').value) || null;
-        const mortality = parseInt($('log-mortality').value) || 0;
+        const mortalityHens = parseInt($('log-mortality-hens')?.value) || 0;
+        const mortalityRoosters = parseInt($('log-mortality-roosters')?.value) || 0;
+        const mortality = mortalityHens + mortalityRoosters;
         const nh3       = parseFloat($('log-nh3').value) || null;
         const co2       = parseFloat($('log-co2').value) || null;
         const temperature = parseFloat($('log-temp').value) || null;
@@ -1964,7 +1983,11 @@ async function _initApp() {
 
         // Mortality
         if (mortality > 0) {
-            promises.push(api.addStagingEvent(batch.id, 'mortality', { count: mortality }, amendDate));
+            promises.push(api.addStagingEvent(batch.id, 'mortality', { 
+                count: mortality,
+                hens: mortalityHens,
+                roosters: mortalityRoosters
+            }, amendDate));
         }
 
         // Gases
@@ -1993,6 +2016,8 @@ async function _initApp() {
         });
         $('log-sacks').value = '0';
         $('log-mortality').value = '0';
+        if ($('log-mortality-hens')) $('log-mortality-hens').value = '0';
+        if ($('log-mortality-roosters')) $('log-mortality-roosters').value = '0';
         const tempHint = $('log-temp-hint'); const humHint = $('log-humidity-hint');
         if (tempHint) tempHint.style.display = 'none';
         if (humHint) humHint.style.display = 'none';
@@ -2047,7 +2072,7 @@ async function _initApp() {
             api.getTodayStaging(batch.id).catch(() => null)
         ]);
         
-        const kpis = computeKPIs(logs, batch, farmProfile, stagingToday);
+        const kpis = computeKPIs(logs, txs, batch, farmProfile, stagingToday);
         
         if (stagingToday && stagingToday.eggs && stagingToday.eggs.collections) {
             _eggCollections = stagingToday.eggs.collections.map(c => ({
@@ -2094,7 +2119,32 @@ async function _initApp() {
         renderTrendBadge('trend-avg7', kpis.layRateTrend);
 
         // Info Bar
-        if($('info-birds')) $('info-birds').innerText = kpis.currentBirds;
+        if($('info-birds')) {
+            $('info-birds').innerText = kpis.currentBirds;
+            const breakdown = $('info-birds-breakdown');
+            if (breakdown) {
+                breakdown.innerText = `(Hens: ${kpis.currentHens}, Roosters: ${kpis.currentRoosters})`;
+            }
+        }
+        
+        // Reconcile Egg losses
+        const totalHarvestLoss = logs.reduce((sum, l) => sum + (parseInt(l.eggs_broken) || 0), 0) + 
+            (stagingToday?.eggs?.broken || 0);
+            
+        const totalStorageLoss = txs.filter(t => t.type === 'write_off' && t.category === 'eggs')
+            .reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
+            
+        const totalLoss = totalHarvestLoss + totalStorageLoss;
+        
+        if ($('info-egg-losses')) {
+            $('info-egg-losses').innerText = totalLoss.toLocaleString();
+        }
+        
+        const lossBreakdown = $('info-egg-losses-breakdown');
+        if (lossBreakdown) {
+            lossBreakdown.innerText = `(${totalHarvestLoss} harvest, ${totalStorageLoss} storage)`;
+        }
+
         if($('info-totaleggs')) $('info-totaleggs').innerText = kpis.totalEggs.toLocaleString();
 
         const initialCash = (batch.assumptions && batch.assumptions.workingCapital) ? batch.assumptions.workingCapital : 0;
@@ -3134,7 +3184,8 @@ async function _initApp() {
         
         const saleOptions = `
             <option value="eggs">Eggs</option>
-            <option value="spent">Spent Layers</option>
+            <option value="spent">Spent Layers (Hens)</option>
+            <option value="roosters">Roosters</option>
             <option value="manure">Manure</option>
         `;
         const returnOptions = `<option value="eggs">Rejected / Returned Eggs</option>`;
@@ -3257,7 +3308,7 @@ async function _initApp() {
                   } else if (cat === 'manure') {
                        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"><div class="input-group"><label>Unit</label><select id="tx-unit"><option value="bags">50kg Bags</option><option value="wb">Wheelbarrows</option></select></div>`;
                        html += `<div class="input-group"><label>Quantity</label><input type="number" id="tx-qty" value="1" required></div></div>`;
-                  } else if (cat === 'spent') {
+                  } else if (cat === 'spent' || cat === 'roosters') {
                        html += `<div class="input-group"><label>Birds Sold</label><input type="number" id="tx-qty" value="1" required></div>`;
                   }
              } else if (type === 'return') {
@@ -3421,8 +3472,8 @@ async function _initApp() {
             
             const batch = getBatches().find(b => String(b.id) === String(bid));
             
-            // Handle Spent Layers reduction
-            if (type === 'sale' && resolvedCategory === 'spent' && rawQty > 0 && batch) {
+            // Handle Spent Layers / Roosters reduction
+            if (type === 'sale' && (resolvedCategory === 'spent' || resolvedCategory === 'roosters') && rawQty > 0 && batch) {
                 batch.stats.birdsAlive = Math.max(0, batch.stats.birdsAlive - rawQty);
                 batch.stats.totalSold = (batch.stats.totalSold || 0) + rawQty;
                 await updateBatch(batch);
@@ -3445,6 +3496,160 @@ async function _initApp() {
 
     // Logic handled by window.submitDailyLog in cockpit view
 
+    window.openHealthModal = function(type) {
+        const bid = currentBatchId;
+        if (!bid) return;
+        
+        const title = type === 'vaccine' ? 'Log Vaccination' : 'Log Medication / Treatment';
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'health-modal';
+        
+        let drugOptionsHtml = '';
+        if (type === 'vaccine') {
+            drugOptionsHtml = `
+                <option value="Newcastle (HB1/La Sota)">Newcastle (HB1/La Sota)</option>
+                <option value="Gumboro (IBD)">Gumboro (IBD)</option>
+                <option value="Fowl Pox">Fowl Pox</option>
+                <option value="Marek's Disease">Marek's Disease</option>
+                <option value="Newcastle (Booster)">Newcastle (Booster)</option>
+                <option value="Gumboro (Booster)">Gumboro (Booster)</option>
+                <option value="Newcastle (Komarov)">Newcastle (Komarov)</option>
+                <option value="Newcastle (La Sota)">Newcastle (La Sota)</option>
+                <option value="Dewormer (Piperazine)">Dewormer (Piperazine)</option>
+                <option value="Dewormer (Levamisole)">Dewormer (Levamisole)</option>
+                <option value="other">Other (Custom Vaccine)</option>
+            `;
+        } else {
+            drugOptionsHtml = `
+                <option value="Aliseryl WS">Aliseryl WS</option>
+                <option value="Oxytetracycline">Oxytetracycline</option>
+                <option value="Amoxicillin">Amoxicillin</option>
+                <option value="Tylosin">Tylosin</option>
+                <option value="Levamisole">Levamisole</option>
+                <option value="Perimin">Perimin</option>
+                <option value="Norotraz">Norotraz</option>
+                <option value="Piperazine">Piperazine</option>
+                <option value="Fenbendazole">Fenbendazole</option>
+                <option value="other">Other (Custom Medicine)</option>
+            `;
+        }
+        
+        modal.innerHTML = `
+            <div class="modal-content card" style="max-width:400px; padding:24px;">
+                <h3>${title}</h3>
+                <form id="health-form" style="display:flex; flex-direction:column; gap:16px; margin-top:16px;">
+                    <div class="input-group">
+                        <label>Date</label>
+                        <input type="date" id="health-date" required value="${new Date().toISOString().split('T')[0]}">
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>${type === 'vaccine' ? 'Vaccine Name' : 'Medicine / Drug Name'}</label>
+                        <select id="health-drug-select" required>
+                            ${drugOptionsHtml}
+                        </select>
+                    </div>
+                    
+                    <div class="input-group" id="health-custom-drug-group" style="display:none;">
+                        <label>Specify Custom Name</label>
+                        <input type="text" id="health-custom-drug" placeholder="e.g. Tylosin, Newcastle Booster">
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>Dosage</label>
+                        <input type="text" id="health-dosage" placeholder="e.g. 1.5 Tablespoon/20L, 1 vial/1000 birds" required>
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>Route of Administration</label>
+                        <select id="health-route">
+                            <option value="Drinking Water">Drinking Water</option>
+                            <option value="Wing-web">Wing-web Injection</option>
+                            <option value="Intramuscular">Intramuscular Injection</option>
+                            <option value="Eye Drop">Eye Drop</option>
+                            <option value="Oral">Oral (Direct)</option>
+                            <option value="Spray">Coop Spray / Aerosol</option>
+                            <option value="Feed additive">In-feed Additive</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>Administered By</label>
+                        <input type="text" id="health-admin" placeholder="e.g. Kelvin, Vet" required value="${window.USER_NAME || ''}">
+                    </div>
+                    
+                    <div class="input-group" style="display:flex; flex-direction:row; align-items:center; gap:8px; cursor:pointer;">
+                        <input type="checkbox" id="health-off-label" style="width:auto; margin:0;">
+                        <label for="health-off-label" style="margin:0; cursor:pointer;">Off-label use (forces 14d egg/28d meat withdrawal)</label>
+                    </div>
+                    
+                    <div style="display:flex; gap:12px; margin-top:8px;">
+                        <button type="button" class="btn btn-secondary" onclick="document.body.removeChild(this.closest('.modal-overlay'))">Cancel</button>
+                        <button type="submit" class="btn btn-primary" style="flex:1;">Log Event</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        const drugSelect = document.getElementById('health-drug-select');
+        const customDrugGroup = document.getElementById('health-custom-drug-group');
+        const customDrugInput = document.getElementById('health-custom-drug');
+        
+        drugSelect.addEventListener('change', function() {
+            if (this.value === 'other') {
+                customDrugGroup.style.display = 'block';
+                customDrugInput.required = true;
+            } else {
+                customDrugGroup.style.display = 'none';
+                customDrugInput.required = false;
+                customDrugInput.value = '';
+            }
+        });
+        
+        document.getElementById('health-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const selectedDrug = drugSelect.value;
+            const drugName = selectedDrug === 'other' ? customDrugInput.value.trim() : selectedDrug;
+            
+            if (!drugName) {
+                window.showToast('Please specify a drug or vaccine name.', 'danger');
+                return;
+            }
+            
+            const newLog = {
+                id: `${bid}_h_${Date.now()}`,
+                date: document.getElementById('health-date').value,
+                type: type,
+                drug: drugName,
+                dosage: document.getElementById('health-dosage').value.trim(),
+                route: document.getElementById('health-route').value,
+                admin: document.getElementById('health-admin').value.trim() || 'Admin',
+                offLabel: document.getElementById('health-off-label').checked
+            };
+            
+            try {
+                await api.saveHealthLog(bid, newLog);
+                document.body.removeChild(modal);
+                window.showToast(`${type === 'vaccine' ? 'Vaccination' : 'Medication'} logged successfully.`, 'success');
+                
+                await window.renderHealthTable(bid);
+                
+                const batch = getBatches().find(b => String(b.id) === String(bid));
+                if (batch) refreshCockpitData(batch);
+            } catch (err) {
+                console.error('Error saving health log:', err);
+                window.showToast('Failed to save health log.', 'danger');
+            }
+        });
+    };
+
+    // Logic handled by window.submitDailyLog in cockpit view
+
     window.finishBatch = async function(id) {
         const batches = getBatches();
         const batch = batches.find(b => String(b.id) === String(id));
@@ -3456,7 +3661,7 @@ async function _initApp() {
         const logs = await api.getLogs(id);
         const txs = await api.getTransactions(id);
         const stagingToday = await api.getTodayStaging(id).catch(() => null);
-        const kpis = computeKPIs(logs, batch, farmProfile);
+        const kpis = computeKPIs(logs, txs, batch, farmProfile, stagingToday);
         
         // 1. Inventory Math
         const birdsAlive = kpis.currentBirds;
@@ -4594,6 +4799,119 @@ async function _initApp() {
                 window.showToast('Failed to clear batches.', 'danger');
             }
         });
+    };
+
+    window.showAdjustFlockModal = async function() {
+        const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
+        if (!batch) return;
+        
+        const initialHens = batch.stats?.initialHens !== undefined ? batch.stats.initialHens : (batch.size || 0);
+        const initialRoosters = batch.stats?.initialRoosters || 0;
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'adjust-flock-modal';
+        modal.innerHTML = `
+            <div class="modal-content card" style="max-width:350px; padding:24px;">
+                <h3>Adjust Flock Baseline</h3>
+                <p style="font-size:12px; color:var(--text-muted); margin-top:8px;">Set the baseline (initial) number of Hens and Roosters for this flock. The system will subtract mortalities and sales from these baselines to compute the current count.</p>
+                <form id="adjust-flock-form" style="display:flex; flex-direction:column; gap:16px; margin-top:16px;">
+                    <div class="input-group">
+                        <label>Initial Hens (egg-producers)</label>
+                        <input type="number" id="adj-initial-hens" value="${initialHens}" min="0" required>
+                    </div>
+                    <div class="input-group">
+                        <label>Initial Roosters (non-producers)</label>
+                        <input type="number" id="adj-initial-roosters" value="${initialRoosters}" min="0" required>
+                    </div>
+                    <div style="display:flex; gap:12px; margin-top:8px;">
+                        <button type="button" class="btn btn-secondary" onclick="document.body.removeChild(this.closest('.modal-overlay'))">Cancel</button>
+                        <button type="submit" class="btn btn-primary" style="flex:1;">Save Baselines</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        document.getElementById('adjust-flock-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const newHens = parseInt(document.getElementById('adj-initial-hens').value) || 0;
+            const newRoosters = parseInt(document.getElementById('adj-initial-roosters').value) || 0;
+            
+            batch.stats = batch.stats || {};
+            batch.stats.initialHens = newHens;
+            batch.stats.initialRoosters = newRoosters;
+            batch.size = newHens + newRoosters;
+            batch.stats.birdsAlive = newHens + newRoosters;
+            
+            await api.saveBatch(batch);
+            document.body.removeChild(modal);
+            refreshCockpitData(batch);
+            window.showToast('Flock baseline updated!', 'success');
+        });
+    };
+
+    window.showEggLossModal = async function() {
+        const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
+        if (!batch) return;
+        
+        const logs = await api.getLogs(batch.id);
+        const txs = await api.getTransactions(batch.id);
+        const stagingToday = await api.getTodayStaging(batch.id).catch(() => null);
+        
+        const totalHarvestLoss = logs.reduce((sum, l) => sum + (parseInt(l.eggs_broken) || 0), 0) + 
+            (stagingToday?.eggs?.broken || 0);
+            
+        const totalStorageLoss = txs.filter(t => t.type === 'write_off' && t.category === 'eggs')
+            .reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
+            
+        const totalIntactCollected = logs.reduce((sum, l) => sum + ((parseInt(l.eggs) || 0) - (parseInt(l.eggs_broken) || 0)), 0) + 
+            ((stagingToday?.eggs?.total || 0) - (stagingToday?.eggs?.broken || 0));
+            
+        const totalSales = txs.filter(t => t.type === 'sale' && t.category === 'eggs')
+            .reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
+            
+        const inventoryAging = computeEggInventoryAging(logs, txs, stagingToday);
+        const currentStock = inventoryAging.totalUnsold;
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'egg-loss-modal';
+        modal.innerHTML = `
+            <div class="modal-content card" style="max-width:400px; padding:24px;">
+                <h3>Egg Inventory & Loss Reconciliation</h3>
+                <div style="display:flex; flex-direction:column; gap:12px; margin-top:16px; font-size:14px; color:var(--text-dark);">
+                    <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-color); padding-bottom:8px;">
+                        <span>Total Eggs Collected (Gross)</span>
+                        <strong>${(totalIntactCollected + totalHarvestLoss).toLocaleString()}</strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; color:var(--danger); padding-left:12px;">
+                        <span>- Harvest Loss (Broken at Coop)</span>
+                        <strong>-${totalHarvestLoss.toLocaleString()}</strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border-color); padding-bottom:8px; font-weight:600;">
+                        <span>= Placed in Storage (Net Collected)</span>
+                        <strong>${totalIntactCollected.toLocaleString()}</strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; color:var(--primary); padding-left:12px;">
+                        <span>- Total Eggs Sold</span>
+                        <strong>-${totalSales.toLocaleString()}</strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; color:var(--danger); padding-left:12px; border-bottom:1px solid var(--border-color); padding-bottom:8px;">
+                        <span>- Storage Loss (Write-offs/Spoiled)</span>
+                        <strong>-${totalStorageLoss.toLocaleString()}</strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:16px; padding-top:4px;">
+                        <span>Current Stock (Unsold)</span>
+                        <span style="color:var(--primary);">${currentStock.toLocaleString()} eggs</span>
+                    </div>
+                </div>
+                <div style="display:flex; margin-top:24px;">
+                    <button type="button" class="btn btn-primary" style="width:100%;" onclick="document.body.removeChild(this.closest('.modal-overlay'))">Close</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
     };
 
     $('btn-clear-all-batches')?.addEventListener('click', () => { window.clearAllBatchesUI(); });

@@ -205,6 +205,7 @@ function initializeDatabase(db, resolve, reject) {
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1300', 'Egg Inventory', 'asset', '1300')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1310', 'Feed Inventory', 'asset', '1310')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('4000', 'Egg Sales Revenue', 'revenue', '4000')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('4010', 'Flock Sales Revenue', 'revenue', '4010')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5000', 'Feed Expense', 'expense', '5000')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5010', 'Labor Expense', 'expense', '5010')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5020', 'Utilities Expense', 'expense', '5020')");

@@ -16,12 +16,12 @@ services:
     #
     # For local development: comment this line and uncomment the build block
     # below to build the image directly from the local Dockerfile.
-    image: ghcr.io/kelvitz716/poultryproject:latest
+    # image: ghcr.io/kelvitz716/poultryproject:latest
 
     # ── Local development build (alternative to the image: line above) ─────
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
 
     container_name: poultry-dss
 

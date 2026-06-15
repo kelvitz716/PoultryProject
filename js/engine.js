@@ -458,31 +458,50 @@ export function parseEggTrackerCSV(csvText, farmProfileFlockSize = 49) {
  * Calculates essential cohort KPIs from historical log telemetry and configuration limits.
  * Compiles lay rates, 7-day averages, trends, feed conversion index (kg/doz), and monthly projection forecasts.
  * @param {Array<Object>} logs - Collection of active daily tracking logs.
+ * @param {Array<Object>} txs - Transaction history (sales and write-offs).
  * @param {Object} batch - Active cohort config.
  * @param {Object} profile - Farm profile limits.
  * @returns {Object} Computed KPI dataset containing todayLayRate, avg7LayRate, layRateTrend, feedConversion, etc.
  */
-export function computeKPIs(logs, batch, profile, stagingToday = null) {
+export function computeKPIs(logs, txs = [], batch, profile, stagingToday = null) {
     const batchSize = batch.size || profile.flockSize;
-    const liveBirds = batch.stats && batch.stats.birdsAlive !== undefined ? batch.stats.birdsAlive : batchSize;
+    
+    // Dynamic flock split calculations
+    const initialHens = batch.stats?.initialHens !== undefined ? batch.stats.initialHens : batchSize;
+    const initialRoosters = batch.stats?.initialRoosters || 0;
+    
+    const totalHensDied = logs.reduce((sum, l) => {
+        if (l.mortality_hens !== undefined) {
+            return sum + (parseInt(l.mortality_hens) || 0);
+        }
+        return sum + (parseInt(l.mortality) || 0);
+    }, 0) + (parseInt(stagingToday?.mortality?.hens) || (!stagingToday?.mortality?.roosters ? parseInt(stagingToday?.mortality?.count) : 0) || 0);
+
+    const totalRoostersDied = logs.reduce((sum, l) => sum + (parseInt(l.mortality_roosters) || 0), 0) + (parseInt(stagingToday?.mortality?.roosters) || 0);
+
+    const totalHensSold = txs.filter(t => t.type === 'sale' && t.category === 'spent').reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
+    const totalRoostersSold = txs.filter(t => t.type === 'sale' && (t.category === 'roosters' || t.category === 'rooster')).reduce((sum, t) => sum + (parseInt(t.qty) || 0), 0);
+
+    const currentHens = Math.max(0, initialHens - totalHensDied - totalHensSold);
+    const currentRoosters = Math.max(0, initialRoosters - totalRoostersDied - totalRoostersSold);
+    const currentBirds = currentHens + currentRoosters;
     
     const recent7 = logs.slice(0, 7);
     const recent30 = logs.slice(0, 30);
-    const latestLog = logs[0] || { eggs: 0, feed: 0, birds: liveBirds };
-    const currentBirds = liveBirds;
+    const latestLog = logs[0] || { eggs: 0, feed: 0, birds: currentBirds };
 
     // Today's lay rate — prefer staging today if available (not yet committed)
     const todayEggs = stagingToday?.eggs?.total ?? (latestLog.eggs || 0);
-    const todayLayRate = currentBirds > 0 ? (todayEggs / currentBirds) : 0;
+    const todayLayRate = currentHens > 0 ? (todayEggs / currentHens) : 0;
 
     // 7-day moving average lay rate
     const avg7Eggs = recent7.length > 0 ? recent7.reduce((s, l) => s + (l.eggs || 0), 0) / recent7.length : 0;
-    const avg7LayRate = currentBirds > 0 ? avg7Eggs / currentBirds : 0;
+    const avg7LayRate = currentHens > 0 ? avg7Eggs / currentHens : 0;
 
     // Previous 7-day rate for trend
     const prev7 = logs.slice(7, 14);
     const prevAvg7Eggs = prev7.length > 0 ? prev7.reduce((s, l) => s + (l.eggs || 0), 0) / prev7.length : avg7Eggs;
-    const prev7LayRate = currentBirds > 0 ? prevAvg7Eggs / currentBirds : 0;
+    const prev7LayRate = currentHens > 0 ? prevAvg7Eggs / currentHens : 0;
     const layRateTrend = avg7LayRate - prev7LayRate;
 
     // Feed conversion (7-day): kg feed / dozen eggs
@@ -493,7 +512,7 @@ export function computeKPIs(logs, batch, profile, stagingToday = null) {
     // Projected eggs this month
     const now = new Date();
     const daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
-    const projectedEggs = Math.round(avg7LayRate * currentBirds * daysLeft);
+    const projectedEggs = Math.round(avg7LayRate * currentHens * daysLeft);
 
     // Total metrics
     const totalEggs = logs.reduce((s, l) => s + (l.eggs || 0), 0);
@@ -527,7 +546,7 @@ export function computeKPIs(logs, batch, profile, stagingToday = null) {
     return {
         todayLayRate, avg7LayRate, layRateTrend, feedConversion,
         projectedEggs, totalEggs, totalFeed, avgDailyFeedPerBird,
-        currentBirds, avg7Eggs, daysLeft, recent7, recent30,
+        currentBirds, currentHens, currentRoosters, avg7Eggs, daysLeft, recent7, recent30,
         sensorSummary
     };
 }
