@@ -260,6 +260,8 @@ app.get('/api/entities/:key', async (req, res) => {
             data = '••••••••••••••••';
         } else if (req.params.key === 'telegram_bot_token' && data) {
             data = '••••••••••••••••';
+        } else if (['mpesa_consumer_key', 'mpesa_consumer_secret', 'mpesa_passkey', 'mpesa_shortcode'].includes(req.params.key) && data) {
+            data = '••••••••••••••••';
         }
         res.json(data);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -292,6 +294,11 @@ app.post('/api/entities/:key', validateBody, async (req, res) => {
             }
         } else if (req.params.key === 'telegram_bot_token') {
             const existing = await getEntityValue('telegram_bot_token', null);
+            if (valueToSave === '••••••••••••••••') {
+                valueToSave = existing || '';
+            }
+        } else if (['mpesa_consumer_key', 'mpesa_consumer_secret', 'mpesa_passkey', 'mpesa_shortcode'].includes(req.params.key)) {
+            const existing = await getEntityValue(req.params.key, null);
             if (valueToSave === '••••••••••••••••') {
                 valueToSave = existing || '';
             }
@@ -512,6 +519,94 @@ app.delete('/api/logs/:batchId', async (req, res) => {
 // ===================== FINANCIAL TRANSACTIONS =====================
 
 /**
+ * Helper to sync a flat transaction to the double-entry general ledger.
+ */
+async function syncTransactionToLedger(batchId, tx, isDelete = false) {
+    if (!tx || !tx.id) return;
+    
+    // Delete existing entries first
+    await runQuery('DELETE FROM ledger_transactions WHERE id = ?', [tx.id]);
+    if (isDelete) return;
+
+    // Insert transaction header
+    const desc = tx.notes || `${tx.type} ${tx.category || ''}`;
+    const date = tx.date || new Date().toISOString();
+    const refType = tx.type || 'unknown';
+    const refId = tx.mpesa_code || tx.id;
+    
+    await runQuery(
+        'INSERT INTO ledger_transactions (id, date, description, ref_type, ref_id) VALUES (?, ?, ?, ?, ?)',
+        [tx.id, date, desc, refType, refId]
+    );
+
+    const amount = parseFloat(tx.amount || 0) || 0;
+    if (amount <= 0) return; // No entries for zero amount
+
+    let drAccount = '1000'; // Default Cash
+    let crAccount = '4000'; // Default Revenue
+
+    const type = tx.type;
+    const cat = tx.category || '';
+    const terms = tx.buyerTerms || 'COD';
+    const payment = tx.payment_method || 'cash';
+
+    if (type === 'sale') {
+        if (terms !== 'COD' && terms !== 'cash') {
+            drAccount = '1200'; // Accounts Receivable
+        } else if (payment === 'mpesa') {
+            drAccount = '1010'; // M-Pesa Till
+        } else {
+            drAccount = '1000'; // Cash
+        }
+        crAccount = '4000'; // Egg Sales
+    } else if (type === 'purchase') {
+        if (cat === 'feed') {
+            drAccount = '1310'; // Feed Inventory
+        } else if (cat === 'labor') {
+            drAccount = '5010'; // Labor
+        } else if (cat === 'electricity' || cat === 'water' || cat === 'utility') {
+            drAccount = '5020'; // Utilities
+        } else if (cat === 'vaccines' || cat === 'meds' || cat === 'health') {
+            drAccount = '5030'; // Meds
+        } else if (cat === 'chicks') {
+            drAccount = '5040'; // Chicks
+        } else {
+            drAccount = '5000'; // Feed Expense
+        }
+        
+        if (payment === 'mpesa') {
+            crAccount = '1010'; // M-Pesa Till
+        } else {
+            crAccount = '1000'; // Cash
+        }
+    } else if (type === 'return') {
+        drAccount = '4000';
+        if (payment === 'mpesa') {
+            crAccount = '1010';
+        } else {
+            crAccount = '1000';
+        }
+    } else if (type === 'write_off') {
+        drAccount = '5000';
+        if (cat === 'feed') {
+            crAccount = '1310';
+        } else {
+            crAccount = '1300'; // Eggs
+        }
+    }
+
+    await runQuery(
+        'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
+        [`${tx.id}_dr`, tx.id, drAccount, 'debit', amount]
+    );
+
+    await runQuery(
+        'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
+        [`${tx.id}_cr`, tx.id, crAccount, 'credit', amount]
+    );
+}
+
+/**
  * GET /api/transactions/:batchId
  * Retrieves all ledger transactions (cost, revenue) recorded for a cohort.
  */
@@ -532,6 +627,7 @@ app.post('/api/transactions/:batchId', async (req, res) => {
         const id = tx.id || `${req.params.batchId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         tx.id = id;
         await runQuery('INSERT INTO transactions (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [id, req.params.batchId, JSON.stringify(tx)]);
+        await syncTransactionToLedger(req.params.batchId, tx, false);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -542,6 +638,7 @@ app.post('/api/transactions/:batchId', async (req, res) => {
  */
 app.delete('/api/transactions/:batchId/:id', async (req, res) => {
     try {
+        await syncTransactionToLedger(req.params.batchId, { id: req.params.id }, true);
         await runQuery('DELETE FROM transactions WHERE batch_id = ? AND id = ?', [req.params.batchId, req.params.id]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -554,9 +651,222 @@ app.delete('/api/transactions/:batchId/:id', async (req, res) => {
 app.delete('/api/transactions/:batchId', async (req, res) => {
     try {
         const id = req.params.batchId;
+        const rows = await allQuery('SELECT id FROM transactions WHERE batch_id = ?', [id]);
+        for (const row of rows) {
+            await syncTransactionToLedger(id, { id: row.id }, true);
+        }
         await runQuery('DELETE FROM transactions WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ===================== DOUBLE-ENTRY GENERAL LEDGER & M-PESA DARAJA API =====================
+
+/**
+ * GET /api/ledger/accounts
+ * Retrieves all chart accounts with their computed current balances.
+ */
+app.get('/api/ledger/accounts', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
+    try {
+        const rows = await allQuery(`
+            SELECT a.id, a.name, a.type, a.code,
+                   COALESCE(SUM(CASE WHEN e.entry_type = 'debit' THEN e.amount ELSE 0 END), 0) as total_debit,
+                   COALESCE(SUM(CASE WHEN e.entry_type = 'credit' THEN e.amount ELSE 0 END), 0) as total_credit
+            FROM ledger_accounts a
+            LEFT JOIN ledger_entries e ON a.id = e.account_id
+            GROUP BY a.id
+        `);
+        const accounts = rows.map(r => {
+            const dr = parseFloat(r.total_debit || 0);
+            const cr = parseFloat(r.total_credit || 0);
+            let balance = 0;
+            if (r.type === 'asset' || r.type === 'expense') {
+                balance = dr - cr;
+            } else {
+                balance = cr - dr;
+            }
+            return {
+                id: r.id,
+                name: r.name,
+                type: r.type,
+                code: r.code,
+                debit: dr,
+                credit: cr,
+                balance: balance
+            };
+        });
+        res.json(accounts);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * GET /api/ledger/reconciliation
+ * Retrieves unassigned suspense payments (ledger entries in Account 9999).
+ */
+app.get('/api/ledger/reconciliation', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
+    try {
+        const rows = await allQuery(`
+            SELECT t.id, t.date, t.description, t.ref_id, le.amount
+            FROM ledger_transactions t
+            JOIN ledger_entries le ON t.id = le.transaction_id
+            WHERE le.account_id = '9999' AND le.entry_type = 'credit'
+        `);
+        res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/ledger/reconcile
+ * Manually re-routes a transaction from the Suspense account (9999) to a target customer or revenue account.
+ */
+app.post('/api/ledger/reconcile', requireRole('super_admin', 'admin'), async (req, res) => {
+    try {
+        const { transactionId, targetAccountId, buyerName, batchId } = req.body;
+        if (!transactionId || !targetAccountId) {
+            return res.status(400).json({ error: 'Missing transactionId or targetAccountId' });
+        }
+
+        await runQuery(
+            "UPDATE ledger_entries SET account_id = ? WHERE transaction_id = ? AND account_id = '9999' AND entry_type = 'credit'",
+            [targetAccountId, transactionId]
+        );
+
+        if (buyerName || batchId) {
+            const row = await getQuery('SELECT data FROM transactions WHERE id = ?', [transactionId]);
+            if (row) {
+                const txData = JSON.parse(row.value || row.data || '{}');
+                if (buyerName) txData.buyerName = buyerName;
+                if (batchId) {
+                    await runQuery(
+                        'UPDATE transactions SET batch_id = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [batchId, JSON.stringify(txData), transactionId]
+                    );
+                } else {
+                    await runQuery(
+                        'UPDATE transactions SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [JSON.stringify(txData), transactionId]
+                    );
+                }
+            }
+        }
+
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /api/payments/mpesa-callback
+ * Handles Safaricom Daraja API C2B/STK push payment confirmation callbacks.
+ * Open route (no session auth check) since Safaricom calls it directly.
+ */
+app.post('/api/payments/mpesa-callback', async (req, res) => {
+    try {
+        console.log('M-Pesa Callback Payload:', JSON.stringify(req.body));
+        
+        let mpesaCode = '';
+        let amount = 0;
+        let phone = '';
+        let billRef = '';
+        
+        if (req.body.Body && req.body.Body.stkCallback) {
+            const stk = req.body.Body.stkCallback;
+            if (stk.ResultCode !== 0) {
+                console.log(`STK Push failed: ${stk.ResultDesc}`);
+                return res.json({ ResultCode: 0, ResultDesc: "Accepted" });
+            }
+            const items = stk.CallbackMetadata?.Item || [];
+            mpesaCode = items.find(i => i.Name === 'MpesaReceiptNumber')?.Value || '';
+            amount = parseFloat(items.find(i => i.Name === 'Amount')?.Value || 0);
+            phone = String(items.find(i => i.Name === 'PhoneNumber')?.Value || '');
+        } else if (req.body.TransID) {
+            mpesaCode = req.body.TransID;
+            amount = parseFloat(req.body.TransAmount || 0);
+            phone = String(req.body.MSISDN || '');
+            billRef = String(req.body.BillRefNumber || '').trim();
+        } else {
+            return res.status(400).json({ error: 'Unsupported callback payload format' });
+        }
+
+        if (!mpesaCode || amount <= 0) {
+            return res.json({ ResultCode: 0, ResultDesc: "Accepted" });
+        }
+
+        const existingTx = await getQuery('SELECT id FROM ledger_transactions WHERE ref_id = ?', [mpesaCode]);
+        if (existingTx) {
+            console.log(`M-Pesa callback: Transaction ${mpesaCode} already processed.`);
+            return res.json({ ResultCode: 0, ResultDesc: "Accepted" });
+        }
+
+        const activeBatchRow = await getQuery("SELECT id FROM batches WHERE json_extract(data, '$.status') = 'active' LIMIT 1");
+        const batchId = activeBatchRow ? activeBatchRow.id : '1779692918051';
+
+        let matchedBuyer = null;
+        if (phone) {
+            const cleanPhone = phone.replace('+', '').replace(/^254/, '0');
+            const profileEntity = await getQuery("SELECT value FROM entities WHERE key = 'poultryFarmProfile'");
+            if (profileEntity) {
+                const profile = JSON.parse(profileEntity.value) || {};
+                const buyers = profile.buyers || [];
+                matchedBuyer = buyers.find(b => {
+                    const bPhone = String(b.phone || '').replace('+', '').replace(/^254/, '0');
+                    return bPhone && bPhone === cleanPhone;
+                });
+            }
+        }
+
+        const txId = `mpesa_${Date.now()}_${mpesaCode}`;
+        const desc = `M-Pesa payment from ${phone}${matchedBuyer ? ` (${matchedBuyer.name})` : ''} - Ref: ${mpesaCode}`;
+        
+        await runQuery(
+            'INSERT INTO ledger_transactions (id, date, description, ref_type, ref_id) VALUES (?, ?, ?, ?, ?)',
+            [txId, new Date().toISOString(), desc, 'mpesa', mpesaCode]
+        );
+
+        let drAccount = '1010';
+        let crAccount = '9999';
+
+        if (matchedBuyer) {
+            crAccount = '1200';
+        }
+
+        await runQuery(
+            'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
+            [`${txId}_dr`, txId, drAccount, 'debit', amount]
+        );
+
+        await runQuery(
+            'INSERT INTO ledger_entries (id, transaction_id, account_id, entry_type, amount) VALUES (?, ?, ?, ?, ?)',
+            [`${txId}_cr`, txId, crAccount, 'credit', amount]
+        );
+
+        await runQuery(
+            'INSERT INTO transactions (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+            [
+                txId,
+                batchId,
+                JSON.stringify({
+                    id: txId,
+                    date: new Date().toISOString(),
+                    type: 'sale',
+                    category: 'eggs',
+                    amount: amount,
+                    qty: 0,
+                    buyerName: matchedBuyer ? matchedBuyer.name : 'M-Pesa Unmatched',
+                    buyerTerms: 'COD',
+                    payment_method: 'mpesa',
+                    notes: `M-Pesa Ref: ${mpesaCode}. Phone: ${phone}`
+                })
+            ]
+        );
+
+        console.log(`M-Pesa transaction ${mpesaCode} processed successfully. Match: ${matchedBuyer ? matchedBuyer.name : 'None (Suspense)'}`);
+        res.json({ ResultCode: 0, ResultDesc: "Accepted" });
+
+    } catch (e) {
+        console.error('M-Pesa callback processing error:', e.message);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 

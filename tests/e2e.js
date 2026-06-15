@@ -194,16 +194,20 @@ async function handleAuth(page) {
     await sleep(600);
 
     // Verify ISA Brown Layers batch card is visible
-    await page.waitForSelector('text=Batch 001 — ISA Brown Layers', { timeout: TIMEOUT });
+    await page.waitForSelector('.batch-card:has-text("Batch 001 — ISA Brown Layers")', { timeout: TIMEOUT });
     
     // Click on the ISA Brown Layers batch to open its cockpit
-    await page.click('text=Batch 001 — ISA Brown Layers');
+    await page.click('.batch-card:has-text("Batch 001 — ISA Brown Layers")');
     await sleep(600);
 
     // Verify we are in the cockpit for ISA Brown
     await page.waitForSelector('#view-batch-cockpit', { timeout: TIMEOUT });
     const cockpitTitle = await page.$eval('.cockpit-header h2', el => el.innerText);
     assert(cockpitTitle.includes('ISA Brown'), `Cockpit open for ISA Brown: "${cockpitTitle}"`);
+
+    // Verify separate Cash and Credit chips are visible
+    assert(await page.isVisible('#info-cash'), 'info-cash visible in cockpit (ISA Brown)');
+    assert(await page.isVisible('#info-credit'), 'info-credit visible in cockpit (ISA Brown)');
 
     // Verify derived active birds counts are visible
     const birdsAliveText = await page.$eval('#info-birds', el => el.innerText);
@@ -212,7 +216,7 @@ async function handleAuth(page) {
     // Go back to the Kenchic batch cockpit to resume the rest of the E2E flow
     await page.click('#nav-batches');
     await sleep(600);
-    await page.click('text=Batch: 100-Bird Kenchic Layer Farm');
+    await page.click('.batch-card:has-text("100-Bird Kenchic Layer Farm")');
     await page.waitForSelector('#view-batch-cockpit', { timeout: TIMEOUT });
     await sleep(600);
     console.log();
