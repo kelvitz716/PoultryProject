@@ -1424,13 +1424,21 @@ async function _initApp() {
                             <input type="number" id="log-mortality" value="0" min="0" class="input-md" style="color:var(--danger); font-weight:bold;" onfocus="this.select()">
                             <input type="hidden" id="log-birds" value="${hens}">
                         </div>
-                        <div class="log-field">
-                            <label>NH₃ Morning Peak (ppm – pre-ventilation)</label>
-                            <input type="number" id="log-nh3" placeholder="Optional" class="input-md" onfocus="this.select()">
-                        </div>
-                        <div class="log-field">
-                            <label>CO₂ Morning Peak (ppm – pre-ventilation)</label>
-                            <input type="number" id="log-co2" placeholder="Optional" class="input-md" onfocus="this.select()">
+                        <div class="log-field" style="grid-column: 1 / -1; margin-top: 4px; border-top: 1px dashed var(--border-color); padding-top: 8px;">
+                            <div id="toggle-advanced-air" onclick="const f = document.getElementById('advanced-air-fields'); const c = document.getElementById('advanced-air-chevron'); const isCollapsed = f.style.display === 'none'; f.style.display = isCollapsed ? 'grid' : 'none'; c.style.transform = isCollapsed ? 'rotate(90deg)' : 'rotate(0deg)';" style="cursor:pointer; display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--primary); user-select:none;">
+                                <span id="advanced-air-chevron" style="display:inline-flex; align-items:center; justify-content:center; transition: transform 0.2s;"><i data-lucide="chevron-right" style="width:14px; height:14px;"></i></span>
+                                Advanced Air Quality (NH₃, CO₂)
+                            </div>
+                            <div id="advanced-air-fields" style="display:none; margin-top:12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px;">
+                                <div class="log-field" style="margin:0;">
+                                    <label>NH₃ Morning Peak (ppm – pre-ventilation)</label>
+                                    <input type="number" id="log-nh3" placeholder="Optional" class="input-md" onfocus="this.select()">
+                                </div>
+                                <div class="log-field" style="margin:0;">
+                                    <label>CO₂ Morning Peak (ppm – pre-ventilation)</label>
+                                    <input type="number" id="log-co2" placeholder="Optional" class="input-md" onfocus="this.select()">
+                                </div>
+                            </div>
                         </div>
                         <div class="log-field">
                             <label>Temp (°C) <span id="sensor-badge-temp" style="font-size:10px; color:var(--primary); cursor:pointer; margin-left:4px; font-weight:normal; border-bottom:1px dashed var(--primary); display:none;"></span></label>
@@ -1452,6 +1460,9 @@ async function _initApp() {
                         <button class="btn btn-primary btn-save-log" onclick="window.submitDailyLog(event)" style="width: 100%; justify-content: center; display: flex; align-items: center; gap: 8px;">
                             <i data-lucide="save"></i> Save Log
                         </button>
+                        <div id="save-log-staged-feedback" style="display:none; font-size:12px; color:var(--accent); font-weight:600; text-align:center; margin-top:4px;">
+                            📋 Staged — commits at midnight
+                        </div>
                     </div>
                 </div>
 
@@ -2035,6 +2046,19 @@ async function _initApp() {
             _renderEggCollectionList();
         }
         _renderTodayStagedNonEggsList(stagingToday);
+
+        const hasStagedEvents = stagingToday && (
+            (stagingToday.eggs && stagingToday.eggs.collections && stagingToday.eggs.collections.length > 0) ||
+            (stagingToday.feed && stagingToday.feed.events && stagingToday.feed.events.length > 0) ||
+            (stagingToday.mortality && stagingToday.mortality.events && stagingToday.mortality.events.length > 0) ||
+            (stagingToday.gases && stagingToday.gases.length > 0) ||
+            (stagingToday.notes && stagingToday.notes.length > 0) ||
+            (stagingToday.health && stagingToday.health.length > 0)
+        );
+        const feedbackEl = document.getElementById('save-log-staged-feedback');
+        if (feedbackEl) {
+            feedbackEl.style.display = hasStagedEvents ? 'block' : 'none';
+        }
         
         // Update KPIs
         if($('kpi-layrate')) $('kpi-layrate').innerText = (kpis.todayLayRate * 100).toFixed(1) + '%';
@@ -2302,7 +2326,8 @@ async function _initApp() {
             // Clickable badge next to label
             const badgeTemp = $('sensor-badge-temp');
             if (badgeTemp) {
-                badgeTemp.innerText = `[Sensor: ${res.temperature.toFixed(1)}°C]`;
+                badgeTemp.innerHTML = `[Sensor: ${res.temperature.toFixed(1)}°C ▼]`;
+                badgeTemp.title = "Click to fill this value";
                 badgeTemp.style.display = 'inline';
                 badgeTemp.onclick = () => {
                     const tempInput = $('log-temp');
@@ -2323,7 +2348,8 @@ async function _initApp() {
             // Clickable badge next to label
             const badgeHum = $('sensor-badge-hum');
             if (badgeHum) {
-                badgeHum.innerText = `[Sensor: ${res.humidity.toFixed(0)}%]`;
+                badgeHum.innerHTML = `[Sensor: ${res.humidity.toFixed(0)}% ▼]`;
+                badgeHum.title = "Click to fill this value";
                 badgeHum.style.display = 'inline';
                 badgeHum.onclick = () => {
                     const humInput = $('log-humidity');
