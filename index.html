@@ -687,36 +687,34 @@
                             <!-- Populated by _renderUserManagementPanel() in app.js -->
                         </div>
                     </div>
+                    <!-- Buyer Registry card (kept in same layout region) -->
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <h3>Buyer Registry (CRM)</h3>
+                        </div>
+                        <div class="card-body" style="padding: 24px;">
+                            <div id="buyers-list" style="margin-bottom: 16px;"></div>
+                            <form id="add-buyer-form" style="display: flex; gap: 12px; align-items: flex-end;">
+                                <div class="input-group" style="flex: 2;">
+                                    <label>Buyer Name</label>
+                                    <input type="text" id="buyer-name" required placeholder="e.g. Banoli Farm">
+                                </div>
+                                <div class="input-group" style="flex: 1;">
+                                    <label>Payment Terms</label>
+                                    <select id="buyer-terms" required>
+                                        <option value="COD">Cash on Delivery</option>
+                                        <option value="Net 7">Net 7</option>
+                                        <option value="Net 14">Net 14</option>
+                                        <option value="Net 30">Net 30</option>
+                                    </select>
+                                </div>
+                                <button type="submit" class="btn btn-secondary">Add Buyer</button>
+                            </form>
+                        </div>
+                    </div>
 
                 </div>
             </section>
-            <!-- Buyer Registry card (kept in same layout region) -->
-            <div style="max-width:800px;margin:0 auto;padding:0 0 24px;">
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Buyer Registry (CRM)</h3>
-                    </div>
-                    <div class="card-body" style="padding: 24px;">
-                        <div id="buyers-list" style="margin-bottom: 16px;"></div>
-                        <form id="add-buyer-form" style="display: flex; gap: 12px; align-items: flex-end;">
-                            <div class="input-group" style="flex: 2;">
-                                <label>Buyer Name</label>
-                                <input type="text" id="buyer-name" required placeholder="e.g. Banoli Farm">
-                            </div>
-                            <div class="input-group" style="flex: 1;">
-                                <label>Payment Terms</label>
-                                <select id="buyer-terms" required>
-                                    <option value="COD">Cash on Delivery</option>
-                                    <option value="Net 7">Net 7</option>
-                                    <option value="Net 14">Net 14</option>
-                                    <option value="Net 30">Net 30</option>
-                                </select>
-                            </div>
-                            <button type="submit" class="btn btn-secondary">Add Buyer</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
             <div id="modal-start-batch" class="state-container" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; padding: 20px;">
                 <div class="card" style="width: 100%; max-width: 500px; max-height: 80vh; overflow-y: auto;">
                     <div class="card-header">
