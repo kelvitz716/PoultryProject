@@ -11,7 +11,7 @@ import {
     ISA_BROWN_CONSTANTS, KITALE_CLIMATE_BASELINE, KENCHIC_SCHEDULE,
     DRUG_WITHDRAWAL_TABLE, getKitaleSeason, FEED_SCHEDULE,
     VACCINATION_SCHEDULE, KB_CONTENT, DEFAULT_FARM_PROFILE,
-    sackBackfill, parseEggTrackerCSV, computeKPIs, computeEggInventoryAging
+    sackBackfill, parseEggTrackerCSV, computeKPIs, computeEggInventoryAging, computeTHI, getHeatStressStatus
 } from './engine.js';
 import { $, showToast, showConfirmModal, updateGlobalNotifications } from './ui.js';
 
@@ -1832,11 +1832,14 @@ async function _initApp() {
 
     window.refreshCockpitData = async function(batch) {
         if (!batch) return;
-        const logs = await api.getLogs(batch.id);
-        const txs = await api.getTransactions(batch.id);
-        const healthLogs = await api.getHealthLogs(batch.id);
+        const [logs, txs, healthLogs, stagingToday] = await Promise.all([
+            api.getLogs(batch.id),
+            api.getTransactions(batch.id),
+            api.getHealthLogs(batch.id),
+            api.getTodayStaging(batch.id).catch(() => null)
+        ]);
         
-        const kpis = computeKPIs(logs, batch, farmProfile);
+        const kpis = computeKPIs(logs, batch, farmProfile, stagingToday);
         
         // Update KPIs
         if($('kpi-layrate')) $('kpi-layrate').innerText = (kpis.todayLayRate * 100).toFixed(1) + '%';
@@ -2114,6 +2117,16 @@ async function _initApp() {
             if (chipHum) chipHum.innerText = res.humidity.toFixed(0) + '%';
         } else {
             $('info-sensor-hum').innerText = '—% RH';
+        }
+        
+        // Live THI badge
+        if (res.temperature != null && res.humidity != null) {
+            const thi = computeTHI(res.temperature, res.humidity);
+            const status = getHeatStressStatus(thi);
+            const thiEl = $('info-sensor-thi');
+            if (thiEl) {
+                thiEl.innerHTML = `<span style="color:${status.color};font-weight:600;" title="THI: ${thi.toFixed(1)}">${status.emoji} ${status.label}</span>`;
+            }
         }
         
         if (res.battery !== null) {
@@ -3767,15 +3780,73 @@ async function _initApp() {
         if ($('set-sensor-offline-mins')) $('set-sensor-offline-mins').value = p.sensorOfflineMinutes || 30;
         if ($('set-telegram-chat-id'))   $('set-telegram-chat-id').value   = p.telegramChatId || '';
 
+        // Account & Security panel
+        if ($('settings-username-display')) {
+            $('settings-username-display').textContent = window.CURRENT_USER?.username || '—';
+        }
+        if ($('settings-role-display')) {
+            $('settings-role-display').textContent = window.USER_ROLE || '—';
+        }
+
+        // Logout button
+        $('btn-logout')?.addEventListener('click', async () => {
+            if (!confirm('Sign out?')) return;
+            await api.logout();
+            window.location.reload();
+        });
+
+        // Change own password
+        $('btn-change-own-password')?.addEventListener('click', () => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay active';
+            overlay.innerHTML = `
+                <div class="modal-content card" style="max-width:360px;padding:24px;position:relative;">
+                    <button type="button" class="btn btn-secondary btn-sm" style="position:absolute;top:12px;right:12px;" onclick="this.closest('.modal-overlay').remove()">
+                        <i data-lucide="x" style="width:14px;height:14px;"></i>
+                    </button>
+                    <h3 style="margin:0 0 16px;">Change Password</h3>
+                    <div style="display:flex;flex-direction:column;gap:12px;">
+                        <div class="input-group">
+                            <label>Current Password</label>
+                            <input type="password" id="pw-current" class="input-md">
+                        </div>
+                        <div class="input-group">
+                            <label>New Password</label>
+                            <input type="password" id="pw-new" class="input-md" placeholder="≥ 8 characters">
+                        </div>
+                        <div class="input-group">
+                            <label>Confirm New Password</label>
+                            <input type="password" id="pw-confirm" class="input-md">
+                        </div>
+                        <p id="pw-error" style="color:var(--danger);font-size:0.82rem;display:none;"></p>
+                        <button id="pw-submit" class="btn btn-primary">Update Password</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            lucide.createIcons();
+            document.getElementById('pw-submit').onclick = async () => {
+                const cur = document.getElementById('pw-current').value;
+                const nw  = document.getElementById('pw-new').value;
+                const cnf = document.getElementById('pw-confirm').value;
+                const err = document.getElementById('pw-error');
+                if (nw.length < 8) { err.textContent = 'New password must be ≥ 8 characters.'; err.style.display = 'block'; return; }
+                if (nw !== cnf) { err.textContent = 'Passwords do not match.'; err.style.display = 'block'; return; }
+                const res = await api.changePassword(cur, nw);
+                if (res.success) { overlay.remove(); window.showToast('Password updated.', 'success'); }
+                else { err.textContent = res.error || 'Failed.'; err.style.display = 'block'; }
+            };
+        });
+
         renderBuyersList();
 
         // User Management panel (admin+ only)
-        const umContainer = $('user-management-panel');
-        if (umContainer && ['admin','super_admin'].includes(window.USER_ROLE)) {
-            umContainer.style.display = 'block';
-            _renderUserManagementPanel(umContainer);
-        } else if (umContainer) {
-            umContainer.style.display = 'none';
+        const umContainer = $('user-management-panel')?.querySelector('.card-body') || $('user-management-panel');
+        const outerPanel  = $('user-management-panel');
+        if (outerPanel && ['admin','super_admin'].includes(window.USER_ROLE)) {
+            outerPanel.style.display = 'block';
+            if (umContainer) _renderUserManagementPanel(umContainer);
+        } else if (outerPanel) {
+            outerPanel.style.display = 'none';
         }
     }
 

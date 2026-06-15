@@ -643,32 +643,80 @@
                         </div>
                     </div>
 
+                    <!-- Sensor Alert & Telegram -->
                     <div class="card" style="margin-top: 24px;">
                         <div class="card-header">
-                            <h3>Buyer Registry (CRM)</h3>
+                            <h3><i data-lucide="bell-ring" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;"></i>Sensor Alerts &amp; Telegram</h3>
                         </div>
                         <div class="card-body" style="padding: 24px;">
-                            <div id="buyers-list" style="margin-bottom: 16px;"></div>
-                            <form id="add-buyer-form" style="display: flex; gap: 12px; align-items: flex-end;">
-                                <div class="input-group" style="flex: 2;">
-                                    <label>Buyer Name</label>
-                                    <input type="text" id="buyer-name" required placeholder="e.g. Banoli Farm">
+                            <p style="font-size:0.85rem;opacity:0.6;margin:0 0 16px;">Alerts fire via Telegram Bot when the sensor goes silent for longer than the threshold.</p>
+                            <div class="input-grid">
+                                <div class="input-group">
+                                    <label>Sensor Offline Threshold (minutes)</label>
+                                    <input type="number" id="set-sensor-offline-mins" value="30" min="5" max="240">
                                 </div>
-                                <div class="input-group" style="flex: 1;">
-                                    <label>Payment Terms</label>
-                                    <select id="buyer-terms" required>
-                                        <option value="COD">Cash on Delivery</option>
-                                        <option value="Net 7">Net 7</option>
-                                        <option value="Net 14">Net 14</option>
-                                        <option value="Net 30">Net 30</option>
-                                    </select>
+                                <div class="input-group">
+                                    <label>Telegram Chat ID</label>
+                                    <input type="text" id="set-telegram-chat-id" placeholder="e.g. -1001234567890">
                                 </div>
-                                <button type="submit" class="btn btn-secondary">Add Buyer</button>
-                            </form>
+                            </div>
+                            <p style="font-size:0.78rem;opacity:0.45;margin:10px 0 0;">Set TELEGRAM_BOT_TOKEN in your server environment. Chat ID is the group or personal chat to receive alerts.</p>
                         </div>
                     </div>
+
+                    <!-- Account & Security -->
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <h3><i data-lucide="lock" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;"></i>Account &amp; Security</h3>
+                        </div>
+                        <div class="card-body" style="padding: 24px;">
+                            <p style="font-size:0.85rem;opacity:0.6;margin:0 0 16px;">Signed in as <strong id="settings-username-display">—</strong> (<span id="settings-role-display">—</span>)</p>
+                            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                                <button class="btn btn-secondary" id="btn-change-own-password">Change My Password</button>
+                                <button class="btn btn-secondary" id="btn-logout" style="color:var(--danger);border-color:var(--danger);"><i data-lucide="log-out" style="width:14px;height:14px;"></i> Sign Out</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- User Management (admin+ only — rendered by app.js) -->
+                    <div class="card" id="user-management-panel" style="margin-top: 24px; display:none;">
+                        <div class="card-header">
+                            <h3><i data-lucide="users" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;"></i>User Management</h3>
+                        </div>
+                        <div class="card-body" style="padding: 24px;">
+                            <!-- Populated by _renderUserManagementPanel() in app.js -->
+                        </div>
+                    </div>
+
                 </div>
             </section>
+            <!-- Buyer Registry card (kept in same layout region) -->
+            <div style="max-width:800px;margin:0 auto;padding:0 0 24px;">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Buyer Registry (CRM)</h3>
+                    </div>
+                    <div class="card-body" style="padding: 24px;">
+                        <div id="buyers-list" style="margin-bottom: 16px;"></div>
+                        <form id="add-buyer-form" style="display: flex; gap: 12px; align-items: flex-end;">
+                            <div class="input-group" style="flex: 2;">
+                                <label>Buyer Name</label>
+                                <input type="text" id="buyer-name" required placeholder="e.g. Banoli Farm">
+                            </div>
+                            <div class="input-group" style="flex: 1;">
+                                <label>Payment Terms</label>
+                                <select id="buyer-terms" required>
+                                    <option value="COD">Cash on Delivery</option>
+                                    <option value="Net 7">Net 7</option>
+                                    <option value="Net 14">Net 14</option>
+                                    <option value="Net 30">Net 30</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-secondary">Add Buyer</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
             <div id="modal-start-batch" class="state-container" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; padding: 20px;">
                 <div class="card" style="width: 100%; max-width: 500px; max-height: 80vh; overflow-y: auto;">
                     <div class="card-header">
