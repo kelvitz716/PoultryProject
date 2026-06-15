@@ -1406,7 +1406,10 @@ async function _initApp() {
                                 </div>
                             </div>
                             <div id="egg-collection-list" style="display:flex;flex-direction:column;gap:6px;min-height:32px;">
-                                <p id="egg-empty-hint" style="opacity:0.45;font-size:0.82rem;margin:0;font-style:italic;">No collections yet — tap Add Collection to log your first round.</p>
+                                <div id="egg-empty-hint" style="opacity:0.45;font-size:0.82rem;margin:0;font-style:italic;">
+                                    No collections yet — tap Add Collection to log your first round.
+                                    <span style="display:block; margin-top:4px; font-size:11px; color:var(--primary); font-weight:500; font-style:normal;">Logging for a past date? Change the date above ↑</span>
+                                </div>
                             </div>
                         </div>
 
@@ -1419,7 +1422,7 @@ async function _initApp() {
                             <label>Feed Given (kg) <span style="font-size:10px;color:var(--text-muted);font-weight:400;" id="feed-kg-hint">— or enter sacks above</span></label>
                             <input type="number" id="log-feed" step="0.1" placeholder="Leave blank if entering sacks" class="input-md" onfocus="this.select()" oninput="window._onFeedKgInput(this)">
                         </div>
-                        <div class="log-field" style="grid-column: 1 / -1;">
+                        <div class="log-field">
                             <label>Deaths Today</label>
                             <input type="number" id="log-mortality" value="0" min="0" class="input-md" style="color:var(--danger); font-weight:bold;" onfocus="this.select()">
                             <input type="hidden" id="log-birds" value="${hens}">
@@ -1713,7 +1716,7 @@ async function _initApp() {
             }
         }
         if (_eggCollections.length === 0) {
-            list.innerHTML = '<p id="egg-empty-hint" style="opacity:0.45;font-size:0.82rem;margin:0;font-style:italic;">No collections yet — tap Add Collection to log your first round.</p>';
+            list.innerHTML = '<div id="egg-empty-hint" style="opacity:0.45;font-size:0.82rem;margin:0;font-style:italic;">No collections yet — tap Add Collection to log your first round.<span style="display:block; margin-top:4px; font-size:11px; color:var(--primary); font-weight:500; font-style:normal;">Logging for a past date? Change the date above ↑</span></div>';
             return;
         }
         list.innerHTML = _eggCollections.map((ev, idx) => {
@@ -1723,7 +1726,7 @@ async function _initApp() {
             <div class="egg-collection-row" style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border-radius:8px;padding:8px 12px;">
                 <span style="font-size:1.1rem;font-weight:700;min-width:54px;display:inline-flex;align-items:center;">${parseInt(ev.count)||0} 🥚${brokenStr}</span>
                 <span style="opacity:0.55;font-size:0.82rem;min-width:42px;">${ev.time || '—'}</span>
-                <span style="flex:1;opacity:0.7;font-size:0.82rem;font-style:italic;">${ev.label || ''}</span>
+                <span style="flex:1;display:flex;align-items:center;gap:4px;">${ev.label ? `<span class="pill" style="font-size:10px; font-weight:600; padding:2px 8px; border-radius:12px; background:var(--primary-soft); color:var(--primary); text-transform:capitalize; border:1px solid rgba(99,102,241,0.15); line-height:1; display:inline-block; font-style:normal;">${ev.label}</span>` : ''}</span>
                 <button type="button" onclick="window.editEggCollection(${idx})" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:0.75rem;">Edit</button>
                 <button type="button" onclick="window.deleteEggCollection(${idx})" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:0.75rem;color:var(--danger);">✕</button>
             </div>`;
