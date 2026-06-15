@@ -154,15 +154,15 @@
 
 ## Local-First Resiliency & System Enhancements
 
-- `[ ]` **Phone sync bug** — Fix issue where local cache doesn't push to server on refresh (likely service worker `.waitUntil()` or background sync not completing properly).
+- `[x]` **Phone sync bug** — Fix issue where local cache doesn't push to server on refresh (resolved via timezone-locked clientDate queries, idempotency keys, and manual client-side replayOfflineQueue fallback).
 - `[ ]` **Medicine logging enhancements**:
   - `[ ]` Add type labels (dewormer, vaccine, treatment) to logs.
   - `[ ]` Add per-medicine egg/meat withdrawal period fields (stored as days).
   - `[ ]` Auto-calculate withdrawal end dates (today + withdrawal_period).
   - `[ ]` Add dashboard flag for active withdrawals (visual alerts).
-- `[ ]` **Guest read-only access** — Implement role checks with limited UI (view-only dashboards, disable write forms).
+- `[x]` **Guest read-only access** — Implement role checks with limited UI (enforced via requireAuth and requireRole middleware on REST API level, supporting token-authenticated viewer roles).
 - `[ ]` **Multi-user support** — Add a `users` schema table and session middleware to scope database queries by `user_id`.
 - `[ ]` **Same-day log behavior resolution**:
   - `[ ]` Egg collections: accumulate (sum multiple entries).
   - `[ ]` Point-in-time metrics (feed weight, temp, humidity): overwrite (one value per day).
-- `[ ]` **Sensor offline alert via StoryFlow** — Track last sync timestamp, and dispatch Telegram alert if it exceeds a configurable threshold (e.g., 4 hours).
+- `[x]` **Sensor offline alert via StoryFlow** — Track last sync timestamp, and dispatch Telegram alert if it exceeds a configurable threshold (e.g., 4 hours).
