@@ -1411,13 +1411,13 @@ async function _initApp() {
                         </div>
 
                         <div class="log-field">
-                            <label>Sacks Finished Today</label>
-                            <input type="number" id="log-sacks" value="0" min="0" class="input-md" onfocus="this.select()">
-                            <span class="field-hint">0 if none. Each sack = ${farmProfile.sackWeightKg}kg</span>
+                            <label>Sacks Opened Today <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(full bags consumed)</span></label>
+                            <input type="number" id="log-sacks" value="0" min="0" class="input-md" onfocus="this.select()" oninput="window._onSacksInput(this)">
+                            <span class="field-hint">Each sack = ${farmProfile.sackWeightKg}kg. Entering sacks locks the kg field.</span>
                         </div>
                         <div class="log-field">
-                            <label>Feed Given (kg – optional)</label>
-                            <input type="number" id="log-feed" step="0.1" placeholder="Leave blank if using sacks" class="input-md" onfocus="this.select()">
+                            <label>Feed Given (kg) <span style="font-size:10px;color:var(--text-muted);font-weight:400;" id="feed-kg-hint">— or enter sacks above</span></label>
+                            <input type="number" id="log-feed" step="0.1" placeholder="Leave blank if entering sacks" class="input-md" onfocus="this.select()" oninput="window._onFeedKgInput(this)">
                         </div>
                         <div class="log-field" style="grid-column: 1 / -1;">
                             <label>Deaths Today</label>
@@ -1691,12 +1691,15 @@ async function _initApp() {
         if (!list) return;
         const total = _eggCollections.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
         const totalBroken = _eggCollections.reduce((s, e) => s + (parseInt(e.broken) || 0), 0);
+        const saleEggs = total - totalBroken;
         if (totalEl) {
-            let txt = `${total.toLocaleString()} eggs`;
-            if (totalBroken > 0) {
-                txt += ` (${totalBroken} broken)`;
+            if (total === 0) {
+                totalEl.innerHTML = `<span style="color:var(--text-muted);font-size:1rem;font-weight:400;">0 eggs</span>`;
+            } else if (totalBroken > 0) {
+                totalEl.innerHTML = `${saleEggs.toLocaleString()} eggs <span style="color:var(--danger);font-size:0.8rem;font-weight:600;">+ ${totalBroken} broken</span><span style="display:block;font-size:0.7rem;color:var(--text-muted);font-weight:400;margin-top:2px;">Broken excluded from sales</span>`;
+            } else {
+                totalEl.innerHTML = `${total.toLocaleString()} eggs`;
             }
-            totalEl.textContent = txt;
         }
         if (_eggCollections.length === 0) {
             list.innerHTML = '<p id="egg-empty-hint" style="opacity:0.45;font-size:0.82rem;margin:0;font-style:italic;">No collections yet — tap Add Collection to log your first round.</p>';
@@ -1900,6 +1903,21 @@ async function _initApp() {
 
         if (!date) { window.showToast('Please select a date.', 'warning'); return; }
 
+        // ── Mortality sanity gate ─────────────────────────────────────────
+        if (mortality > 0) {
+            const currentBirds = parseInt($('log-birds')?.value) || batch.size || 1;
+            const mortalityPct = (mortality / currentBirds) * 100;
+            if (mortalityPct > 10) {
+                const pctStr = mortalityPct.toFixed(0);
+                const confirmed = confirm(
+                    `⚠️ High Mortality Warning\n\nYou are recording ${mortality} death${mortality > 1 ? 's' : ''} — ` +
+                    `that is ${pctStr}% of your flock (${currentBirds} birds).\n\n` +
+                    `Is this correct?`
+                );
+                if (!confirmed) return;
+            }
+        }
+
         const promises = [];
 
         // Stage egg collections (today's are already staged individually via addEggCollection)
@@ -1964,7 +1982,35 @@ async function _initApp() {
         window.showToast(isBackfill ? `Backfill for ${date} submitted.` : 'Log saved!', 'success');
     };
 
+    // ── Sacks ↔ Feed-kg mutual exclusivity ─────────────────────────────────────
+    window._onSacksInput = function(el) {
+        const sacks = parseInt(el.value) || 0;
+        const feedEl = document.getElementById('log-feed');
+        const hint = document.getElementById('feed-kg-hint');
+        if (sacks > 0) {
+            if (feedEl) { feedEl.value = ''; feedEl.disabled = true; feedEl.style.opacity = '0.4'; feedEl.placeholder = 'Locked — using sacks'; }
+            if (hint) { hint.textContent = '🔒 Locked (sacks mode)'; hint.style.color = 'var(--accent)'; }
+        } else {
+            if (feedEl) { feedEl.disabled = false; feedEl.style.opacity = '1'; feedEl.placeholder = 'Leave blank if entering sacks'; }
+            if (hint) { hint.textContent = '— or enter sacks above'; hint.style.color = ''; }
+        }
+    };
+
+    window._onFeedKgInput = function(el) {
+        const kg = parseFloat(el.value) || 0;
+        const sacksEl = document.getElementById('log-sacks');
+        const hint = document.getElementById('feed-kg-hint');
+        if (kg > 0) {
+            if (sacksEl) { sacksEl.value = '0'; sacksEl.disabled = true; sacksEl.style.opacity = '0.4'; }
+            if (hint) { hint.textContent = '🔒 Locked (kg mode)'; hint.style.color = 'var(--accent)'; }
+        } else {
+            if (sacksEl) { sacksEl.disabled = false; sacksEl.style.opacity = '1'; }
+            if (hint) { hint.textContent = '— or enter sacks above'; hint.style.color = ''; }
+        }
+    };
+
     window.refreshCockpitData = async function(batch) {
+
         if (!batch) return;
         const [logs, txs, healthLogs, stagingToday] = await Promise.all([
             api.getLogs(batch.id),
