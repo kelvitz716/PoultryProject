@@ -676,6 +676,50 @@
                         </div>
                     </div>
 
+                    <!-- M-Pesa Daraja Integration -->
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <h3><i data-lucide="wallet" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;"></i>M-Pesa Daraja API Integration</h3>
+                        </div>
+                        <div class="card-body" style="padding: 24px;">
+                            <p style="font-size:0.85rem;opacity:0.6;margin:0 0 16px;">Configure your Safaricom Daraja API C2B/STK push credentials for automated customer payment updates.</p>
+                            <div class="input-grid">
+                                <div class="input-group">
+                                    <label>M-Pesa Shortcode</label>
+                                    <div style="display: flex; gap: 6px;">
+                                        <input type="password" id="set-mpesa-shortcode" placeholder="e.g. 174379" style="flex: 1;">
+                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-mpesa-shortcode'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>M-Pesa Passkey</label>
+                                    <div style="display: flex; gap: 6px;">
+                                        <input type="password" id="set-mpesa-passkey" placeholder="e.g. bfb279f9aa9e92106..." style="flex: 1;">
+                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-mpesa-passkey'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="input-grid" style="margin-top: 12px;">
+                                <div class="input-group">
+                                    <label>Consumer Key</label>
+                                    <div style="display: flex; gap: 6px;">
+                                        <input type="password" id="set-mpesa-consumer-key" placeholder="e.g. gA8...xyz" style="flex: 1;">
+                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-mpesa-consumer-key'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label>Consumer Secret</label>
+                                    <div style="display: flex; gap: 6px;">
+                                        <input type="password" id="set-mpesa-consumer-secret" placeholder="e.g. 7hY...abc" style="flex: 1;">
+                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-mpesa-consumer-secret'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                            <p style="font-size:0.78rem;opacity:0.45;margin:10px 0 0;">Enter your Safaricom Daraja credentials. Keys, Passkey and Shortcode are masked and stored securely.</p>
+                        </div>
+                    </div>
+
+
                     <!-- Account & Security -->
                     <div class="card" style="margin-top: 24px;">
                         <div class="card-header">
@@ -706,12 +750,16 @@
                         </div>
                         <div class="card-body" style="padding: 24px;">
                             <div id="buyers-list" style="margin-bottom: 16px;"></div>
-                            <form id="add-buyer-form" style="display: flex; gap: 12px; align-items: flex-end;">
-                                <div class="input-group" style="flex: 2;">
+                            <form id="add-buyer-form" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+                                <div class="input-group" style="flex: 2; min-width: 150px;">
                                     <label>Buyer Name</label>
                                     <input type="text" id="buyer-name" required placeholder="e.g. Banoli Farm">
                                 </div>
-                                <div class="input-group" style="flex: 1;">
+                                <div class="input-group" style="flex: 1.5; min-width: 120px;">
+                                    <label>Phone Number</label>
+                                    <input type="text" id="buyer-phone" placeholder="e.g. 0712345678">
+                                </div>
+                                <div class="input-group" style="flex: 1; min-width: 100px;">
                                     <label>Payment Terms</label>
                                     <select id="buyer-terms" required>
                                         <option value="COD">Cash on Delivery</option>
@@ -720,10 +768,24 @@
                                         <option value="Net 30">Net 30</option>
                                     </select>
                                 </div>
-                                <button type="submit" class="btn btn-secondary">Add Buyer</button>
+                                <button type="submit" class="btn btn-secondary" style="height: 38px;">Add Buyer</button>
                             </form>
                         </div>
                     </div>
+
+                    <!-- Pending Reconciliation Console Card -->
+                    <div class="card" id="reconciliation-console-card" style="margin-top: 24px; display: none;">
+                        <div class="card-header">
+                            <h3><i data-lucide="scale" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;"></i>Pending M-Pesa Reconciliation</h3>
+                        </div>
+                        <div class="card-body" style="padding: 24px;">
+                            <p style="font-size:0.85rem;opacity:0.6;margin:0 0 16px;">These are M-Pesa payments that were not automatically matched to a buyer. Assign them to the correct buyer to reconcile their outstanding credit.</p>
+                            <div id="reconciliation-list" style="display: flex; flex-direction: column; gap: 12px;">
+                                <!-- Populated dynamically by app.js -->
+                            </div>
+                        </div>
+                    </div>
+
 
                 </div>
             </section>

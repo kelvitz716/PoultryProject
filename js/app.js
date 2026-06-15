@@ -1085,15 +1085,47 @@ async function _initApp() {
         const batches = window.getBatches();
         const list = $('batches-list');
         
+        let bannerHtml = '';
+        const completedBatches = batches.filter(b => b.status === 'completed');
+        let latestCloseDate = null;
+        for (const b of completedBatches) {
+            if (b.closeDate) {
+                const d = new Date(b.closeDate);
+                if (!latestCloseDate || d > latestCloseDate) {
+                    latestCloseDate = d;
+                }
+            }
+        }
+        if (latestCloseDate) {
+            const diffMs = Date.now() - latestCloseDate.getTime();
+            const diffDays = diffMs / 86400000;
+            if (diffDays < 14) {
+                const remainingDays = Math.ceil(14 - diffDays);
+                const safeDate = new Date(latestCloseDate.getTime() + 14 * 86400000).toLocaleDateString();
+                bannerHtml = `
+                <div style="grid-column: 1 / -1; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; background: rgba(245, 158, 11, 0.1); border: 1px solid var(--accent); padding: 12px 16px; border-radius: 8px; color: var(--accent); font-size: 13px; line-height: 1.5; width: 100%; box-sizing: border-box;">
+                    <i data-lucide="shield-alert" style="width: 18px; height: 18px; flex-shrink: 0; color: var(--accent);"></i>
+                    <div>
+                        <strong>Sanitization Downtime:</strong> ${remainingDays} day(s) remaining of the mandatory 14-day biosecurity cycle. 
+                        Safe to start your next cohort on <strong>${safeDate}</strong>.
+                    </div>
+                </div>`;
+            }
+        }
+
         if (batches.length === 0) {
-            list.innerHTML = `<div class="empty-state"><i data-lucide="clipboard-list"></i><p>No active batches. Start one from an analysis report.</p></div>`;
+            list.innerHTML = bannerHtml + `<div class="empty-state"><i data-lucide="clipboard-list"></i><p>No active batches. Start one from an analysis report.</p></div>`;
             lucide.createIcons();
             return;
         }
 
         const cardsHtml = await Promise.all(batches.map(async b => {
-            const logs = await api.getLogs(b.id);
-            const hasEggs = logs.some(l => (parseInt(l.eggs) || 0) > 0);
+            const [logs, stagingToday] = await Promise.all([
+                api.getLogs(b.id),
+                api.getTodayStaging(b.id).catch(() => null)
+            ]);
+            const stagedEggs = (stagingToday && stagingToday.eggs && stagingToday.eggs.collections && stagingToday.eggs.collections.length > 0);
+            const hasEggs = stagedEggs || logs.some(l => (parseInt(l.eggs) || 0) > 0);
             
             const isCompleted = b.status === 'completed';
             let sopHtml = '';
@@ -1127,7 +1159,7 @@ async function _initApp() {
             </div>
             `;
         }));
-        list.innerHTML = cardsHtml.join('');
+        list.innerHTML = bannerHtml + cardsHtml.join('');
         lucide.createIcons();
         await updateBatchLearningUI();
     }
@@ -1333,6 +1365,7 @@ async function _initApp() {
                 <div class="info-chip"><i data-lucide="bird" style="width:14px;height:14px;"></i> <strong id="info-birds">${hens}</strong> birds alive</div>
                 <div class="info-chip"><i data-lucide="package" style="width:14px;height:14px;"></i> Feed: <strong id="info-feed">0 kg</strong></div>
                 <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash: <strong id="info-cash">KES 0</strong></div>
+                <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Credit: <strong id="info-credit">KES 0</strong></div>
                 <div class="info-chip"><i data-lucide="egg" style="width:14px;height:14px;"></i> Total: <strong id="info-totaleggs">0</strong> <span id="info-unsoldeggs" style="font-size:11px; margin-left:4px;">(0 in stock)</span></div>
                 <div class="info-chip" id="info-sensor-container" style="display:none; cursor:pointer;" onclick="window.triggerSensorSync()">
                     <i data-lucide="thermometer" style="width:14px;height:14px;"></i> 
@@ -1400,15 +1433,19 @@ async function _initApp() {
                             <input type="number" id="log-co2" placeholder="Optional" class="input-md" onfocus="this.select()">
                         </div>
                         <div class="log-field">
-                            <label>Temp (°C)</label>
+                            <label>Temp (°C) <span id="sensor-badge-temp" style="font-size:10px; color:var(--primary); cursor:pointer; margin-left:4px; font-weight:normal; border-bottom:1px dashed var(--primary); display:none;"></span></label>
                             <input type="number" id="log-temp" step="0.1" placeholder="Optional" class="input-md" onfocus="this.select()">
                             <span id="log-temp-hint" class="field-hint" style="display:none;"></span>
                         </div>
                         <div class="log-field">
-                            <label>Humidity (%)</label>
+                            <label>Humidity (%) <span id="sensor-badge-hum" style="font-size:10px; color:var(--primary); cursor:pointer; margin-left:4px; font-weight:normal; border-bottom:1px dashed var(--primary); display:none;"></span></label>
                             <input type="number" id="log-humidity" placeholder="Optional" class="input-md" min="0" max="100" onfocus="this.select()">
                             <span id="log-humidity-hint" class="field-hint" style="display:none;"></span>
                         </div>
+                    </div>
+                    <div id="today-staged-non-eggs-container" style="margin-top: 16px; border-top: 1px solid var(--border-color); padding-top: 12px; display:none;">
+                        <h4 style="margin:0 0 8px 0; font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Staged Today</h4>
+                        <div id="today-staged-non-eggs-list" style="display:flex; flex-direction:column; gap:6px;"></div>
                     </div>
                     <div class="log-notes-row" style="margin-top: 16px; display: flex; flex-direction: column; gap: 12px; width: 100%;">
                         <textarea id="log-notes" placeholder="Any observations (health, weather, customer walk-in)..." rows="2" style="min-height: 60px; width: 100%; box-sizing: border-box;"></textarea>
@@ -1679,6 +1716,66 @@ async function _initApp() {
         }).join('');
     }
 
+    function _renderTodayStagedNonEggsList(stagingToday) {
+        const container = document.getElementById('today-staged-non-eggs-container');
+        const listEl = document.getElementById('today-staged-non-eggs-list');
+        if (!listEl || !container) return;
+
+        if (!stagingToday) {
+            container.style.display = 'none';
+            return;
+        }
+
+        const list = [];
+        if (stagingToday.feed && stagingToday.feed.events) {
+            stagingToday.feed.events.forEach(e => list.push({ ...e, type: 'feed', text: `${e.sacks_opened || 0} sacks finished / ${e.amount_kg || 0} kg feed` }));
+        }
+        if (stagingToday.mortality && stagingToday.mortality.events) {
+            stagingToday.mortality.events.forEach(e => list.push({ ...e, type: 'mortality', text: `${e.count} bird(s) died` }));
+        }
+        if (stagingToday.gases) {
+            stagingToday.gases.forEach(e => list.push({ ...e, type: 'gases', text: `Gases: NH3 ${e.nh3 || '—'} ppm, CO2 ${e.co2 || '—'} ppm` }));
+        }
+        if (stagingToday.notes) {
+            stagingToday.notes.forEach(e => list.push({ ...e, type: 'notes', text: `Note: "${e.text}"` }));
+        }
+        if (stagingToday.health) {
+            stagingToday.health.forEach(e => list.push({ ...e, type: 'health', text: `Meds: ${e.drug || ''} (${e.medicine_type || ''})` }));
+        }
+
+        if (list.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = 'block';
+        listEl.innerHTML = list.map(e => {
+            const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            return `
+            <div class="egg-collection-row" style="display:flex; align-items:center; justify-content:space-between; background:rgba(255,255,255,0.04); padding:8px 12px; border-radius:8px; font-size:12px;">
+                <div style="color:var(--text-secondary); display:flex; align-items:center; gap:8px;">
+                    <span style="font-weight:700; color:var(--primary);">[${time}]</span>
+                    <span>${e.text}</span>
+                </div>
+                <button type="button" onclick="window.deleteStagingItem('${e.id}', '${e.type}')" class="btn btn-ghost btn-sm" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);">✕</button>
+            </div>
+            `;
+        }).join('');
+    }
+
+    window.deleteStagingItem = async function(id, type) {
+        if (!confirm('Are you sure you want to delete this staged record?')) return;
+        const bid = currentBatchId;
+        const res = await api.deleteStagingEvent(bid, id);
+        if (res.success) {
+            window.showToast('Staged item deleted.', 'success');
+            const batch = getBatches().find(b => String(b.id) === String(bid));
+            if (batch) refreshCockpitData(batch);
+        } else {
+            window.showToast(res.error || 'Failed to delete staged item.', 'danger');
+        }
+    };
+
     window.addEggCollection = function() {
         const now = new Date(Date.now() + 3 * 3600 * 1000);
         const defaultTime = now.toISOString().substring(11, 16);
@@ -1714,8 +1811,25 @@ async function _initApp() {
                     <input id="ecm-broken" type="number" min="0" value="${data.broken||0}" placeholder="e.g. 0" onfocus="this.select()">
                 </div>
                 <div class="input-group">
-                    <label>Time Collected</label>
-                    <input id="ecm-time" type="time" value="${data.time||''}">
+                    <label>${(() => {
+                        const dateVal = $('log-date') ? $('log-date').value : '';
+                        const todayStr = new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0];
+                        return (dateVal && dateVal < todayStr) ? 'Collection Round' : 'Time Collected';
+                    })()}</label>
+                    ${(() => {
+                        const dateVal = $('log-date') ? $('log-date').value : '';
+                        const todayStr = new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0];
+                        if (dateVal && dateVal < todayStr) {
+                            return `
+                            <select id="ecm-time" style="width:100%; padding:8px; border-radius:4px; border:1px solid var(--border-color); background:var(--bg-input); color:var(--text-dark);">
+                                <option value="09:00" ${data.time === '09:00' ? 'selected' : ''}>Morning (~09:00)</option>
+                                <option value="13:00" ${data.time === '13:00' ? 'selected' : ''}>Mid-day (~13:00)</option>
+                                <option value="17:00" ${data.time === '17:00' ? 'selected' : ''}>Evening (~17:00)</option>
+                            </select>`;
+                        } else {
+                            return `<input id="ecm-time" type="time" value="${data.time||''}">`;
+                        }
+                    })()}
                 </div>
                 <div class="input-group">
                     <label>Label / Notes (optional)</label>
@@ -1874,6 +1988,7 @@ async function _initApp() {
             _eggCollections = [];
             _renderEggCollectionList();
         }
+        _renderTodayStagedNonEggsList(stagingToday);
         
         // Update KPIs
         if($('kpi-layrate')) $('kpi-layrate').innerText = (kpis.todayLayRate * 100).toFixed(1) + '%';
@@ -1895,11 +2010,18 @@ async function _initApp() {
         if($('info-birds')) $('info-birds').innerText = kpis.currentBirds;
         if($('info-totaleggs')) $('info-totaleggs').innerText = kpis.totalEggs.toLocaleString();
 
-        const revenue = txs.filter(t => t.type === 'sale').reduce((s, t) => s + parseFloat(t.amount || 0), 0);
-        const expenses = txs.filter(t => t.type === 'purchase').reduce((s, t) => s + parseFloat(t.amount || 0), 0);
         const initialCash = (batch.assumptions && batch.assumptions.workingCapital) ? batch.assumptions.workingCapital : 0;
-        const cashBalance = initialCash + revenue - expenses;
-        if($('info-cash')) $('info-cash').innerText = 'KES ' + cashBalance.toLocaleString();
+        const accounts = await api.getLedgerAccounts();
+        const cashAcc = accounts.find(a => a.code === '1000') || { balance: 0, debit: 0, credit: 0 };
+        const mpesaAcc = accounts.find(a => a.code === '1010') || { balance: 0, debit: 0, credit: 0 };
+        const recAcc = accounts.find(a => a.code === '1200') || { balance: 0, debit: 0, credit: 0 };
+        
+        const totalEntries = accounts.reduce((s, a) => s + (a.debit || 0) + (a.credit || 0), 0);
+        const liquidCash = (cashAcc.balance || 0) + (mpesaAcc.balance || 0) + (totalEntries === 0 ? initialCash : 0);
+        const outstandingCredit = recAcc.balance || 0;
+
+        if($('info-cash')) $('info-cash').innerText = 'KES ' + liquidCash.toLocaleString();
+        if($('info-credit')) $('info-credit').innerText = 'KES ' + outstandingCredit.toLocaleString();
         
         let avg7SalePrice = 15;
         const now = Date.now();
@@ -1958,8 +2080,9 @@ async function _initApp() {
         const feedCostPerKg = farmProfile.defaultFeedPrice / farmProfile.sackWeightKg;
         // Correct break-even: feed cost per egg = (feedCostPerKg x dailyFeedPerBird) / layRate
         // +1 covers non-feed OPEX overhead per egg (labour, meds, etc.)
+        const totalExpenses = txs.filter(t => t.type === 'purchase').reduce((s, t) => s + parseFloat(t.amount || 0), 0);
         const nonFeedOpexPerEgg = kpis.avg7LayRate > 0 ?
-            ((expenses - txs.filter(t=>t.type==='purchase'&&t.category.toLowerCase()==='feed').reduce((s,t)=>s+parseFloat(t.amount||0),0)) / Math.max(1, kpis.totalEggs)) : 1;
+            ((totalExpenses - txs.filter(t=>t.type==='purchase'&&t.category.toLowerCase()==='feed').reduce((s,t)=>s+parseFloat(t.amount||0),0)) / Math.max(1, kpis.totalEggs)) : 1;
         const breakEvenPrice = kpis.avg7LayRate > 0 
             ? (kpis.avgDailyFeedPerBird * feedCostPerKg / kpis.avg7LayRate) + Math.max(0.5, nonFeedOpexPerEgg)
             : 12;
@@ -2032,7 +2155,7 @@ async function _initApp() {
             }
         }
 
-        updateCockpitAlerts(batch, kpis, currentInventory, breakEvenPrice, cashBalance, txs, healthLogs);
+        updateCockpitAlerts(batch, kpis, currentInventory, breakEvenPrice, liquidCash, txs, healthLogs);
         renderCockpitChart(kpis.recent30);
         renderHistoryTable(logs, txs);
         renderCockpitTransactions(txs, initialCash);
@@ -2127,30 +2250,44 @@ async function _initApp() {
         
         if (res.temperature !== null) {
             $('info-sensor-temp').innerText = res.temperature.toFixed(1) + ' °C';
-            // Auto-fill today's log form if empty
-            const tempInput = $('log-temp');
-            if (tempInput && !tempInput.value) {
-                tempInput.value = res.temperature.toFixed(1);
-            }
             // Update chip
             const chipTemp = $('sensor-chip-temp');
             if (chipTemp) chipTemp.innerText = res.temperature.toFixed(1) + '°C';
+            // Clickable badge next to label
+            const badgeTemp = $('sensor-badge-temp');
+            if (badgeTemp) {
+                badgeTemp.innerText = `[Sensor: ${res.temperature.toFixed(1)}°C]`;
+                badgeTemp.style.display = 'inline';
+                badgeTemp.onclick = () => {
+                    const tempInput = $('log-temp');
+                    if (tempInput) tempInput.value = res.temperature.toFixed(1);
+                };
+            }
         } else {
             $('info-sensor-temp').innerText = '— °C';
+            const badgeTemp = $('sensor-badge-temp');
+            if (badgeTemp) badgeTemp.style.display = 'none';
         }
         
         if (res.humidity !== null) {
             $('info-sensor-hum').innerText = res.humidity.toFixed(0) + '% RH';
-            // Auto-fill today's log form if empty
-            const humInput = $('log-humidity');
-            if (humInput && !humInput.value) {
-                humInput.value = res.humidity.toFixed(0);
-            }
             // Update chip
             const chipHum = $('sensor-chip-hum');
             if (chipHum) chipHum.innerText = res.humidity.toFixed(0) + '%';
+            // Clickable badge next to label
+            const badgeHum = $('sensor-badge-hum');
+            if (badgeHum) {
+                badgeHum.innerText = `[Sensor: ${res.humidity.toFixed(0)}%]`;
+                badgeHum.style.display = 'inline';
+                badgeHum.onclick = () => {
+                    const humInput = $('log-humidity');
+                    if (humInput) humInput.value = res.humidity.toFixed(0);
+                };
+            }
         } else {
             $('info-sensor-hum').innerText = '—% RH';
+            const badgeHum = $('sensor-badge-hum');
+            if (badgeHum) badgeHum.style.display = 'none';
         }
         
         // Live THI badge
@@ -3443,6 +3580,7 @@ async function _initApp() {
                 await updateAggregates(batch, logs, finalTxs, kpis);
                 await api.saveSnapshot(snapshot);
                 batch.status = 'completed';
+                batch.closeDate = new Date().toISOString();
             } else {
                 batch.status = 'post_batch';
             }
@@ -3773,7 +3911,11 @@ async function _initApp() {
         }
         list.innerHTML = buyers.map((b, i) => `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border-color); font-size:13px;">
-                <div><strong>${b.name}</strong> <span style="color:var(--text-muted); margin-left:8px;">(${b.terms})</span></div>
+                <div>
+                    <strong>${b.name}</strong> 
+                    ${b.phone ? `<span style="color:var(--text-muted); margin-left:8px;">(${b.phone})</span>` : ''}
+                    <span style="color:var(--text-muted); margin-left:8px;">(${b.terms})</span>
+                </div>
                 <button type="button" class="btn btn-sm" style="color:var(--danger); padding:2px 6px;" onclick="removeBuyer(${i})"><i data-lucide="trash-2" style="width:14px; height:14px;"></i></button>
             </div>
         `).join('');
@@ -3785,6 +3927,7 @@ async function _initApp() {
         farmProfile.buyers.splice(idx, 1);
         saveFarmProfile(farmProfile);
         renderBuyersList();
+        _renderReconciliationConsole();
     };
     
     $('add-buyer-form')?.addEventListener('submit', (e) => {
@@ -3792,12 +3935,102 @@ async function _initApp() {
         if (!farmProfile.buyers) farmProfile.buyers = [];
         farmProfile.buyers.push({
             name: $('buyer-name').value,
+            phone: $('buyer-phone') ? $('buyer-phone').value.trim() : '',
             terms: $('buyer-terms').value
         });
         saveFarmProfile(farmProfile);
         renderBuyersList();
+        _renderReconciliationConsole();
         $('add-buyer-form').reset();
     });
+
+    async function _renderReconciliationConsole() {
+        const card = $('reconciliation-console-card');
+        const list = $('reconciliation-list');
+        if (!card || !list) return;
+
+        const userRole = window.USER_ROLE;
+        if (!['super_admin', 'admin', 'farmer'].includes(userRole)) {
+            card.style.display = 'none';
+            return;
+        }
+
+        const items = await api.getLedgerReconciliation();
+        if (items.length === 0) {
+            card.style.display = 'block';
+            list.innerHTML = '<p style="color:var(--text-muted); font-size:13px; text-align:center; padding:16px;">No pending payments in suspense account.</p>';
+            return;
+        }
+
+        card.style.display = 'block';
+        const buyers = farmProfile.buyers || [];
+        const isViewerOrFarmer = ['farmer', 'viewer'].includes(userRole) && userRole !== 'super_admin' && userRole !== 'admin';
+
+        list.innerHTML = items.map(item => {
+            let optionsHtml = `<option value="">-- Select Destination Account --</option>`;
+            optionsHtml += `<option value="4000|Egg Sales">Direct Sale: Egg Sales Revenue (4000)</option>`;
+            buyers.forEach(buyer => {
+                optionsHtml += `<option value="1200|${buyer.name}">Credit: ${buyer.name} (Accounts Receivable)</option>`;
+            });
+
+            const formattedDate = new Date(item.date).toLocaleDateString('en-KE', {
+                year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+
+            return `
+                <div class="reconciliation-item" style="display:flex; flex-direction:column; gap:10px; padding:12px; border:1px solid var(--border-color); border-radius:6px; background:var(--bg-main); font-size:13px;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <strong style="color:var(--primary); font-size:14px;">KES ${item.amount.toLocaleString()}</strong>
+                            <span style="color:var(--text-muted); margin-left:8px;">Ref: ${item.ref_id}</span>
+                            <div style="margin-top:4px; font-weight:500;">${item.description}</div>
+                            <div style="color:var(--text-muted); font-size:11px; margin-top:2px;">${formattedDate}</div>
+                        </div>
+                    </div>
+                    ${isViewerOrFarmer ? `
+                        <div style="color:var(--text-muted); font-style:italic; font-size:11px;">Reconciliation actions restricted to Administrators.</div>
+                    ` : `
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <select class="select-md" style="flex:1; min-width:200px;" id="rec-dest-${item.id}">
+                                ${optionsHtml}
+                            </select>
+                            <button class="btn btn-primary btn-sm" onclick="window.reconcileTransaction('${item.id}')">Reconcile</button>
+                        </div>
+                    `}
+                </div>
+            `;
+        }).join('');
+    }
+
+    window.reconcileTransaction = async function(txId) {
+        const select = document.getElementById(`rec-dest-${txId}`);
+        if (!select || !select.value) {
+            window.showToast('Please select a destination account first.', 'danger');
+            return;
+        }
+
+        const [targetAccountId, buyerName] = select.value.split('|');
+        const activeBatch = getBatches().find(b => b.status === 'active');
+        const batchId = activeBatch ? activeBatch.id : null;
+
+        const res = await api.reconcileLedgerTransaction({
+            transactionId: txId,
+            targetAccountId,
+            buyerName,
+            batchId
+        });
+
+        if (res.success) {
+            window.showToast('Transaction reconciled successfully!', 'success');
+            await _renderReconciliationConsole();
+            if (currentBatchId) {
+                const batch = getBatches().find(b => String(b.id) === String(currentBatchId));
+                if (batch) refreshCockpitData(batch);
+            }
+        } else {
+            window.showToast(res.error || 'Failed to reconcile transaction.', 'danger');
+        }
+    };
 
     function loadSettingsForm() {
         const p = farmProfile;
@@ -3814,6 +4047,20 @@ async function _initApp() {
         if ($('set-sensor-offline-mins')) $('set-sensor-offline-mins').value = p.sensorOfflineMinutes || 30;
         if ($('set-telegram-chat-id'))   $('set-telegram-chat-id').value   = p.telegramChatId || '';
         if ($('set-telegram-bot-token')) $('set-telegram-bot-token').value = p.telegramBotToken || '';
+
+        // Load M-Pesa configuration keys
+        api.getEntity('mpesa_consumer_key', '').then(val => {
+            if ($('set-mpesa-consumer-key')) $('set-mpesa-consumer-key').value = val || '';
+        });
+        api.getEntity('mpesa_consumer_secret', '').then(val => {
+            if ($('set-mpesa-consumer-secret')) $('set-mpesa-consumer-secret').value = val || '';
+        });
+        api.getEntity('mpesa_passkey', '').then(val => {
+            if ($('set-mpesa-passkey')) $('set-mpesa-passkey').value = val || '';
+        });
+        api.getEntity('mpesa_shortcode', '').then(val => {
+            if ($('set-mpesa-shortcode')) $('set-mpesa-shortcode').value = val || '';
+        });
 
         // Account & Security panel
         if ($('settings-username-display')) {
@@ -3873,6 +4120,7 @@ async function _initApp() {
         });
 
         renderBuyersList();
+        _renderReconciliationConsole();
 
         // User Management panel (admin+ only)
         const umContainer = $('user-management-panel')?.querySelector('.card-body') || $('user-management-panel');
@@ -4015,6 +4263,13 @@ async function _initApp() {
         if ($('set-telegram-chat-id')) farmProfile.telegramChatId = $('set-telegram-chat-id').value.trim();
         if ($('set-telegram-bot-token')) farmProfile.telegramBotToken = $('set-telegram-bot-token').value.trim();
         saveFarmProfile(farmProfile);
+
+        // Save M-Pesa credentials
+        if ($('set-mpesa-consumer-key')) api.setEntity('mpesa_consumer_key', $('set-mpesa-consumer-key').value.trim());
+        if ($('set-mpesa-consumer-secret')) api.setEntity('mpesa_consumer_secret', $('set-mpesa-consumer-secret').value.trim());
+        if ($('set-mpesa-passkey')) api.setEntity('mpesa_passkey', $('set-mpesa-passkey').value.trim());
+        if ($('set-mpesa-shortcode')) api.setEntity('mpesa_shortcode', $('set-mpesa-shortcode').value.trim());
+
         window.showToast('Farm profile saved successfully!');
     });
 

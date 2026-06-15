@@ -164,6 +164,50 @@ function initializeDatabase(db, resolve, reject) {
             )
         `);
 
+        // ── DOUBLE-ENTRY GENERAL LEDGER ──────────────────────────────────────────
+        db.run(`
+            CREATE TABLE IF NOT EXISTS ledger_accounts (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT CHECK(type IN ('asset', 'liability', 'equity', 'revenue', 'expense')),
+                code TEXT UNIQUE NOT NULL
+            )
+        `);
+
+        db.run(`
+            CREATE TABLE IF NOT EXISTS ledger_transactions (
+                id TEXT PRIMARY KEY,
+                date TEXT NOT NULL,
+                description TEXT,
+                ref_type TEXT,
+                ref_id TEXT
+            )
+        `);
+
+        db.run(`
+            CREATE TABLE IF NOT EXISTS ledger_entries (
+                id TEXT PRIMARY KEY,
+                transaction_id TEXT REFERENCES ledger_transactions(id) ON DELETE CASCADE,
+                account_id TEXT REFERENCES ledger_accounts(id),
+                entry_type TEXT CHECK(entry_type IN ('debit', 'credit')),
+                amount REAL NOT NULL CHECK(amount > 0)
+            )
+        `);
+
+        // Seed default chart of accounts
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1000', 'Liquid Cash Box', 'asset', '1000')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1010', 'M-Pesa Till', 'asset', '1010')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1200', 'Accounts Receivable (CRM)', 'asset', '1200')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1300', 'Egg Inventory', 'asset', '1300')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1310', 'Feed Inventory', 'asset', '1310')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('4000', 'Egg Sales Revenue', 'revenue', '4000')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5000', 'Feed Expense', 'expense', '5000')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5010', 'Labor Expense', 'expense', '5010')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5020', 'Utilities Expense', 'expense', '5020')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5030', 'Medication Expense', 'expense', '5030')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5040', 'Chicks Expense', 'expense', '5040')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('9999', 'Suspense Account', 'asset', '9999')");
+
         console.log('Database schema initialized.');
         // Final no-op run to confirm all prior CREATE TABLE runs have completed
         db.run('SELECT 1', [], (err) => {

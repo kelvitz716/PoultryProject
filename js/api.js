@@ -182,6 +182,44 @@ export const api = {
     },
 
     /**
+     * Retrieves all ledger accounts with computed balances.
+     * @returns {Promise<Array<Object>>} Chart of accounts.
+     */
+    async getLedgerAccounts() {
+        try {
+            const r = await fetch('/api/ledger/accounts');
+            return r.ok ? await r.json() : [];
+        } catch (e) { return []; }
+    },
+
+    /**
+     * Retrieves unassigned transactions in the M-Pesa suspense account.
+     * @returns {Promise<Array<Object>>} List of unassigned payments.
+     */
+    async getLedgerReconciliation() {
+        try {
+            const r = await fetch('/api/ledger/reconciliation');
+            return r.ok ? await r.json() : [];
+        } catch (e) { return []; }
+    },
+
+    /**
+     * Reconciles an unassigned M-Pesa transaction by moving it out of suspense.
+     * @param {Object} data - { transactionId, targetAccountId, buyerName, batchId }
+     * @returns {Promise<Object>} Status response.
+     */
+    async reconcileLedgerTransaction(data) {
+        try {
+            const r = await fetch('/api/ledger/reconcile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return r.ok ? await r.json() : { success: false };
+        } catch (e) { return { success: false, error: e.message }; }
+    },
+
+    /**
      * Deletes a specific transaction record from a batch.
      * @param {string} bId - Unique ID of the batch.
      * @param {string} id - Unique ID of the target transaction.
