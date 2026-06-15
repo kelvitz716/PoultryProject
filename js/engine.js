@@ -375,6 +375,9 @@ export const DEFAULT_FARM_PROFILE = {
     },
     litterLastChanged: new Date().toISOString(),
     eggStorageType: 'room',
+    sensorOfflineMinutes: 30,
+    telegramChatId: '',
+    telegramBotToken: '',
     buyers: []
 };
 
@@ -469,7 +472,7 @@ export function computeKPIs(logs, batch, profile, stagingToday = null) {
     const currentBirds = liveBirds;
 
     // Today's lay rate — prefer staging today if available (not yet committed)
-    const todayEggs = stagingToday?.total_eggs ?? (latestLog.eggs || 0);
+    const todayEggs = stagingToday?.eggs?.total ?? (latestLog.eggs || 0);
     const todayLayRate = currentBirds > 0 ? (todayEggs / currentBirds) : 0;
 
     // 7-day moving average lay rate
@@ -550,7 +553,7 @@ export function computeEggInventoryAging(logs, txs) {
     let totalUnsold = 0;
     
     for (const log of sortedLogs) {
-        const eggsProduced = parseInt(log.eggs) || 0;
+        const eggsProduced = (parseInt(log.eggs) || 0) - (parseInt(log.eggs_broken) || 0);
         if (eggsProduced === 0) continue;
         
         if (eggsToDeduct >= eggsProduced) {
