@@ -241,7 +241,27 @@ async function setEntityValue(key, val) {
 app.get('/api/entities/:key', async (req, res) => {
     try {
         const row = await getQuery('SELECT value FROM entities WHERE key = ?', [req.params.key]);
-        res.json(row ? JSON.parse(row.value) : null);
+        let data = row ? JSON.parse(row.value) : null;
+        if (req.params.key === 'poultryFarmProfile' && data) {
+            if (data.telegramBotToken) {
+                data.telegramBotToken = '••••••••••••••••';
+            } else if (process.env.TELEGRAM_BOT_TOKEN) {
+                data.telegramBotToken = '••••••••••••••••';
+            }
+            if (data.telegramChatId) {
+                data.telegramChatId = '••••••••••••••••';
+            } else {
+                const dbChatId = await getEntityValue('telegram_chat_id', null);
+                if (dbChatId || process.env.TELEGRAM_CHAT_ID) {
+                    data.telegramChatId = '••••••••••••••••';
+                }
+            }
+        } else if (req.params.key === 'telegram_chat_id' && data) {
+            data = '••••••••••••••••';
+        } else if (req.params.key === 'telegram_bot_token' && data) {
+            data = '••••••••••••••••';
+        }
+        res.json(data);
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -251,7 +271,33 @@ app.get('/api/entities/:key', async (req, res) => {
  */
 app.post('/api/entities/:key', validateBody, async (req, res) => {
     try {
-        await runQuery('INSERT INTO entities (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP', [req.params.key, JSON.stringify(req.body.value)]);
+        let valueToSave = req.body.value;
+
+        if (req.params.key === 'poultryFarmProfile') {
+            const row = await getQuery('SELECT value FROM entities WHERE key = ?', ['poultryFarmProfile']);
+            const existing = row ? JSON.parse(row.value) : {};
+
+            if (valueToSave && typeof valueToSave === 'object') {
+                if (valueToSave.telegramBotToken === '••••••••••••••••') {
+                    valueToSave.telegramBotToken = existing.telegramBotToken || '';
+                }
+                if (valueToSave.telegramChatId === '••••••••••••••••') {
+                    valueToSave.telegramChatId = existing.telegramChatId || '';
+                }
+            }
+        } else if (req.params.key === 'telegram_chat_id') {
+            const existing = await getEntityValue('telegram_chat_id', null);
+            if (valueToSave === '••••••••••••••••') {
+                valueToSave = existing || '';
+            }
+        } else if (req.params.key === 'telegram_bot_token') {
+            const existing = await getEntityValue('telegram_bot_token', null);
+            if (valueToSave === '••••••••••••••••') {
+                valueToSave = existing || '';
+            }
+        }
+
+        await runQuery('INSERT INTO entities (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP', [req.params.key, JSON.stringify(valueToSave)]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1334,6 +1380,7 @@ app.get('/api/staging/:batchId/today', requireAuth, async (req, res) => {
         // Eggs: list + sum
         const eggEvents = byModule.eggs || [];
         const eggTotal = eggEvents.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+        const eggBrokenTotal = eggEvents.reduce((s, e) => s + (parseInt(e.broken) || 0), 0);
 
         // Feed: list + totals
         const feedEvents = byModule.feed || [];
@@ -1369,7 +1416,7 @@ app.get('/api/staging/:batchId/today', requireAuth, async (req, res) => {
 
         res.json({
             date: today,
-            eggs: { total: eggTotal, collections: eggEvents },
+            eggs: { total: eggTotal + eggBrokenTotal, intact: eggTotal, broken: eggBrokenTotal, collections: eggEvents },
             feed: { total_kg: Math.round(feedTotalKg * 10) / 10, sacks_opened: feedSacks, events: feedEvents },
             mortality: { total: mortalityTotal, events: mortalityEvents },
             sensors,
@@ -1418,7 +1465,10 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         byModule.eggs.forEach(e => merged.push(e));
         merged.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
         logData.collections = merged;
-        logData.eggs = merged.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+        const intact = merged.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+        const broken = merged.reduce((s, e) => s + (parseInt(e.broken) || 0), 0);
+        logData.eggs = intact + broken;
+        logData.eggs_broken = broken;
     }
 
     // ── Feed: sum ──
@@ -1591,12 +1641,34 @@ function scheduleMidnightCommit() {
  * @param {string} message - The message text to send.
  */
 async function sendTelegramAlert(message) {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
+    let token = process.env.TELEGRAM_BOT_TOKEN;
+    const profileRow = await getQuery('SELECT value FROM entities WHERE key = ?', ['poultryFarmProfile']);
+    if (profileRow) {
+        const profile = JSON.parse(profileRow.value);
+        if (profile && profile.telegramBotToken) {
+            token = profile.telegramBotToken;
+        }
+    }
+
     if (!token) {
         console.warn('Telegram alert: TELEGRAM_BOT_TOKEN not set — skipping.');
         return;
     }
-    const chatId = await getEntityValue('telegram_chat_id', null);
+
+    let chatId = null;
+    if (profileRow) {
+        const profile = JSON.parse(profileRow.value);
+        if (profile && profile.telegramChatId) {
+            chatId = profile.telegramChatId;
+        }
+    }
+    if (!chatId) {
+        chatId = await getEntityValue('telegram_chat_id', null);
+    }
+    if (!chatId) {
+        chatId = process.env.TELEGRAM_CHAT_ID;
+    }
+
     if (!chatId) {
         console.warn('Telegram alert: telegram_chat_id not configured — skipping.');
         return;

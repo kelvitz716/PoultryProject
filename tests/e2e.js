@@ -170,10 +170,10 @@ async function handleAuth(page) {
     // ─── TC-05: Run 60d Lifecycle Simulation ────────────────────────────
     console.log('TC-05  Run 60d lifecycle simulation (Skip 60d [Dev])');
 
-    // The "Skip 60d" button is rendered inside the batch cockpit dynamically
-    // Locate it via text matching
-    await page.waitForSelector('button:has-text("Skip 60d")', { timeout: TIMEOUT });
-    await page.click('button:has-text("Skip 60d")');
+    // Trigger simulation directly via page.evaluate since the Dev button is removed from UI
+    await page.evaluate(async (bid) => {
+      await window.simulateLifecycle(bid);
+    }, batchId);
     await sleep(500);
 
     // Custom confirmation modal appears — click "Run Simulation"
@@ -206,6 +206,7 @@ async function handleAuth(page) {
     await page.click('#btn-add-collection');
     await page.waitForSelector('#ecm-count', { timeout: TIMEOUT });
     await page.fill('#ecm-count', '85');
+    await page.fill('#ecm-broken', '5');
     await page.fill('#ecm-time', '12:00');
     await page.fill('#ecm-label', 'Afternoon Collection');
     await page.click('#ecm-save');

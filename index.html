@@ -657,10 +657,22 @@
                                 </div>
                                 <div class="input-group">
                                     <label>Telegram Chat ID</label>
-                                    <input type="text" id="set-telegram-chat-id" placeholder="e.g. -1001234567890">
+                                    <div style="display: flex; gap: 6px;">
+                                        <input type="password" id="set-telegram-chat-id" placeholder="e.g. -1001234567890" style="flex: 1;">
+                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-telegram-chat-id'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
+                                    </div>
                                 </div>
                             </div>
-                            <p style="font-size:0.78rem;opacity:0.45;margin:10px 0 0;">Set TELEGRAM_BOT_TOKEN in your server environment. Chat ID is the group or personal chat to receive alerts.</p>
+                            <div class="input-grid" style="margin-top: 12px;">
+                                <div class="input-group" style="grid-column: span 2;">
+                                    <label>Telegram Bot Token</label>
+                                    <div style="display: flex; gap: 6px;">
+                                        <input type="password" id="set-telegram-bot-token" placeholder="e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ" style="flex: 1;">
+                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-telegram-bot-token'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                            <p style="font-size:0.78rem;opacity:0.45;margin:10px 0 0;">Enter your Telegram Bot Token and Chat ID. Secrets are masked and stored securely.</p>
                         </div>
                     </div>
 

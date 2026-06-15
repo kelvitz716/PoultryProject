@@ -1292,10 +1292,6 @@ async function _initApp() {
                         <button class="btn btn-secondary btn-sm" onclick="markLitterChanged()">
                             <i data-lucide="leaf" style="width:14px; height:14px;"></i> Litter Done
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="window.simulateLifecycle(${batch.id})" style="border-color:var(--accent); color:var(--text-dark); position:relative;">
-                            <i data-lucide="zap" style="width:14px; height:14px; color:var(--accent);"></i> Skip 60d
-                            <sup style="font-size:9px; font-weight:700; color:var(--accent); letter-spacing:0.5px; margin-left:2px;">[Dev]</sup>
-                        </button>
                         <button class="btn btn-primary btn-sm" onclick="window.finishBatch(${batch.id})" style="margin-left:8px;">
                             <i data-lucide="flag" style="width:14px; height:14px;"></i> Snapshot
                         </button>
@@ -1383,14 +1379,14 @@ async function _initApp() {
 
                         <div class="log-field">
                             <label>Sacks Finished Today</label>
-                            <input type="number" id="log-sacks" value="0" min="0" class="input-lg" style="font-size:24px; font-weight:800; text-align:center;" onfocus="this.select()">
+                            <input type="number" id="log-sacks" value="0" min="0" class="input-md" onfocus="this.select()">
                             <span class="field-hint">0 if none. Each sack = ${farmProfile.sackWeightKg}kg</span>
                         </div>
                         <div class="log-field">
                             <label>Feed Given (kg – optional)</label>
                             <input type="number" id="log-feed" step="0.1" placeholder="Leave blank if using sacks" class="input-md" onfocus="this.select()">
                         </div>
-                        <div class="log-field">
+                        <div class="log-field" style="grid-column: 1 / -1;">
                             <label>Deaths Today</label>
                             <input type="number" id="log-mortality" value="0" min="0" class="input-md" style="color:var(--danger); font-weight:bold;" onfocus="this.select()">
                             <input type="hidden" id="log-birds" value="${hens}">
@@ -1414,9 +1410,9 @@ async function _initApp() {
                             <span id="log-humidity-hint" class="field-hint" style="display:none;"></span>
                         </div>
                     </div>
-                    <div class="log-notes-row" style="margin-top:auto;">
-                        <textarea id="log-notes" placeholder="Any observations (health, weather, customer walk-in)..." rows="2" style="min-height:60px;"></textarea>
-                        <button class="btn btn-primary btn-save-log" onclick="window.submitDailyLog(event)" style="align-self:flex-start; white-space:nowrap;">
+                    <div class="log-notes-row" style="margin-top: 16px; display: flex; flex-direction: column; gap: 12px; width: 100%;">
+                        <textarea id="log-notes" placeholder="Any observations (health, weather, customer walk-in)..." rows="2" style="min-height: 60px; width: 100%; box-sizing: border-box;"></textarea>
+                        <button class="btn btn-primary btn-save-log" onclick="window.submitDailyLog(event)" style="width: 100%; justify-content: center; display: flex; align-items: center; gap: 8px;">
                             <i data-lucide="save"></i> Save Log
                         </button>
                     </div>
@@ -1657,25 +1653,36 @@ async function _initApp() {
         const totalEl = document.getElementById('egg-total-display');
         if (!list) return;
         const total = _eggCollections.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
-        if (totalEl) totalEl.textContent = `${total.toLocaleString()} eggs`;
+        const totalBroken = _eggCollections.reduce((s, e) => s + (parseInt(e.broken) || 0), 0);
+        if (totalEl) {
+            let txt = `${total.toLocaleString()} eggs`;
+            if (totalBroken > 0) {
+                txt += ` (${totalBroken} broken)`;
+            }
+            totalEl.textContent = txt;
+        }
         if (_eggCollections.length === 0) {
             list.innerHTML = '<p id="egg-empty-hint" style="opacity:0.45;font-size:0.82rem;margin:0;font-style:italic;">No collections yet — tap Add Collection to log your first round.</p>';
             return;
         }
-        list.innerHTML = _eggCollections.map((ev, idx) => `
+        list.innerHTML = _eggCollections.map((ev, idx) => {
+            const brokenCount = parseInt(ev.broken) || 0;
+            const brokenStr = brokenCount > 0 ? ` <span style="color:var(--danger);font-size:0.82rem;margin-left:4px;white-space:nowrap;">(${brokenCount} broken)</span>` : '';
+            return `
             <div class="egg-collection-row" style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border-radius:8px;padding:8px 12px;">
-                <span style="font-size:1.1rem;font-weight:700;min-width:54px;">${parseInt(ev.count)||0} 🥚</span>
+                <span style="font-size:1.1rem;font-weight:700;min-width:54px;display:inline-flex;align-items:center;">${parseInt(ev.count)||0} 🥚${brokenStr}</span>
                 <span style="opacity:0.55;font-size:0.82rem;min-width:42px;">${ev.time || '—'}</span>
                 <span style="flex:1;opacity:0.7;font-size:0.82rem;font-style:italic;">${ev.label || ''}</span>
                 <button type="button" onclick="window.editEggCollection(${idx})" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:0.75rem;">Edit</button>
                 <button type="button" onclick="window.deleteEggCollection(${idx})" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:0.75rem;color:var(--danger);">✕</button>
-            </div>`).join('');
+            </div>`;
+        }).join('');
     }
 
     window.addEggCollection = function() {
         const now = new Date(Date.now() + 3 * 3600 * 1000);
         const defaultTime = now.toISOString().substring(11, 16);
-        _showEggCollectionModal({ time: defaultTime, count: '', label: '' }, null);
+        _showEggCollectionModal({ time: defaultTime, count: '', broken: 0, label: '' }, null);
     };
 
     window.editEggCollection = function(idx) {
@@ -1694,29 +1701,30 @@ async function _initApp() {
     function _showEggCollectionModal(data, editIdx) {
         const isEdit = editIdx !== null && editIdx !== undefined;
         const modal = document.createElement('div');
-        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:8000;';
+        modal.className = 'modal-overlay';
         modal.innerHTML = `
-            <div style="background:var(--card-bg,#1e2535);border-radius:14px;padding:28px 24px;min-width:300px;max-width:94vw;box-shadow:0 20px 48px rgba(0,0,0,0.5);">
-                <h3 style="margin:0 0 18px;">${isEdit ? 'Edit' : 'Add'} Collection</h3>
-                <div style="margin-bottom:12px;">
-                    <label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Count (eggs)</label>
-                    <input id="ecm-count" type="number" min="1" value="${data.count||''}" placeholder="e.g. 120"
-                        style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:1.1rem;font-weight:700;box-sizing:border-box;">
+            <div class="modal-content card" style="max-width:340px; padding:24px;">
+                <h3>${isEdit ? 'Edit' : 'Add'} Egg Collection</h3>
+                <div class="input-group">
+                    <label>Intact Eggs Count</label>
+                    <input id="ecm-count" type="number" min="1" value="${data.count||''}" placeholder="e.g. 120" onfocus="this.select()">
                 </div>
-                <div style="margin-bottom:12px;">
-                    <label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Time</label>
-                    <input id="ecm-time" type="time" value="${data.time||''}" 
-                        style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:0.95rem;box-sizing:border-box;">
+                <div class="input-group">
+                    <label>Broken Eggs Count</label>
+                    <input id="ecm-broken" type="number" min="0" value="${data.broken||0}" placeholder="e.g. 0" onfocus="this.select()">
                 </div>
-                <div style="margin-bottom:20px;">
-                    <label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Label (optional)</label>
-                    <input id="ecm-label" type="text" value="${data.label||''}" placeholder="e.g. Morning, After rain…"
-                        style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;font-size:0.9rem;box-sizing:border-box;">
+                <div class="input-group">
+                    <label>Time Collected</label>
+                    <input id="ecm-time" type="time" value="${data.time||''}">
                 </div>
-                <div id="ecm-error" style="display:none;color:#ef4444;font-size:0.82rem;margin-bottom:10px;"></div>
-                <div style="display:flex;gap:10px;">
-                    <button id="ecm-cancel" style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:inherit;cursor:pointer;">Cancel</button>
-                    <button id="ecm-save" style="flex:2;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;font-weight:600;cursor:pointer;">${isEdit ? 'Update' : 'Add Collection'}</button>
+                <div class="input-group">
+                    <label>Label / Notes (optional)</label>
+                    <input id="ecm-label" type="text" value="${data.label||''}" placeholder="e.g. Morning, After rain…">
+                </div>
+                <div id="ecm-error" style="display:none; color:var(--danger); font-size:0.82rem; margin-bottom:10px;"></div>
+                <div style="display:flex; gap:12px; margin-top:20px;">
+                    <button class="btn btn-secondary" id="ecm-cancel" style="flex:1;">Cancel</button>
+                    <button class="btn btn-primary" id="ecm-save" style="flex:1.5;">${isEdit ? 'Update' : 'Add Collection'}</button>
                 </div>
             </div>`;
         document.body.appendChild(modal);
@@ -1725,6 +1733,7 @@ async function _initApp() {
         document.getElementById('ecm-cancel').onclick = () => modal.remove();
         document.getElementById('ecm-save').onclick = async () => {
             const count = parseInt(document.getElementById('ecm-count').value);
+            const broken = parseInt(document.getElementById('ecm-broken').value) || 0;
             const time  = document.getElementById('ecm-time').value;
             const label = document.getElementById('ecm-label').value.trim();
             if (!count || count < 1) {
@@ -1733,7 +1742,7 @@ async function _initApp() {
                 return;
             }
             document.getElementById('ecm-save').textContent = 'Saving…';
-            const eventData = { count, time, label };
+            const eventData = { count, broken, time, label };
 
             if (isEdit) {
                 const existing = _eggCollections[editIdx];
@@ -1851,6 +1860,20 @@ async function _initApp() {
         ]);
         
         const kpis = computeKPIs(logs, batch, farmProfile, stagingToday);
+        
+        if (stagingToday && stagingToday.eggs && stagingToday.eggs.collections) {
+            _eggCollections = stagingToday.eggs.collections.map(c => ({
+                count: c.count,
+                broken: c.broken || 0,
+                time: c.time,
+                label: c.label || c.note || '',
+                _stagingId: c.id
+            }));
+            _renderEggCollectionList();
+        } else {
+            _eggCollections = [];
+            _renderEggCollectionList();
+        }
         
         // Update KPIs
         if($('kpi-layrate')) $('kpi-layrate').innerText = (kpis.todayLayRate * 100).toFixed(1) + '%';
@@ -3787,9 +3810,10 @@ async function _initApp() {
         $('set-prod-drop').value = p.alertThresholds.productionDropPercent;
         if($('set-storage-type')) $('set-storage-type').value = p.eggStorageType || 'room';
 
-        // Sensor alert threshold + Telegram Chat ID
+        // Sensor alert threshold + Telegram Chat ID + Bot Token
         if ($('set-sensor-offline-mins')) $('set-sensor-offline-mins').value = p.sensorOfflineMinutes || 30;
         if ($('set-telegram-chat-id'))   $('set-telegram-chat-id').value   = p.telegramChatId || '';
+        if ($('set-telegram-bot-token')) $('set-telegram-bot-token').value = p.telegramBotToken || '';
 
         // Account & Security panel
         if ($('settings-username-display')) {
@@ -3989,6 +4013,7 @@ async function _initApp() {
         if ($('set-storage-type')) farmProfile.eggStorageType = $('set-storage-type').value;
         if ($('set-sensor-offline-mins')) farmProfile.sensorOfflineMinutes = parseInt($('set-sensor-offline-mins').value);
         if ($('set-telegram-chat-id')) farmProfile.telegramChatId = $('set-telegram-chat-id').value.trim();
+        if ($('set-telegram-bot-token')) farmProfile.telegramBotToken = $('set-telegram-bot-token').value.trim();
         saveFarmProfile(farmProfile);
         window.showToast('Farm profile saved successfully!');
     });
