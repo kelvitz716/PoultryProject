@@ -17,8 +17,10 @@
 
 const { chromium } = require('playwright');
 
-const BASE_URL = process.env.BASE_URL || 'http://localhost:8089';
-const TIMEOUT   = 30_000;
+const BASE_URL   = process.env.BASE_URL    || 'http://localhost:8089';
+const E2E_USER   = process.env.E2E_USERNAME || 'admin';
+const E2E_PASS   = process.env.E2E_PASSWORD || 'password123';
+const TIMEOUT    = 30_000;
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 let passed = 0;
@@ -53,9 +55,9 @@ async function handleAuth(page) {
   if (authState.setupRequired) {
     console.log('  -> First run detected. Completing Setup Wizard...');
     await page.waitForSelector('#setup-username', { timeout: TIMEOUT });
-    await page.fill('#setup-username', 'admin');
-    await page.fill('#setup-password', 'password123');
-    await page.fill('#setup-confirm', 'password123');
+    await page.fill('#setup-username', E2E_USER);
+    await page.fill('#setup-password', E2E_PASS);
+    await page.fill('#setup-confirm', E2E_PASS);
     await page.click('#setup-submit');
     await page.waitForSelector('#auth-overlay', { state: 'detached', timeout: TIMEOUT });
     console.log('  -> Setup Wizard complete.');
@@ -63,8 +65,8 @@ async function handleAuth(page) {
     console.log('  -> Login required. Logging in...');
     // The login modal is injected by JS — wait for it to appear
     await page.waitForSelector('#auth-username', { timeout: TIMEOUT });
-    await page.fill('#auth-username', 'admin');
-    await page.fill('#auth-password', 'password123');
+    await page.fill('#auth-username', E2E_USER);
+    await page.fill('#auth-password', E2E_PASS);
     await page.click('#auth-submit');
     await page.waitForSelector('#auth-overlay', { state: 'detached', timeout: TIMEOUT });
     console.log('  -> Logged in successfully.');
