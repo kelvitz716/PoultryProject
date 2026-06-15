@@ -238,7 +238,7 @@ async function setEntityValue(key, val) {
  * Retrieves a key-value store entry from the entities table.
  * Used for storing general settings, farm profiles, and historical aggregates.
  */
-app.get('/api/entities/:key', async (req, res) => {
+app.get('/api/entities/:key', requireAuth, async (req, res) => {
     try {
         const row = await getQuery('SELECT value FROM entities WHERE key = ?', [req.params.key]);
         let data = row ? JSON.parse(row.value) : null;
@@ -271,7 +271,7 @@ app.get('/api/entities/:key', async (req, res) => {
  * POST /api/entities/:key
  * Inserts or updates a key-value store entry.
  */
-app.post('/api/entities/:key', validateBody, async (req, res) => {
+app.post('/api/entities/:key', requireRole('super_admin', 'admin', 'farmer'), validateBody, async (req, res) => {
     try {
         let valueToSave = req.body.value;
 
@@ -316,7 +316,7 @@ app.post('/api/entities/:key', validateBody, async (req, res) => {
  * GET /api/proposals
  * Retrieves all saved economic investment proposals.
  */
-app.get('/api/proposals', async (req, res) => {
+app.get('/api/proposals', requireAuth, async (req, res) => {
     try {
         const rows = await allQuery('SELECT data FROM proposals');
         res.json(rows.map(r => JSON.parse(r.data)));
@@ -327,7 +327,7 @@ app.get('/api/proposals', async (req, res) => {
  * POST /api/proposals
  * Inserts or updates a financial investment proposal.
  */
-app.post('/api/proposals', validateBody, async (req, res) => {
+app.post('/api/proposals', requireRole('super_admin', 'admin', 'farmer'), validateBody, async (req, res) => {
     try {
         const proposal = req.body;
         await runQuery('INSERT INTO proposals (id, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [proposal.id, JSON.stringify(proposal)]);
@@ -339,7 +339,7 @@ app.post('/api/proposals', validateBody, async (req, res) => {
  * DELETE /api/proposals/:id
  * Deletes a proposal by unique ID (stripping import float decimals).
  */
-app.delete('/api/proposals/:id', async (req, res) => {
+app.delete('/api/proposals/:id', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
         const id = normalizeId(req.params.id);
         await runQuery('DELETE FROM proposals WHERE id = ? OR id = ?', [id, id + '.0']);
@@ -351,7 +351,7 @@ app.delete('/api/proposals/:id', async (req, res) => {
  * DELETE /api/proposals
  * Bulk clear ALL proposals. Requires safety confirmation header.
  */
-app.delete('/api/proposals', requireConfirm, async (req, res) => {
+app.delete('/api/proposals', requireRole('super_admin', 'admin'), requireConfirm, async (req, res) => {
     try {
         await runQuery('DELETE FROM proposals');
         res.json({ success: true });
@@ -365,7 +365,7 @@ app.delete('/api/proposals', requireConfirm, async (req, res) => {
  * GET /api/batches
  * Retrieves all cohort batches (active and archived).
  */
-app.get('/api/batches', async (req, res) => {
+app.get('/api/batches', requireAuth, async (req, res) => {
     try {
         const rows = await allQuery('SELECT data FROM batches');
         res.json(rows.map(r => JSON.parse(r.data)));
@@ -376,7 +376,7 @@ app.get('/api/batches', async (req, res) => {
  * POST /api/batches
  * Inserts or updates a flock cohort batch config.
  */
-app.post('/api/batches', validateBody, async (req, res) => {
+app.post('/api/batches', requireRole('super_admin', 'admin', 'farmer'), validateBody, async (req, res) => {
     try {
         const batch = req.body;
         const id = normalizeId(batch.id);
@@ -390,7 +390,7 @@ app.post('/api/batches', validateBody, async (req, res) => {
  * DELETE /api/batches/:id
  * Deletes a specific batch and purges all logs, transactions, and health records linked to it.
  */
-app.delete('/api/batches/:id', async (req, res) => {
+app.delete('/api/batches/:id', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
         const id = normalizeId(req.params.id);
         await runQuery('DELETE FROM batches WHERE id = ? OR id = ?', [id, id + '.0']);
@@ -406,7 +406,7 @@ app.delete('/api/batches/:id', async (req, res) => {
  * DELETE /api/batches
  * Bulk clears all batch records and operational logs. Requires safety confirmation header.
  */
-app.delete('/api/batches', requireConfirm, async (req, res) => {
+app.delete('/api/batches', requireRole('super_admin', 'admin'), requireConfirm, async (req, res) => {
     try {
         await runQuery('DELETE FROM batches');
         await runQuery('DELETE FROM logs');
@@ -423,7 +423,7 @@ app.delete('/api/batches', requireConfirm, async (req, res) => {
  * GET /api/snapshots
  * Retrieves completed historical cohort snapshots.
  */
-app.get('/api/snapshots', async (req, res) => {
+app.get('/api/snapshots', requireAuth, async (req, res) => {
     try {
         const rows = await allQuery('SELECT data FROM snapshots');
         res.json(rows.map(r => JSON.parse(r.data)));
@@ -434,7 +434,7 @@ app.get('/api/snapshots', async (req, res) => {
  * POST /api/snapshots
  * Saves a completed flock batch cohort snapshot.
  */
-app.post('/api/snapshots', validateBody, async (req, res) => {
+app.post('/api/snapshots', requireRole('super_admin', 'admin', 'farmer'), validateBody, async (req, res) => {
     try {
         const snapshot = req.body;
         await runQuery('INSERT INTO snapshots (id, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [snapshot.id, JSON.stringify(snapshot)]);
@@ -446,7 +446,7 @@ app.post('/api/snapshots', validateBody, async (req, res) => {
  * DELETE /api/snapshots/:id
  * Deletes a specific batch snapshot by ID.
  */
-app.delete('/api/snapshots/:id', async (req, res) => {
+app.delete('/api/snapshots/:id', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
         await runQuery('DELETE FROM snapshots WHERE id = ?', [req.params.id]);
         res.json({ success: true });
@@ -457,7 +457,7 @@ app.delete('/api/snapshots/:id', async (req, res) => {
  * DELETE /api/snapshots
  * Truncates all snapshots. Requires safety confirmation header.
  */
-app.delete('/api/snapshots', requireConfirm, async (req, res) => {
+app.delete('/api/snapshots', requireRole('super_admin', 'admin'), requireConfirm, async (req, res) => {
     try {
         await runQuery('DELETE FROM snapshots');
         res.json({ success: true });
@@ -471,7 +471,7 @@ app.delete('/api/snapshots', requireConfirm, async (req, res) => {
  * GET /api/logs/:batchId
  * Retrieves all daily tracking records for a specific cohort, sorted newest first.
  */
-app.get('/api/logs/:batchId', async (req, res) => {
+app.get('/api/logs/:batchId', requireAuth, async (req, res) => {
     try {
         const rows = await allQuery('SELECT data FROM logs WHERE batch_id = ? ORDER BY date DESC', [req.params.batchId]);
         res.json(rows.map(r => JSON.parse(r.data)));
@@ -482,7 +482,7 @@ app.get('/api/logs/:batchId', async (req, res) => {
  * POST /api/logs/:batchId
  * Saves a daily tracking record (eggs, feed, mortality, etc.).
  */
-app.post('/api/logs/:batchId', async (req, res) => {
+app.post('/api/logs/:batchId', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
     try {
         const log = req.body;
         const id = log.id || `${req.params.batchId}_${log.date}`; // enforce unique compound id
@@ -496,7 +496,7 @@ app.post('/api/logs/:batchId', async (req, res) => {
  * DELETE /api/logs/:batchId/:id
  * Deletes a single daily log entry.
  */
-app.delete('/api/logs/:batchId/:id', async (req, res) => {
+app.delete('/api/logs/:batchId/:id', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
         await runQuery('DELETE FROM logs WHERE batch_id = ? AND id = ?', [req.params.batchId, req.params.id]);
         res.json({ success: true });
@@ -507,7 +507,7 @@ app.delete('/api/logs/:batchId/:id', async (req, res) => {
  * DELETE /api/logs/:batchId
  * Clears all daily logs associated with a specific batch.
  */
-app.delete('/api/logs/:batchId', async (req, res) => {
+app.delete('/api/logs/:batchId', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
         const id = req.params.batchId;
         await runQuery('DELETE FROM logs WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
@@ -624,7 +624,7 @@ async function syncTransactionToLedger(batchId, tx, isDelete = false) {
  * GET /api/transactions/:batchId
  * Retrieves all ledger transactions (cost, revenue) recorded for a cohort.
  */
-app.get('/api/transactions/:batchId', async (req, res) => {
+app.get('/api/transactions/:batchId', requireAuth, async (req, res) => {
     try {
         const rows = await allQuery('SELECT data FROM transactions WHERE batch_id = ?', [req.params.batchId]);
         res.json(rows.map(r => JSON.parse(r.data)));
@@ -635,7 +635,7 @@ app.get('/api/transactions/:batchId', async (req, res) => {
  * POST /api/transactions/:batchId
  * Saves a cost or revenue transaction to the ledger.
  */
-app.post('/api/transactions/:batchId', async (req, res) => {
+app.post('/api/transactions/:batchId', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
     try {
         const tx = req.body;
         const id = tx.id || `${req.params.batchId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -650,7 +650,7 @@ app.post('/api/transactions/:batchId', async (req, res) => {
  * DELETE /api/transactions/:batchId/:id
  * Deletes a ledger transaction.
  */
-app.delete('/api/transactions/:batchId/:id', async (req, res) => {
+app.delete('/api/transactions/:batchId/:id', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
         await syncTransactionToLedger(req.params.batchId, { id: req.params.id }, true);
         await runQuery('DELETE FROM transactions WHERE batch_id = ? AND id = ?', [req.params.batchId, req.params.id]);
@@ -662,7 +662,7 @@ app.delete('/api/transactions/:batchId/:id', async (req, res) => {
  * DELETE /api/transactions/:batchId
  * Clears all transactions for a specific batch.
  */
-app.delete('/api/transactions/:batchId', async (req, res) => {
+app.delete('/api/transactions/:batchId', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
         const id = req.params.batchId;
         const rows = await allQuery('SELECT id FROM transactions WHERE batch_id = ?', [id]);
@@ -904,7 +904,7 @@ app.post('/api/payments/mpesa-callback', async (req, res) => {
  * GET /api/health/:batchId
  * Retrieves all health logs (vaccinations, dewormers, medications) for a batch.
  */
-app.get('/api/health/:batchId', async (req, res) => {
+app.get('/api/health/:batchId', requireAuth, async (req, res) => {
     try {
         const rows = await allQuery('SELECT data FROM health_logs WHERE batch_id = ? ORDER BY updated_at DESC', [req.params.batchId]);
         res.json(rows.map(r => JSON.parse(r.data)));
@@ -915,7 +915,7 @@ app.get('/api/health/:batchId', async (req, res) => {
  * POST /api/health/:batchId
  * Records a new flock health event.
  */
-app.post('/api/health/:batchId', async (req, res) => {
+app.post('/api/health/:batchId', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
     try {
         const log = req.body;
         const id = log.id || `${req.params.batchId}_h_${Date.now()}`;
@@ -932,7 +932,7 @@ app.post('/api/health/:batchId', async (req, res) => {
  * GET /api/export/:batchId
  * Compiles and returns a CSV file download of all daily logs recorded for a batch.
  */
-app.get('/api/export/:batchId', async (req, res) => {
+app.get('/api/export/:batchId', requireAuth, async (req, res) => {
     try {
         const rows = await allQuery('SELECT data FROM logs WHERE batch_id = ? ORDER BY date ASC', [req.params.batchId]);
         if (!rows.length) {
@@ -1312,7 +1312,7 @@ async function fetchTuyaSensorHistory(dateStr) {
  * GET /api/sensors/history
  * Retrieves environmental logs history (temperature/humidity) from the last 7 active logs.
  */
-app.get('/api/sensors/history', async (req, res) => {
+app.get('/api/sensors/history', requireAuth, async (req, res) => {
     try {
         const batchesRows = await allQuery('SELECT data FROM batches');
         const activeBatch = batchesRows
@@ -1349,7 +1349,7 @@ app.get('/api/sensors/history', async (req, res) => {
  * GET /api/sensors/live
  * Retrieves cached live sensor metrics.
  */
-app.get('/api/sensors/live', async (req, res) => {
+app.get('/api/sensors/live', requireAuth, async (req, res) => {
     try {
         const row = await getQuery('SELECT value FROM entities WHERE key = ?', ['live_sensors']);
         res.json(row ? JSON.parse(row.value) : { success: false, error: 'No sensor data available' });
@@ -1364,7 +1364,7 @@ app.get('/api/sensors/live', async (req, res) => {
  * (East Africa Time), for backfilling daily logs that were missed and logged later.
  * Limited to Tuya's free-edition 7-day device log retention.
  */
-app.get('/api/sensors/tuya-history', async (req, res) => {
+app.get('/api/sensors/tuya-history', requireAuth, async (req, res) => {
     const date = req.query.date;
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         return res.status(400).json({ success: false, error: 'Query parameter "date" must be in YYYY-MM-DD format' });
@@ -1378,7 +1378,7 @@ app.get('/api/sensors/tuya-history', async (req, res) => {
  * POST /api/sensors/sync
  * Manually commands the server to execute a Tuya synchronization trigger.
  */
-app.post('/api/sensors/sync', async (req, res) => {
+app.post('/api/sensors/sync', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
     try {
         await syncTuyaSensor();
         const row = await getQuery('SELECT value FROM entities WHERE key = ?', ['live_sensors']);
