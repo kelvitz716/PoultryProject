@@ -3200,7 +3200,7 @@ async function _initApp() {
                        html += buyerSelectHtml;
                        
                        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"><div class="input-group"><label>Unit</label><select id="tx-unit" onchange="window.checkCapacity()"><option value="trays">Trays (30 pcs)</option><option value="pcs">Individual Eggs</option></select></div>`;
-                       html += `<div class="input-group"><label>Quantity</label><input type="number" id="tx-qty" value="1" max="${Math.ceil(inventoryAging.totalUnsold / 30)}" required oninput="window.checkCapacity()"></div></div>`;
+                       html += `<div class="input-group"><label>Quantity</label><input type="number" id="tx-qty" value="1" required oninput="window.checkCapacity()"></div></div>`;
                        
                        html += `<div class="input-group"><label>Delivery Logistics</label><select id="tx-route" onchange="window.checkCapacity()"><option value="pickup">Farm Pickup</option><option value="keke">Keke / Tricycle Delivery</option><option value="saloon">Saloon Car Delivery</option></select></div>`;
                        
@@ -3225,6 +3225,15 @@ async function _initApp() {
                                 const rVal = route.value;
                                 const qVal = parseFloat(qty.value) || 0;
                                 const uVal = unit.value;
+                                
+                                const totalUnsold = ${inventoryAging.totalUnsold};
+                                if (qty) {
+                                    if (uVal === 'trays') {
+                                        qty.max = Math.floor(totalUnsold / 30);
+                                    } else {
+                                        qty.max = totalUnsold;
+                                    }
+                                }
                                 
                                 let trays = uVal === 'trays' ? qVal : qVal / 30;
                                 
