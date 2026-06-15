@@ -39,28 +39,39 @@ async function sleep(ms) {
 }
 
 async function handleAuth(page) {
-  await sleep(1000);
-  const setupVisible = await page.isVisible('#setup-username');
-  if (setupVisible) {
+  // First, ask the server whether we are already authenticated.
+  // We cannot rely on DOM selectors like #nav-dashboard because those elements
+  // exist in the static HTML and are visible immediately, before the JS
+  // auth check runs — causing a false "already logged in" conclusion.
+  const authState = await page.evaluate(async () => {
+    try {
+      const r = await fetch('/api/auth/me');
+      return r.ok ? await r.json() : { user: null };
+    } catch (e) { return { user: null }; }
+  });
+
+  if (authState.setupRequired) {
     console.log('  -> First run detected. Completing Setup Wizard...');
+    await page.waitForSelector('#setup-username', { timeout: TIMEOUT });
     await page.fill('#setup-username', 'admin');
     await page.fill('#setup-password', 'password123');
     await page.fill('#setup-confirm', 'password123');
     await page.click('#setup-submit');
     await page.waitForSelector('#auth-overlay', { state: 'detached', timeout: TIMEOUT });
     console.log('  -> Setup Wizard complete.');
-  } else {
-    const loginVisible = await page.isVisible('#auth-username');
-    if (loginVisible) {
-      console.log('  -> Login required. Logging in...');
-      await page.fill('#auth-username', 'admin');
-      await page.fill('#auth-password', 'password123');
-      await page.click('#auth-submit');
-      await page.waitForSelector('#auth-overlay', { state: 'detached', timeout: TIMEOUT });
-      console.log('  -> Logged in successfully.');
-    }
+  } else if (!authState.user) {
+    console.log('  -> Login required. Logging in...');
+    // The login modal is injected by JS — wait for it to appear
+    await page.waitForSelector('#auth-username', { timeout: TIMEOUT });
+    await page.fill('#auth-username', 'admin');
+    await page.fill('#auth-password', 'password123');
+    await page.click('#auth-submit');
+    await page.waitForSelector('#auth-overlay', { state: 'detached', timeout: TIMEOUT });
+    console.log('  -> Logged in successfully.');
   }
+  // else: authState.user is present — already authenticated, no action needed
 }
+
 
 // ─── main ──────────────────────────────────────────────────────────────────
 (async () => {
@@ -75,6 +86,7 @@ async function handleAuth(page) {
 
   // Forward browser console errors to terminal
   page.on('console', msg => { if (msg.type() === 'error') console.log('  [browser error]', msg.text()); });
+  page.on('pageerror', err => { console.log('  [browser exception]', err.stack || err.message); });
 
   try {
     // ─── TC-01: Page loads ───────────────────────────────────────────────

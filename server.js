@@ -32,7 +32,9 @@ app.use(cors({
         const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
         const isLan = /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin);
         const isTailscale = /^https?:\/\/.*\.ts\.net(:\d+)?$/.test(origin);
-        if (isLocalhost || isLan || isTailscale) {
+        // Tailscale CGNAT IPs (100.64.0.0/10) — covers 100.64.x.x through 100.127.x.x
+        const isTailscaleCGNAT = /^https?:\/\/100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+(:\d+)?$/.test(origin);
+        if (isLocalhost || isLan || isTailscale || isTailscaleCGNAT) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
@@ -567,7 +569,11 @@ async function syncTransactionToLedger(batchId, tx, isDelete = false) {
             } else {
                 drAccount = '1000'; // Cash
             }
-            crAccount = '4000'; // Egg Sales
+            if (cat === 'spent' || cat === 'roosters' || cat === 'rooster') {
+                crAccount = '4010'; // Flock Sales Revenue
+            } else {
+                crAccount = '4000'; // Egg Sales
+            }
         } else if (type === 'purchase') {
             if (cat === 'feed') {
                 drAccount = '1310'; // Feed Inventory
@@ -1832,7 +1838,20 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         const hasAmendment = rows.some(r => r.status === 'amendment');
         const newMortality = byModule.mortality.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
         logData.mortality = (existingLogRow && !hasAmendment ? prevMortality : 0) + newMortality;
-        const newEvents = byModule.mortality.map(e => ({ time: e.time, count: e.count, cause: e.cause, note: e.note }));
+        
+        const newHens = byModule.mortality.reduce((s, e) => s + (parseInt(e.hens) || 0), 0);
+        const newRoosters = byModule.mortality.reduce((s, e) => s + (parseInt(e.roosters) || 0), 0);
+        logData.mortality_hens = (existingLogRow && !hasAmendment ? (logData.mortality_hens || 0) : 0) + newHens;
+        logData.mortality_roosters = (existingLogRow && !hasAmendment ? (logData.mortality_roosters || 0) : 0) + newRoosters;
+        
+        const newEvents = byModule.mortality.map(e => ({ 
+            time: e.time, 
+            count: e.count, 
+            hens: e.hens || 0,
+            roosters: e.roosters || 0,
+            cause: e.cause, 
+            note: e.note 
+        }));
         logData.mortality_events = (existingLogRow && !hasAmendment ? (logData.mortality_events || []) : []).concat(newEvents);
     }
 
