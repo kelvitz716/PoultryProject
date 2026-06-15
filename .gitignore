@@ -29,3 +29,4 @@ build/
 data/
 *.sqlite
 *.db
+.aider*
