@@ -57,11 +57,16 @@ export const KENCHIC_SCHEDULE = [
  * @property {Object} withdrawal - Withdrawal periods for eggs and meat in days.
  */
 export const DRUG_WITHDRAWAL_TABLE = {
-    'Aliseryl WS': { egg: 1, meat: 7 },
-    'Oxytetracycline': { egg: 3, meat: 3 },
-    'Amoxicillin': { egg: 3, meat: 3 },
-    'Tylosin': { egg: 3, meat: 1 },
-    'Levamisole': { egg: 14, meat: 14 }
+    // Keys are drug names; egg_withdrawal = days before eggs safe to sell
+    'Aliseryl WS':     { egg_withdrawal: 1,  meat_withdrawal: 7,  egg: 1,  meat: 7 },
+    'Oxytetracycline': { egg_withdrawal: 3,  meat_withdrawal: 3,  egg: 3,  meat: 3 },
+    'Amoxicillin':     { egg_withdrawal: 3,  meat_withdrawal: 3,  egg: 3,  meat: 3 },
+    'Tylosin':         { egg_withdrawal: 3,  meat_withdrawal: 1,  egg: 3,  meat: 1 },
+    'Levamisole':      { egg_withdrawal: 14, meat_withdrawal: 14, egg: 14, meat: 14 },
+    'Perimin':         { egg_withdrawal: 7,  meat_withdrawal: 21, egg: 7,  meat: 21 },  // Cypermethrin ectoparasiticide
+    'Norotraz':        { egg_withdrawal: 0,  meat_withdrawal: 3,  egg: 0,  meat: 3 },   // Amitraz acaricide
+    'Piperazine':      { egg_withdrawal: 3,  meat_withdrawal: 3,  egg: 3,  meat: 3 },   // Dewormer
+    'Fenbendazole':    { egg_withdrawal: 6,  meat_withdrawal: 6,  egg: 6,  meat: 6 },   // Broad-spectrum dewormer
 };
 
 /**
@@ -77,6 +82,32 @@ export function getKitaleSeason(date) {
     if ([11, 0, 1, 2].includes(month)) return { season: 'dry', riskLevel: 'low' };
     if (month >= 3 && month <= 9) return { season: 'rains', riskLevel: 'high' };
     return { season: 'short-rains', riskLevel: 'medium' };
+}
+
+/**
+ * Computes the Temperature-Humidity Index (THI) for poultry welfare assessment.
+ * Uses the NRC formula adapted for layers: THI = T − (0.31 − 0.31 × RH/100) × (T − 14.4)
+ * @param {number} temp - Dry-bulb temperature in °C.
+ * @param {number} humidity - Relative humidity as a percentage (0–100).
+ * @returns {number} THI value (dimensionless).
+ */
+export function computeTHI(temp, humidity) {
+    if (temp == null || humidity == null) return null;
+    return temp - (0.31 - 0.31 * (humidity / 100)) * (temp - 14.4);
+}
+
+/**
+ * Returns a labelled heat-stress tier based on the THI value for commercial layers.
+ * Tiers: No Stress (<72) | Mild (72–79) | Moderate (80–88) | Severe (>88)
+ * @param {number|null} thi - Temperature-Humidity Index value.
+ * @returns {{ label: string, color: string, emoji: string }}
+ */
+export function getHeatStressStatus(thi) {
+    if (thi == null) return { label: 'No data', color: 'var(--text-muted)', emoji: '❓' };
+    if (thi < 72)  return { label: 'No Stress',  color: 'var(--success, #10b981)', emoji: '✅' };
+    if (thi < 80)  return { label: 'Mild Heat',  color: '#f59e0b', emoji: '⚠️' };
+    if (thi < 88)  return { label: 'Mod. Heat',  color: '#f97316', emoji: '🌡️' };
+    return              { label: 'Severe Heat', color: '#ef4444', emoji: '🔴' };
 }
 
 /**
@@ -428,7 +459,7 @@ export function parseEggTrackerCSV(csvText, farmProfileFlockSize = 49) {
  * @param {Object} profile - Farm profile limits.
  * @returns {Object} Computed KPI dataset containing todayLayRate, avg7LayRate, layRateTrend, feedConversion, etc.
  */
-export function computeKPIs(logs, batch, profile) {
+export function computeKPIs(logs, batch, profile, stagingToday = null) {
     const batchSize = batch.size || profile.flockSize;
     const liveBirds = batch.stats && batch.stats.birdsAlive !== undefined ? batch.stats.birdsAlive : batchSize;
     
@@ -437,8 +468,9 @@ export function computeKPIs(logs, batch, profile) {
     const latestLog = logs[0] || { eggs: 0, feed: 0, birds: liveBirds };
     const currentBirds = liveBirds;
 
-    // Today's lay rate
-    const todayLayRate = currentBirds > 0 ? (latestLog.eggs / currentBirds) : 0;
+    // Today's lay rate — prefer staging today if available (not yet committed)
+    const todayEggs = stagingToday?.total_eggs ?? (latestLog.eggs || 0);
+    const todayLayRate = currentBirds > 0 ? (todayEggs / currentBirds) : 0;
 
     // 7-day moving average lay rate
     const avg7Eggs = recent7.length > 0 ? recent7.reduce((s, l) => s + (l.eggs || 0), 0) / recent7.length : 0;
@@ -466,10 +498,34 @@ export function computeKPIs(logs, batch, profile) {
 
     const avgDailyFeedPerBird = recent7.length > 0 ? (totalFeed7 / recent7.length) / currentBirds : 0.12;
 
+    // --- Sensor data: handle both new min/max/avg shape (staging) and legacy scalar shape ---
+    // Legacy shape: { temperature: 26.3, humidity: 53 } (scalar from old daily_logs)
+    // New shape (from staging aggregation): { temp_avg, temp_min, temp_max, humidity_avg, ...thi_peak, sample_count }
+    let sensorSummary = null;
+    const hasStagingToday = stagingToday && (stagingToday.temp_avg != null || stagingToday.temperature != null);
+    if (hasStagingToday) {
+        const tempAvg  = stagingToday.temp_avg  ?? stagingToday.temperature ?? null;
+        const tempMin  = stagingToday.temp_min  ?? tempAvg;
+        const tempMax  = stagingToday.temp_max  ?? tempAvg;
+        const humAvg   = stagingToday.humidity_avg ?? stagingToday.humidity ?? null;
+        const thiPeak  = stagingToday.thi_peak  ?? (tempMax != null && humAvg != null ? computeTHI(tempMax, humAvg) : null);
+        const thiAvg   = computeTHI(tempAvg, humAvg);
+        const sampleCount = stagingToday.sample_count ?? null;
+        const lowConfidence = sampleCount != null && sampleCount < 48;
+        sensorSummary = { tempAvg, tempMin, tempMax, humAvg, thiPeak, thiAvg, sampleCount, lowConfidence, source: 'staging' };
+    } else if (latestLog.temperature != null || latestLog.humidity != null) {
+        // Legacy scalar — no min/max available
+        const tempAvg = latestLog.temperature ?? null;
+        const humAvg  = latestLog.humidity ?? null;
+        const thiAvg  = computeTHI(tempAvg, humAvg);
+        sensorSummary = { tempAvg, tempMin: null, tempMax: null, humAvg, thiPeak: thiAvg, thiAvg, sampleCount: null, lowConfidence: false, source: 'legacy' };
+    }
+
     return {
         todayLayRate, avg7LayRate, layRateTrend, feedConversion,
         projectedEggs, totalEggs, totalFeed, avgDailyFeedPerBird,
-        currentBirds, avg7Eggs, daysLeft, recent7, recent30
+        currentBirds, avg7Eggs, daysLeft, recent7, recent30,
+        sensorSummary
     };
 }
 
