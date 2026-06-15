@@ -38,6 +38,30 @@ async function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+async function handleAuth(page) {
+  await sleep(1000);
+  const setupVisible = await page.isVisible('#setup-username');
+  if (setupVisible) {
+    console.log('  -> First run detected. Completing Setup Wizard...');
+    await page.fill('#setup-username', 'admin');
+    await page.fill('#setup-password', 'password123');
+    await page.fill('#setup-confirm', 'password123');
+    await page.click('#setup-submit');
+    await page.waitForSelector('#auth-overlay', { state: 'detached', timeout: TIMEOUT });
+    console.log('  -> Setup Wizard complete.');
+  } else {
+    const loginVisible = await page.isVisible('#auth-username');
+    if (loginVisible) {
+      console.log('  -> Login required. Logging in...');
+      await page.fill('#auth-username', 'admin');
+      await page.fill('#auth-password', 'password123');
+      await page.click('#auth-submit');
+      await page.waitForSelector('#auth-overlay', { state: 'detached', timeout: TIMEOUT });
+      console.log('  -> Logged in successfully.');
+    }
+  }
+}
+
 // ─── main ──────────────────────────────────────────────────────────────────
 (async () => {
   console.log('\n═══════════════════════════════════════════════');
@@ -56,6 +80,7 @@ async function sleep(ms) {
     // ─── TC-01: Page loads ───────────────────────────────────────────────
     console.log('TC-01  Page loads & nav tabs visible');
     await page.goto(BASE_URL, { waitUntil: 'networkidle', timeout: TIMEOUT });
+    await handleAuth(page);
     await page.waitForSelector('#nav-dashboard', { timeout: TIMEOUT });
     assert(await page.isVisible('#nav-dashboard'),  'nav-dashboard visible');
     assert(await page.isVisible('#nav-generator'),  'nav-generator visible');
@@ -82,6 +107,7 @@ async function sleep(ms) {
     assert(clearSnapshots,  'DELETE /api/snapshots returned ok');
     // Reload so the UI reflects the cleared state
     await page.reload({ waitUntil: 'networkidle', timeout: TIMEOUT });
+    await handleAuth(page);
     await sleep(500);
     console.log();
 
@@ -176,10 +202,16 @@ async function sleep(ms) {
     await page.waitForSelector('#log-date', { timeout: TIMEOUT });
     await sleep(300);
 
-    // Fill in today's log manually
-    await page.fill('#log-eggs', '85');
-    await page.fill('#log-eggs-morning', '50');
-    await page.fill('#log-eggs-evening', '35');
+    // Click Add Collection button to open the modal
+    await page.click('#btn-add-collection');
+    await page.waitForSelector('#ecm-count', { timeout: TIMEOUT });
+    await page.fill('#ecm-count', '85');
+    await page.fill('#ecm-time', '12:00');
+    await page.fill('#ecm-label', 'Afternoon Collection');
+    await page.click('#ecm-save');
+    // Wait for the modal to close/detach
+    await page.waitForSelector('#ecm-count', { state: 'detached', timeout: TIMEOUT });
+
     await page.fill('#log-sacks', '0');
     await page.fill('#log-mortality', '0');
 
