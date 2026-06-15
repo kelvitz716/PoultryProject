@@ -13,7 +13,7 @@
  * Increment this version suffix when asset logic changes to force cache invalidation.
  * @type {string}
  */
-const CACHE_NAME = 'poultry-dss-v6';
+const CACHE_NAME = 'poultry-dss-v7';
 
 /**
  * Pre-defined list of static resources required for the offline application shell.
