@@ -1503,7 +1503,7 @@ async function _initApp() {
 
                 <div class="card pricing-card" style="height:100%; display:flex; flex-direction:column;">
                     <div class="card-header">
-                        <h3><i data-lucide="tag" style="width:16px;height:16px;"></i> Pricing Assistant</h3>
+                        <h3><i data-lucide="tag" style="width:16px;height:16px;"></i> Pricing &amp; Flock Assistant</h3>
                     </div>
                     <div class="pricing-body" id="pricing-body" style="flex:1; display:flex; flex-direction:column; justify-content:space-between;">
                         <div>
@@ -1516,6 +1516,7 @@ async function _initApp() {
                         </div>
                         <div>
                             <div class="price-advisory" id="price-advisory" style="margin-bottom:12px;">Enter logs to see pricing recommendations.</div>
+                            <div id="flock-ratio-advisory" style="display:none; margin-bottom:12px; padding:12px; border-radius:8px; font-size:12px; border:1px solid var(--border-color);"></div>
                              ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
                             <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="window.openTxModal('sale')"><i data-lucide="plus-circle" style="width:14px;height:14px;"></i> Record a Sale</button>
                             <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px; border-color:#f87171; color:#f87171;" onclick="window.openTxModal('write_off')"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> Log Write-off</button>
@@ -2261,6 +2262,70 @@ async function _initApp() {
             }
         }
 
+        // Flock Ratio Advisory
+        const ratioAdvisory = $('flock-ratio-advisory');
+        if (ratioAdvisory) {
+            const hensCount = kpis.currentHens;
+            const roostersCount = kpis.currentRoosters;
+            if (hensCount > 0 && roostersCount > 0) {
+                const ratio = hensCount / roostersCount;
+                if (ratio < 7) {
+                    // Too many roosters!
+                    const target = Math.max(1, Math.floor(hensCount / 7.5));
+                    const surplus = roostersCount - target;
+                    if (surplus > 0) {
+                        ratioAdvisory.style.display = 'block';
+                        ratioAdvisory.style.background = '#fef3c7';
+                        ratioAdvisory.style.color = '#b45309';
+                        ratioAdvisory.style.borderColor = '#f59e0b';
+                        ratioAdvisory.innerHTML = `
+                            <div style="display:flex; flex-direction:column; gap:8px;">
+                                <div style="display:flex; align-items:center; gap:6px; font-weight:bold;">
+                                    <i data-lucide="alert-triangle" style="width:14px; height:14px; color:#d97706;"></i>
+                                    Ratio Alert: Surplus Roosters
+                                </div>
+                                <div>Ratio is <strong>1:${ratio.toFixed(1)}</strong> (1 rooster per ${ratio.toFixed(1)} hens). Ideal ratio is 1:7-8. Target is ${target} roosters.</div>
+                                ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
+                                <button class="btn btn-primary btn-xs" onclick="window.openSurplusRoostersSaleModal(${surplus})" style="margin-top:4px; background:#d97706; border-color:#d97706; color:#fff; width:100%; justify-content:center; display:flex; align-items:center; gap:4px; font-size:11px;">
+                                    <i data-lucide="trending-up" style="width:12px; height:12px;"></i> Sell ${surplus} surplus roosters
+                                </button>
+                                `}
+                            </div>
+                        `;
+                    } else {
+                        ratioAdvisory.style.display = 'none';
+                    }
+                } else if (ratio > 8) {
+                    // Rooster deficit
+                    ratioAdvisory.style.display = 'block';
+                    ratioAdvisory.style.background = '#eff6ff';
+                    ratioAdvisory.style.color = '#1e40af';
+                    ratioAdvisory.style.borderColor = '#bfdbfe';
+                    ratioAdvisory.innerHTML = `
+                        <div style="display:flex; align-items:center; gap:6px; font-weight:bold;">
+                            <i data-lucide="info" style="width:14px; height:14px; color:#2563eb;"></i>
+                            Rooster Deficit: 1:${ratio.toFixed(1)} hens (ideal is 1:7-8).
+                        </div>
+                    `;
+                } else {
+                    // Ideal ratio
+                    ratioAdvisory.style.display = 'block';
+                    ratioAdvisory.style.background = 'var(--primary-soft)';
+                    ratioAdvisory.style.color = 'var(--primary)';
+                    ratioAdvisory.style.borderColor = 'var(--primary-soft)';
+                    ratioAdvisory.innerHTML = `
+                        <div style="display:flex; align-items:center; gap:6px; font-weight:bold;">
+                            <i data-lucide="check-circle" style="width:14px; height:14px; color:var(--primary);"></i>
+                            Ideal Flock Ratio: 1:${ratio.toFixed(1)} (ideal is 1:7-8).
+                        </div>
+                    `;
+                }
+                if (window.lucide) window.lucide.createIcons();
+            } else {
+                ratioAdvisory.style.display = 'none';
+            }
+        }
+
         const withdrawal = getActiveWithdrawal(healthLogs, logs);
         const discardContainer = $('info-discard-container');
         if (withdrawal.eggsUnderWithdrawal && discardContainer) {
@@ -2849,6 +2914,22 @@ async function _initApp() {
             alerts.push({ type: 'danger', icon: 'alert-octagon', text: `Liveability Crisis: Cumulative mortality at ${mortalityPercent}% (exceeds ISA Brown target of ${(100 - ISA_BROWN_CONSTANTS.targetLiveability).toFixed(1)}% limit).` });
         }
 
+        // Module 1 Biological Alerts - Rooster to Hen Ratio
+        if (kpis.currentHens > 0 && kpis.currentRoosters > 0) {
+            const ratio = kpis.currentHens / kpis.currentRoosters;
+            if (ratio < 7) {
+                const target = Math.max(1, Math.floor(kpis.currentHens / 7.5));
+                const surplus = kpis.currentRoosters - target;
+                if (surplus > 0) {
+                    alerts.push({
+                        type: 'warning',
+                        icon: 'bird',
+                        text: `Surplus Roosters: Ratio is 1:${ratio.toFixed(1)} (ideal 1:7-8). Consider selling ${surplus} roosters.`
+                    });
+                }
+            }
+        }
+
         if (batch.type !== 'broiler') {
             if (batchAgeWeeks >= 4 && batchAgeWeeks <= 5 && kpis.avgDailyFeedPerBird < 0.035) {
                 alerts.push({ type: 'warning', icon: 'scale', text: `Growth-delay risk (Week ${Math.floor(batchAgeWeeks)}): Feed intake low (${(kpis.avgDailyFeedPerBird*1000).toFixed(0)}g/bird). Target >35g.`});
@@ -3171,7 +3252,7 @@ async function _initApp() {
 
 
     // Modal logic for transactions
-    window.openTxModal = async function(type) {
+    window.openTxModal = async function(type, prefilledCategory = null, prefilledQty = null) {
         const title = type === 'purchase' ? 'Log Purchase' : type === 'return' ? 'Log Egg Return' : type === 'write_off' ? 'Log Write-off / Wastage' : 'Log Sale';
         const bid = currentBatchId;
         if (!bid) return;
@@ -3229,6 +3310,13 @@ async function _initApp() {
             </div>
         `;
         document.body.appendChild(modal);
+
+        if (prefilledCategory) {
+            const selectEl = modal.querySelector('#tx-category');
+            if (selectEl) {
+                selectEl.value = prefilledCategory;
+            }
+        }
 
         const renderInputs = () => {
              const cat = $('tx-category').value;
@@ -3308,9 +3396,9 @@ async function _initApp() {
                                 </div>`;
                   } else if (cat === 'manure') {
                        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"><div class="input-group"><label>Unit</label><select id="tx-unit"><option value="bags">50kg Bags</option><option value="wb">Wheelbarrows</option></select></div>`;
-                       html += `<div class="input-group"><label>Quantity</label><input type="number" id="tx-qty" value="1" required></div></div>`;
+                       html += `<div class="input-group"><label>Quantity</label><input type="number" id="tx-qty" value="${prefilledQty !== null ? prefilledQty : 1}" required></div></div>`;
                   } else if (cat === 'spent' || cat === 'roosters') {
-                       html += `<div class="input-group"><label>Birds Sold</label><input type="number" id="tx-qty" value="1" required></div>`;
+                       html += `<div class="input-group"><label>Birds Sold</label><input type="number" id="tx-qty" value="${prefilledQty !== null ? prefilledQty : 1}" required></div>`;
                   }
              } else if (type === 'return') {
                    html = `<div class="input-group"><label>Refund Amount (KES)</label><input type="number" id="tx-amount" value="0" required></div>`;
@@ -3494,6 +3582,10 @@ async function _initApp() {
             if (batch) refreshCockpitData(batch);
         });
     }
+
+    window.openSurplusRoostersSaleModal = function(qty) {
+        window.openTxModal('sale', 'roosters', qty);
+    };
 
     // Logic handled by window.submitDailyLog in cockpit view
 
