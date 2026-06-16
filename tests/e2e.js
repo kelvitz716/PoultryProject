@@ -185,9 +185,9 @@ async function handleAuth(page) {
     // "Start Batch" button appears after preview
     await page.waitForSelector('#btn-start-batch', { state: 'visible', timeout: TIMEOUT });
     await page.click('#btn-start-batch');
-    await sleep(1000);
 
-    // Should switch to batches / cockpit view
+    // Wait for the cockpit view to become visible
+    await page.waitForSelector('#view-batch-cockpit', { timeout: TIMEOUT });
     const cockpitVisible = await page.isVisible('#view-batch-cockpit');
     assert(cockpitVisible, 'Batch cockpit view is visible after Start Batch');
 
@@ -212,10 +212,9 @@ async function handleAuth(page) {
     
     // Click on the ISA Brown Layers batch to open its cockpit
     await page.click('.batch-card:has-text("Batch 001 — ISA Brown Layers")');
-    await sleep(600);
 
-    // Verify we are in the cockpit for ISA Brown
-    await page.waitForSelector('#view-batch-cockpit', { timeout: TIMEOUT });
+    // Verify we are in the cockpit for ISA Brown by waiting for its header text
+    await page.waitForSelector('.cockpit-header h2:has-text("ISA Brown")', { timeout: TIMEOUT });
     const cockpitTitle = await page.$eval('.cockpit-header h2', el => el.innerText);
     assert(cockpitTitle.includes('ISA Brown'), `Cockpit open for ISA Brown: "${cockpitTitle}"`);
 
@@ -231,8 +230,7 @@ async function handleAuth(page) {
     await page.click('#nav-batches');
     await sleep(600);
     await page.click('.batch-card:has-text("100-Bird Kenchic Layer Farm")');
-    await page.waitForSelector('#view-batch-cockpit', { timeout: TIMEOUT });
-    await sleep(600);
+    await page.waitForSelector('.cockpit-header h2:has-text("Kenchic")', { timeout: TIMEOUT });
     console.log();
 
     // ─── TC-05: Run 60d Lifecycle Simulation ────────────────────────────
@@ -248,13 +246,16 @@ async function handleAuth(page) {
     await page.waitForSelector('#sim-confirm-btn', { timeout: TIMEOUT });
     await page.click('#sim-confirm-btn');
 
-    // Wait for sim to complete (it saves 60 logs via fetch)
-    await sleep(5000);
-
-    // Verify logs were created
-    const logs = await page.evaluate(async (bid) => {
-      const r = await fetch('/api/logs/' + bid); return r.json();
-    }, batchId);
+    // Wait for sim to complete (it saves 60 logs via fetch sequentially)
+    console.log('     Waiting for simulation logs to populate...');
+    let logs = [];
+    for (let attempt = 0; attempt < 30; attempt++) {
+      logs = await page.evaluate(async (bid) => {
+        const r = await fetch('/api/logs/' + bid); return r.json();
+      }, batchId);
+      if (logs.length >= 60) break;
+      await sleep(1000);
+    }
     assert(logs.length >= 50, `Simulation created ${logs.length} daily logs (expect ≥50)`);
 
     const txs = await page.evaluate(async (bid) => {
