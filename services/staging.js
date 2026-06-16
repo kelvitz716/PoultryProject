@@ -1,3 +1,9 @@
+/**
+ * @file services/staging.js
+ * @description Staging service module for PoultryDSS. Handles East Africa Time (EAT) timezone helpers,
+ * Telegram notification alerts, and day staging commit engine operations (midnight and recovery commits).
+ */
+
 const { runQuery, allQuery, getQuery } = require('../db');
 
 let computeTHI;
@@ -292,8 +298,8 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         const stagingIds = rows.map(r => r.id);
         const placeholders = stagingIds.map(() => '?').join(',');
         await runQuery(
-            `UPDATE staging SET status = '${STAGING_STATUS.COMMITTED}', updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
-            stagingIds
+            `UPDATE staging SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
+            [STAGING_STATUS.COMMITTED, ...stagingIds]
         );
 
         await runQuery('COMMIT');

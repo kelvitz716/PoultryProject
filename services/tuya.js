@@ -1,3 +1,9 @@
+/**
+ * @file services/tuya.js
+ * @description Tuya Cloud API integration service for PoultryDSS. Manages signature generation, API requests,
+ * access token fetching/caching, live telemetry synchronization, historical logs retrieval, and offline sensor alerts.
+ */
+
 const https = require('https');
 const crypto = require('crypto');
 const { runQuery, getQuery, allQuery } = require('../db');

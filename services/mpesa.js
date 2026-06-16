@@ -1,3 +1,9 @@
+/**
+ * @file services/mpesa.js
+ * @description M-Pesa transaction processing and ledger synchronization service for PoultryDSS.
+ * Handles double-entry bookkeeping transactions matching and Safaricom Daraja STK push confirmations.
+ */
+
 const { runQuery, getQuery, allQuery } = require('../db');
 
 let BATCH_STATUS = { ACTIVE: 'active', POST_BATCH: 'post_batch', COMPLETED: 'completed' };
