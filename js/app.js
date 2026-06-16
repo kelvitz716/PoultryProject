@@ -567,7 +567,7 @@ async function _initApp() {
                 </div>
                 <div class="snapshot-list">
                     ${snapshots.map(s => `
-                        <div class="snapshot-item" onclick="applySnapshot(${s.id})">
+                        <div class="snapshot-item" onclick="window.applySnapshot(${s.id})">
                             <div class="snapshot-info">
                                 <h5>${s.batchName}</h5>
                                 <p>${s.birds} birds • ${s.type} • Profit: KES ${s.totalProfit.toLocaleString()}</p>
@@ -903,10 +903,10 @@ async function _initApp() {
         const available = proposals.filter(p => !batches.some(b => b.proposalId === p.id));
         
         if (available.length === 0) {
-            listEl.innerHTML += `<p style="text-align:center; color:var(--text-muted); padding:20px;">No unused models available. <br><br><a href="#" onclick="document.getElementById('modal-start-batch').style.display='none'; switchView('generator'); return false;" style="color:var(--primary); font-weight:500;">Run a New DSS Analysis instead.</a></p>`;
+            listEl.innerHTML += `<p style="text-align:center; color:var(--text-muted); padding:20px;">No unused models available. <br><br><a href="#" onclick="document.getElementById('modal-start-batch').style.display='none'; window.switchView('generator'); return false;" style="color:var(--primary); font-weight:500;">Run a New DSS Analysis instead.</a></p>`;
         } else {
             listEl.innerHTML += available.map(p => `
-                <div class="project-item" style="cursor:pointer; border:1px solid var(--border-color); padding: 12px; border-radius: 8px; margin-bottom: 8px;" onclick="closeStartBatchModal(); instantiateBatch(${p.id});">
+                <div class="project-item" style="cursor:pointer; border:1px solid var(--border-color); padding: 12px; border-radius: 8px; margin-bottom: 8px;" onclick="window.closeStartBatchModal(); window.instantiateBatch(${p.id});">
                     <div class="project-icon ${p.type}"><i data-lucide="${p.type === 'layer' ? 'egg' : 'bird'}"></i></div>
                     <div class="project-info">
                         <h4 style="margin:0; font-size:14px; font-weight:600;">${p.name}</h4>
@@ -985,7 +985,7 @@ async function _initApp() {
             if (empty) { list.appendChild(empty); empty.style.display = 'block'; }
         } else {
             list.innerHTML = proposals.map(p => `
-                <div class="project-item" data-id="${p.id}" onclick="loadProposal(${p.id});">
+                <div class="project-item" data-id="${p.id}" onclick="window.loadProposal(${p.id});">
                     <div class="project-icon ${p.type}"><i data-lucide="${p.type === 'layer' ? 'egg' : 'bird'}"></i></div>
                     <div class="project-info">
                         <h4>${p.name || 'Untitled'}</h4>
@@ -1000,7 +1000,7 @@ async function _initApp() {
                         <button class="project-delete" onclick="event.stopPropagation(); window.cloneProposal(${p.id})" title="Clone Proposal">
                             <i data-lucide="copy" style="width:14px;height:14px;"></i>
                         </button>
-                        <button class="project-delete" onclick="event.stopPropagation(); deleteProposal(${p.id})" title="Delete">
+                        <button class="project-delete" onclick="event.stopPropagation(); window.deleteProposal(${p.id})" title="Delete">
                             <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
                         </button>
                     </div>
@@ -1014,7 +1014,7 @@ async function _initApp() {
                 batchSummary.innerHTML = `<div class="empty-state"><i data-lucide="activity"></i><p>No active operations.</p></div>`;
             } else {
                 batchSummary.innerHTML = batches.map(b => `
-                    <div class="project-item" onclick="openBatchCockpit(${b.id})">
+                    <div class="project-item" onclick="window.openBatchCockpit(${b.id})">
                         <div class="project-icon" style="background:#E8F5E9; color:#2E7D32;"><i data-lucide="zap"></i></div>
                         <div class="project-info">
                             <h4>${b.name}</h4>
@@ -1060,7 +1060,7 @@ async function _initApp() {
                         <div style="text-align:right;">
                             <strong>KES ${t.amount.toLocaleString()}</strong><br>
                             ${statusHtml}
-                            <button class="btn btn-sm" style="padding:2px 6px; margin-top:4px;" onclick="markInvoicePaid(${t.batchId}, ${t.id})">Mark Paid</button>
+                            <button class="btn btn-sm" style="padding:2px 6px; margin-top:4px;" onclick="window.markInvoicePaid(${t.batchId}, ${t.id})">Mark Paid</button>
                         </div>
                     </div>
                 `}).join('');
@@ -1151,7 +1151,7 @@ async function _initApp() {
                 }
             }
             return `
-            <div class="batch-card" onclick="openBatchCockpit(${b.id})">
+            <div class="batch-card" onclick="window.openBatchCockpit(${b.id})">
                 <div class="batch-header">
                     <span class="batch-badge ${b.status}">${b.status === 'post_batch' ? 'WINDING DOWN' : b.status.toUpperCase()}</span>
                     <button class="project-delete" onclick="event.stopPropagation(); window.deleteBatchUI(${b.id})" title="Delete Batch">
@@ -1287,6 +1287,7 @@ async function _initApp() {
         const batch = getBatches().find(b => String(b.id) === String(id));
         if (!batch) return;
         currentBatchId = id;
+        window.currentBatchId = id;
         window.currentHistoryLimit = 10;
         
         const logs = await api.getLogs(id);
@@ -1335,7 +1336,7 @@ async function _initApp() {
                         <button class="btn btn-secondary btn-sm" onclick="window.openBackfillModal(${batch.id})">
                             <i data-lucide="calendar-plus" style="width:14px; height:14px;"></i> Backfill
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="markLitterChanged()">
+                        <button class="btn btn-secondary btn-sm" onclick="window.markLitterChanged()">
                             <i data-lucide="leaf" style="width:14px; height:14px;"></i> Litter Done
                         </button>
                         <button class="btn btn-primary btn-sm" onclick="window.finishBatch(${batch.id})" style="margin-left:8px;">
@@ -1516,8 +1517,8 @@ async function _initApp() {
                         <div>
                             <div class="price-advisory" id="price-advisory" style="margin-bottom:12px;">Enter logs to see pricing recommendations.</div>
                              ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
-                            <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="openTxModal('sale')"><i data-lucide="plus-circle" style="width:14px;height:14px;"></i> Record a Sale</button>
-                            <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px; border-color:#f87171; color:#f87171;" onclick="openTxModal('write_off')"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> Log Write-off</button>
+                            <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="window.openTxModal('sale')"><i data-lucide="plus-circle" style="width:14px;height:14px;"></i> Record a Sale</button>
+                            <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px; border-color:#f87171; color:#f87171;" onclick="window.openTxModal('write_off')"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> Log Write-off</button>
                             `}
                         </div>
                     </div>
@@ -1544,7 +1545,7 @@ async function _initApp() {
                             <div class="feed-metric"><span>Days Left</span><strong id="feed-days-left">—</strong></div>
                             <div class="feed-metric"><span>Daily Consumption</span><strong id="feed-daily">—</strong></div>
                         </div>
-                         ${batch.status === 'post_batch' || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
+                         ${batch.status === 'post_batch' || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
                     </div>
                 </div>
 
@@ -1571,8 +1572,8 @@ async function _initApp() {
                         <h3><i data-lucide="activity" style="width:16px;height:16px;"></i> Health & Immunization Log</h3>
                         ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
                         <div>
-                            <button class="btn btn-primary btn-sm" onclick="openHealthModal('vaccine')"><i data-lucide="syringe" style="width:14px; height:14px;"></i> Log Vaccine</button>
-                            <button class="btn btn-secondary btn-sm" onclick="openHealthModal('meds')"><i data-lucide="pill" style="width:14px; height:14px;"></i> Log Meds</button>
+                            <button class="btn btn-primary btn-sm" onclick="window.openHealthModal('vaccine')"><i data-lucide="syringe" style="width:14px; height:14px;"></i> Log Vaccine</button>
+                            <button class="btn btn-secondary btn-sm" onclick="window.openHealthModal('meds')"><i data-lucide="pill" style="width:14px; height:14px;"></i> Log Meds</button>
                         </div>
                         `}
                     </div>
@@ -4221,7 +4222,7 @@ async function _initApp() {
                     ${b.phone ? `<span style="color:var(--text-muted); margin-left:8px;">(${b.phone})</span>` : ''}
                     <span style="color:var(--text-muted); margin-left:8px;">(${b.terms})</span>
                 </div>
-                <button type="button" class="btn btn-sm" style="color:var(--danger); padding:2px 6px;" onclick="removeBuyer(${i})"><i data-lucide="trash-2" style="width:14px; height:14px;"></i></button>
+                <button type="button" class="btn btn-sm" style="color:var(--danger); padding:2px 6px;" onclick="window.removeBuyer(${i})"><i data-lucide="trash-2" style="width:14px; height:14px;"></i></button>
             </div>
         `).join('');
         lucide.createIcons();
