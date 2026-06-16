@@ -11,7 +11,8 @@ import {
     ISA_BROWN_CONSTANTS, KITALE_CLIMATE_BASELINE, KENCHIC_SCHEDULE,
     DRUG_WITHDRAWAL_TABLE, getKitaleSeason, FEED_SCHEDULE,
     VACCINATION_SCHEDULE, KB_CONTENT, DEFAULT_FARM_PROFILE,
-    sackBackfill, parseEggTrackerCSV, computeKPIs, computeEggInventoryAging, computeTHI, getHeatStressStatus
+    sackBackfill, parseEggTrackerCSV, computeKPIs, computeEggInventoryAging, computeTHI, getHeatStressStatus,
+    BATCH_STATUS, STAGING_STATUS
 } from './engine.js';
 import { $, showToast, showConfirmModal, updateGlobalNotifications } from './ui.js';
 
@@ -856,7 +857,7 @@ async function _initApp() {
             type: proposal.type,
             size: parseInt(proposal.size) || 0,
             startDate: new Date().toISOString(),
-            status: 'active',
+            status: BATCH_STATUS.ACTIVE,
             stats: { birdsAlive: parseInt(proposal.size) || 0, totalEggs: 0, mortality: 0 },
             assumptions: {
                 eggPrice: proposal.inputs && proposal.inputs['prop-egg-price'] ? parseFloat(proposal.inputs['prop-egg-price']) : 15,
@@ -879,7 +880,7 @@ async function _initApp() {
 
     window.showStartBatchModal = async function() {
         const proposals = await api.getProposals();
-        const batches = getBatches().filter(b => b.status === 'active');
+        const batches = getBatches().filter(b => b.status === BATCH_STATUS.ACTIVE);
         
         // 14-Day Downtime Enforcer
         const snapshots = await api.getSnapshots();
@@ -965,7 +966,7 @@ async function _initApp() {
      */
     async function refreshDashboard() {
         const proposals = await api.getProposals();
-        const batches = getBatches().filter(b => b.status === 'active');
+        const batches = getBatches().filter(b => b.status === BATCH_STATUS.ACTIVE);
         
         const list = $('saved-proposals-list');
         const batchSummary = $('active-batches-summary');
@@ -1153,7 +1154,7 @@ async function _initApp() {
             return `
             <div class="batch-card" onclick="window.openBatchCockpit(${b.id})">
                 <div class="batch-header">
-                    <span class="batch-badge ${b.status}">${b.status === 'post_batch' ? 'WINDING DOWN' : b.status.toUpperCase()}</span>
+                    <span class="batch-badge ${b.status}">${b.status === BATCH_STATUS.POST_BATCH ? 'WINDING DOWN' : b.status.toUpperCase()}</span>
                     <button class="project-delete" onclick="event.stopPropagation(); window.deleteBatchUI(${b.id})" title="Delete Batch">
                         <i data-lucide="trash-2"></i>
                     </button>
@@ -1163,7 +1164,7 @@ async function _initApp() {
                 </div>
                 <div class="batch-metrics">
                     <div class="m-item"><span>Birds</span><strong>${b.stats?.birdsAlive || b.size}</strong></div>
-                    <div class="m-item"><span>Status</span><strong>${b.status === 'completed' ? 'Completed' : b.status === 'post_batch' ? 'Winding Down' : (hasEggs ? 'Laying' : 'Growing')}</strong></div>
+                    <div class="m-item"><span>Status</span><strong>${b.status === 'completed' ? 'Completed' : b.status === BATCH_STATUS.POST_BATCH ? 'Winding Down' : (hasEggs ? 'Laying' : 'Growing')}</strong></div>
                 </div>
                 ${sopHtml}
                 <div class="batch-footer">
@@ -1327,7 +1328,7 @@ async function _initApp() {
                         </button>
                         ${batch.status === 'completed' ? `
                         <span class="pill" style="background:var(--primary-soft); color:var(--primary); font-weight:bold; border:1px solid var(--primary);">Completed</span>
-                        ` : batch.status === 'post_batch' ? `
+                        ` : batch.status === BATCH_STATUS.POST_BATCH ? `
                         <span class="pill" style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d;">Winding Down</span>
                         ` : window.USER_ROLE === 'viewer' ? '' : `
                         <button class="btn btn-secondary btn-sm" onclick="window.openCSVImportModal(${batch.id})">
@@ -1410,7 +1411,7 @@ async function _initApp() {
             <div class="cockpit-grid-spec">
                 <!-- ROW 1 -->
                 <div class="card log-form-card" style="height:100%; display:flex; flex-direction:column; position:relative;">
-                    ${batch.status === 'post_batch' || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? `
+                    ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? `
                     <div style="position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); backdrop-filter:blur(2px); z-index:10; display:flex; align-items:center; justify-content:center; border-radius:8px;">
                         <span style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d; padding:8px 16px; border-radius:8px; display:flex; align-items:center;"><i data-lucide="lock" style="width:14px;height:14px;margin-right:6px;"></i>Daily Logging Disabled (${window.USER_ROLE === 'viewer' ? 'Read-Only Viewer' : batch.status === 'completed' ? 'Completed' : 'Winding Down'})</span>
                     </div>
@@ -1546,7 +1547,7 @@ async function _initApp() {
                             <div class="feed-metric"><span>Days Left</span><strong id="feed-days-left">—</strong></div>
                             <div class="feed-metric"><span>Daily Consumption</span><strong id="feed-daily">—</strong></div>
                         </div>
-                         ${batch.status === 'post_batch' || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
+                         ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
                     </div>
                 </div>
 
@@ -4011,7 +4012,7 @@ async function _initApp() {
                 batch.status = 'completed';
                 batch.closeDate = new Date().toISOString();
             } else {
-                batch.status = 'post_batch';
+                batch.status = BATCH_STATUS.POST_BATCH;
             }
 
             await api.saveBatch(batch);
@@ -4439,7 +4440,7 @@ async function _initApp() {
         }
 
         const [targetAccountId, buyerName] = select.value.split('|');
-        const activeBatch = getBatches().find(b => b.status === 'active');
+        const activeBatch = getBatches().find(b => b.status === BATCH_STATUS.ACTIVE);
         const batchId = activeBatch ? activeBatch.id : null;
 
         const res = await api.reconcileLedgerTransaction({

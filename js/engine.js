@@ -616,3 +616,22 @@ export function computeEggInventoryAging(logs, txs, stagingToday = null) {
     
     return { totalUnsold, unsoldBatches };
 }
+
+/**
+ * Shared batch cohort status constants.
+ * @type {Object}
+ * @property {string} ACTIVE - Cohort is actively tracking and receiving sensor/daily logs.
+ * @property {string} POST_BATCH - Cohort is winding down (only egg sales permitted).
+ */
+export const BATCH_STATUS = { ACTIVE: 'active', POST_BATCH: 'post_batch' };
+
+/**
+ * Shared day-staging event status constants.
+ * @type {Object}
+ * @property {string} PENDING - Stage event is awaiting aggregation and midnight commit.
+ * @property {string} AMENDMENT - Historical correction event that is merged immediately.
+ * @property {string} COMMITTED - Event has been aggregated and written to permanent logs.
+ */
+export const STAGING_STATUS = { PENDING: 'pending', AMENDMENT: 'amendment', COMMITTED: 'committed' };
+
+

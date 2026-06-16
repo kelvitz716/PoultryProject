@@ -26,8 +26,27 @@ const { runQuery, allQuery, getQuery, dbReady } = require('./db');
  * @returns {number|null} THI value (dimensionless).
  */
 let computeTHI;
+
+/**
+ * Shared batch cohort status constants.
+ * Loaded dynamically from the browser-side engine.js ES module to establish a single source of truth.
+ * Holds local default fallback definitions to guarantee runtime safety before dynamic import completes.
+ * @type {Object}
+ */
+let BATCH_STATUS = { ACTIVE: 'active', POST_BATCH: 'post_batch' };
+
+/**
+ * Shared day-staging event status constants.
+ * Loaded dynamically from the browser-side engine.js ES module to establish a single source of truth.
+ * Holds local default fallback definitions to guarantee runtime safety before dynamic import completes.
+ * @type {Object}
+ */
+let STAGING_STATUS = { PENDING: 'pending', AMENDMENT: 'amendment', COMMITTED: 'committed' };
+
 import('./js/engine.js').then(engine => {
     computeTHI = engine.computeTHI;
+    if (engine.BATCH_STATUS) BATCH_STATUS = engine.BATCH_STATUS;
+    if (engine.STAGING_STATUS) STAGING_STATUS = engine.STAGING_STATUS;
 }).catch(err => {
     console.error('Failed to dynamically import engine.js:', err.message);
     // Fallback JSDoc compliant definition to guarantee runtime safety
@@ -845,7 +864,7 @@ app.post('/api/payments/mpesa-callback', async (req, res) => {
             return res.json({ ResultCode: 0, ResultDesc: "Accepted" });
         }
 
-        const activeBatchRow = await getQuery("SELECT id FROM batches WHERE json_extract(data, '$.status') = 'active' LIMIT 1");
+        const activeBatchRow = await getQuery("SELECT id FROM batches WHERE json_extract(data, '$.status') = '" + BATCH_STATUS.ACTIVE + "' LIMIT 1");
         const batchId = activeBatchRow ? activeBatchRow.id : '1779692918051';
 
         let matchedBuyer = null;
@@ -1195,7 +1214,7 @@ async function syncTuyaSensor() {
         // Write a sensor staging event for the active batch (replaces autoFillTodayLog)
         try {
             const batchesRows = await allQuery('SELECT data FROM batches');
-            const activeBatch = batchesRows.map(r => JSON.parse(r.data)).find(b => b.status === 'Active' || b.status === 'active' || b.status === 'post_batch');
+            const activeBatch = batchesRows.map(r => JSON.parse(r.data)).find(b => b.status === 'Active' || b.status === BATCH_STATUS.ACTIVE || b.status === BATCH_STATUS.POST_BATCH);
             if (activeBatch) {
                 const stagingId = `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
                 const ts = getEATTimestamp();
@@ -1214,7 +1233,7 @@ async function syncTuyaSensor() {
                 payload.suspect = suspect;
                 await runQuery(
                     'INSERT OR IGNORE INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    [stagingId, activeBatch.id, 'sensors', date, ts, JSON.stringify(payload), 'pending', 'primary']
+                    [stagingId, activeBatch.id, 'sensors', date, ts, JSON.stringify(payload), STAGING_STATUS.PENDING, 'primary']
                 );
                 if (suspect) console.warn(`Tuya Sync: suspect sensor values flagged for staging row ${stagingId}`);
             }
@@ -1344,7 +1363,7 @@ app.get('/api/sensors/history', requireAuth, async (req, res) => {
         const batchesRows = await allQuery('SELECT data FROM batches');
         const activeBatch = batchesRows
             .map(r => JSON.parse(r.data))
-            .find(b => b.status === 'Active' || b.status === 'active' || b.status === 'post_batch');
+            .find(b => b.status === 'Active' || b.status === BATCH_STATUS.ACTIVE || b.status === BATCH_STATUS.POST_BATCH);
 
         if (!activeBatch) {
             return res.json([]);
@@ -1664,7 +1683,7 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
                 );
                 const pendingMortality = await getQuery(
                     'SELECT SUM(json_extract(data, \"$.count\")) as total FROM staging WHERE batch_id = ? AND module = ? AND status = ?',
-                    [batchId, 'mortality', 'pending']
+                    [batchId, 'mortality', STAGING_STATUS.PENDING]
                 );
                 const totalMortality = (committedMortality?.total || 0) + (pendingMortality?.total || 0) + (data.count || 0);
                 if (totalMortality > initialBirds) {
@@ -1677,7 +1696,7 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
         delete data.id; // remove from internal data payload to save space
         
         const timestamp = getEATTimestamp();
-        const status = isAmendment ? 'amendment' : 'pending';
+        const status = isAmendment ? STAGING_STATUS.AMENDMENT : STAGING_STATUS.PENDING;
         const sensorId = data.sensor_id || 'primary';
         delete data.sensor_id;
 
@@ -1704,7 +1723,7 @@ app.put('/api/staging/:batchId/:stagingId', requireRole('super_admin', 'admin', 
         const { batchId, stagingId } = req.params;
         const row = await getQuery('SELECT * FROM staging WHERE id = ? AND batch_id = ?', [stagingId, batchId]);
         if (!row) return res.status(404).json({ error: 'Staging event not found.' });
-        if (row.status === 'committed') return res.status(409).json({ error: 'Cannot edit a committed event. Use amendment instead.' });
+        if (row.status === STAGING_STATUS.COMMITTED) return res.status(409).json({ error: 'Cannot edit a committed event. Use amendment instead.' });
         await runQuery(
             'UPDATE staging SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             [JSON.stringify(req.body), stagingId]
@@ -1722,7 +1741,7 @@ app.delete('/api/staging/:batchId/:stagingId', requireRole('super_admin', 'admin
         const { batchId, stagingId } = req.params;
         const row = await getQuery('SELECT status FROM staging WHERE id = ? AND batch_id = ?', [stagingId, batchId]);
         if (!row) return res.status(404).json({ error: 'Staging event not found.' });
-        if (row.status === 'committed') return res.status(409).json({ error: 'Cannot delete a committed event. Committed events are immutable audit records.' });
+        if (row.status === STAGING_STATUS.COMMITTED) return res.status(409).json({ error: 'Cannot delete a committed event. Committed events are immutable audit records.' });
         await runQuery('DELETE FROM staging WHERE id = ?', [stagingId]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1738,7 +1757,7 @@ app.get('/api/staging/:batchId/today', requireAuth, async (req, res) => {
         const today = getEATDate();
         const rows = await allQuery(
             'SELECT * FROM staging WHERE batch_id = ? AND date = ? AND status IN (?, ?) ORDER BY timestamp ASC',
-            [req.params.batchId, today, 'pending', 'amendment']
+            [req.params.batchId, today, STAGING_STATUS.PENDING, STAGING_STATUS.AMENDMENT]
         );
 
         const byModule = {};
@@ -1810,7 +1829,7 @@ app.get('/api/staging/:batchId/today', requireAuth, async (req, res) => {
 async function commitDayStaging(date, batchId, isRecovery = false) {
     const rows = await allQuery(
         'SELECT * FROM staging WHERE batch_id = ? AND date = ? AND status IN (?, ?) ORDER BY timestamp ASC',
-        [batchId, date, 'pending', 'amendment']
+        [batchId, date, STAGING_STATUS.PENDING, STAGING_STATUS.AMENDMENT]
     );
     if (rows.length === 0) return;
 
@@ -1845,7 +1864,7 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
     if (byModule.feed) {
         const prevKg = logData.feedGiven || 0;
         const prevSacks = logData.sacks || 0;
-        const hasAmendment = rows.some(r => r.status === 'amendment');
+        const hasAmendment = rows.some(r => r.status === STAGING_STATUS.AMENDMENT);
         const kg = byModule.feed.reduce((s, e) => s + (parseFloat(e.amount_kg) || 0), 0);
         const sacks = byModule.feed.reduce((s, e) => s + (parseInt(e.sacks_opened) || 0), 0);
         logData.feedGiven = (existingLogRow && !hasAmendment ? prevKg : 0) + kg;
@@ -1855,7 +1874,7 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
     // ── Mortality: sum ──
     if (byModule.mortality) {
         const prevMortality = logData.mortality || 0;
-        const hasAmendment = rows.some(r => r.status === 'amendment');
+        const hasAmendment = rows.some(r => r.status === STAGING_STATUS.AMENDMENT);
         const newMortality = byModule.mortality.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
         logData.mortality = (existingLogRow && !hasAmendment ? prevMortality : 0) + newMortality;
         
@@ -1881,7 +1900,7 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         const temps = validReadings.map(e => e.temperature).filter(v => v != null);
         const hums = validReadings.map(e => e.humidity).filter(v => v != null);
         
-        const hasAmendment = rows.some(r => r.status === 'amendment');
+        const hasAmendment = rows.some(r => r.status === STAGING_STATUS.AMENDMENT);
         // Check if we have an existing log row to merge values with, and make sure we aren't performing a clean amendment overwrite.
         const hasPrev = existingLogRow && !hasAmendment;
         const prevCount = hasPrev ? (logData.sample_count || 0) : 0;
@@ -1984,7 +2003,7 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         const stagingIds = rows.map(r => r.id);
         const placeholders = stagingIds.map(() => '?').join(',');
         await runQuery(
-            `UPDATE staging SET status = 'committed', updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
+            `UPDATE staging SET status = '${STAGING_STATUS.COMMITTED}', updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
             stagingIds
         );
 
@@ -2013,7 +2032,7 @@ async function recoverMissedCommits() {
         const today = getEATDate();
         const missed = await allQuery(
             'SELECT DISTINCT date, batch_id FROM staging WHERE status IN (?, ?) AND date < ? ORDER BY date ASC',
-            ['pending', 'amendment', today]
+            [STAGING_STATUS.PENDING, STAGING_STATUS.AMENDMENT, today]
         );
         if (missed.length === 0) {
             console.log('Recovery: no missed commits found.');
@@ -2045,7 +2064,7 @@ function scheduleMidnightCommit() {
         try {
             const activeBatches = await allQuery(
                 'SELECT DISTINCT batch_id FROM staging WHERE date = ? AND status = ?',
-                [yesterday, 'pending']
+                [yesterday, STAGING_STATUS.PENDING]
             );
             for (const row of activeBatches) {
                 await commitDayStaging(yesterday, row.batch_id, false);
