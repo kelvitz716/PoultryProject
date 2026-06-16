@@ -98,15 +98,15 @@ export function computeTHI(temp, humidity) {
 
 /**
  * Returns a labelled heat-stress tier based on the THI value for commercial layers.
- * Tiers: No Stress (<72) | Mild (72–79) | Moderate (80–88) | Severe (>88)
+ * Tiers: No Stress (<22) | Mild (22–24) | Moderate (24–27) | Severe (>27)
  * @param {number|null} thi - Temperature-Humidity Index value.
  * @returns {{ label: string, color: string, emoji: string }}
  */
 export function getHeatStressStatus(thi) {
     if (thi == null) return { label: 'No data', color: 'var(--text-muted)', emoji: '❓' };
-    if (thi < 72)  return { label: 'No Stress',  color: 'var(--success, #10b981)', emoji: '✅' };
-    if (thi < 80)  return { label: 'Mild Heat',  color: '#f59e0b', emoji: '⚠️' };
-    if (thi < 88)  return { label: 'Mod. Heat',  color: '#f97316', emoji: '🌡️' };
+    if (thi < 22)  return { label: 'No Stress',  color: 'var(--success, #10b981)', emoji: '✅' };
+    if (thi < 24)  return { label: 'Mild Heat',  color: '#f59e0b', emoji: '⚠️' };
+    if (thi < 27)  return { label: 'Mod. Heat',  color: '#f97316', emoji: '🌡️' };
     return              { label: 'Severe Heat', color: '#ef4444', emoji: '🔴' };
 }
 

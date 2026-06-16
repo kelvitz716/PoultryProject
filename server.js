@@ -1175,7 +1175,7 @@ async function syncTuyaSensor() {
         // Write a sensor staging event for the active batch (replaces autoFillTodayLog)
         try {
             const batchesRows = await allQuery('SELECT data FROM batches');
-            const activeBatch = batchesRows.map(r => JSON.parse(r.data)).find(b => b.status === 'Active');
+            const activeBatch = batchesRows.map(r => JSON.parse(r.data)).find(b => b.status === 'Active' || b.status === 'active' || b.status === 'post_batch');
             if (activeBatch) {
                 const stagingId = `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
                 const ts = getEATTimestamp();
@@ -1860,16 +1860,47 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         const validReadings = byModule.sensors.filter(e => !e.suspect);
         const temps = validReadings.map(e => e.temperature).filter(v => v != null);
         const hums = validReadings.map(e => e.humidity).filter(v => v != null);
+        
+        const hasAmendment = rows.some(r => r.status === 'amendment');
+        const hasPrev = existingLogRow && !hasAmendment;
+        const prevCount = hasPrev ? (logData.sample_count || 0) : 0;
+        
         if (temps.length) {
-            logData.temperature_min = Math.round(Math.min(...temps) * 10) / 10;
-            logData.temperature_avg = Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 10) / 10;
-            logData.temperature_max = Math.round(Math.max(...temps) * 10) / 10;
+            const newMin = Math.min(...temps);
+            const newMax = Math.max(...temps);
+            if (hasPrev && logData.temperature_avg != null) {
+                logData.temperature_min = Math.min(logData.temperature_min, newMin);
+                logData.temperature_max = Math.max(logData.temperature_max, newMax);
+                const prevTotal = logData.temperature_avg * prevCount;
+                const newTotal = temps.reduce((a, b) => a + b, 0);
+                logData.temperature_avg = (prevTotal + newTotal) / (prevCount + temps.length);
+            } else {
+                logData.temperature_min = newMin;
+                logData.temperature_max = newMax;
+                logData.temperature_avg = temps.reduce((a, b) => a + b, 0) / temps.length;
+            }
+            logData.temperature_min = Math.round(logData.temperature_min * 10) / 10;
+            logData.temperature_max = Math.round(logData.temperature_max * 10) / 10;
+            logData.temperature_avg = Math.round(logData.temperature_avg * 10) / 10;
             logData.temperature = logData.temperature_avg; // legacy compat
         }
         if (hums.length) {
-            logData.humidity_min = Math.round(Math.min(...hums));
-            logData.humidity_avg = Math.round(hums.reduce((a, b) => a + b, 0) / hums.length);
-            logData.humidity_max = Math.round(Math.max(...hums));
+            const newMin = Math.min(...hums);
+            const newMax = Math.max(...hums);
+            if (hasPrev && logData.humidity_avg != null) {
+                logData.humidity_min = Math.min(logData.humidity_min, newMin);
+                logData.humidity_max = Math.max(logData.humidity_max, newMax);
+                const prevTotal = logData.humidity_avg * prevCount;
+                const newTotal = hums.reduce((a, b) => a + b, 0);
+                logData.humidity_avg = (prevTotal + newTotal) / (prevCount + hums.length);
+            } else {
+                logData.humidity_min = newMin;
+                logData.humidity_max = newMax;
+                logData.humidity_avg = hums.reduce((a, b) => a + b, 0) / hums.length;
+            }
+            logData.humidity_min = Math.round(logData.humidity_min);
+            logData.humidity_max = Math.round(logData.humidity_max);
+            logData.humidity_avg = Math.round(logData.humidity_avg);
             logData.humidity = logData.humidity_avg; // legacy compat
         }
         const thiPeak = validReadings.reduce((max, e) => {
@@ -1877,8 +1908,14 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
             const thi = e.temperature - (0.31 - 0.31 * (e.humidity / 100)) * (e.temperature - 14.4);
             return thi > max ? thi : max;
         }, -Infinity);
-        if (isFinite(thiPeak)) logData.thi_peak = Math.round(thiPeak * 10) / 10;
-        logData.sample_count = (logData.sample_count || 0) + validReadings.length;
+        if (isFinite(thiPeak)) {
+            if (hasPrev && logData.thi_peak != null) {
+                logData.thi_peak = Math.round(Math.max(logData.thi_peak, thiPeak) * 10) / 10;
+            } else {
+                logData.thi_peak = Math.round(thiPeak * 10) / 10;
+            }
+        }
+        logData.sample_count = prevCount + validReadings.length;
     }
 
     // ── Gases: first reading of day (morning pre-ventilation peak) ──
