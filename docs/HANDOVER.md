@@ -32,6 +32,10 @@ All primary operating features—including lifecycle generation, algorithmic flo
 *   **Same-Day FIFO Inclusions**: Integrated today's staged eggs (`stagingToday`) into the FIFO inventory calculation log, preventing mechanical inventory allocation errors for same-day dispatches.
 *   **Backfill Overwrites vs Accumulation**: The staging compiler now matches `'amendment'` status rows to overwrite daily feed/mortality log values rather than adding to them on log backfill adjustments.
 
+#### 5. Flock Split & Rooster Ratio Advisory
+*   **Live Flock Breakdown**: Implemented separate baseline configuration and live count calculations for hens and roosters.
+*   **Rooster Ratio Advisory**: Added a visual banner indicating whether the hen-to-rooster ratio is ideal (1:7–8), alert warnings under surplus, and a one-click button that pre-populates the transaction modal to facilitate selling off surplus roosters.
+
 ---
 
 ## Technical Backlog & Workarounds

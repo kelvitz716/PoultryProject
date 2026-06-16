@@ -23,6 +23,8 @@
 - `[x]` **Growth-delay early warning** — flag any weight/feed deviation at weeks 4–5 that correlates with reduced laying capacity; generate a remediation prompt
 - `[x]` **Skeletal readiness check prompt** — detect the pre-lay "squat response" window (~1 week before first egg) and prompt the farmer to perform a skeletal check before transitioning from grower to layer mash
 - `[x]` **Kitale climate baseline** — store ambient range of 16–26 °C (daytime) / 12–14 °C (nights) as regional defaults; use these in all deviation calculations instead of generic tropical values
+- `[x]` **Flock split tracking (Hens/Roosters)** — Track separate counts for hens and roosters. Subtract deaths and sales from their respective baselines to determine active counts.
+- `[x]` **Rooster-to-Hen Ratio Advisory** — Alert the user when the rooster-to-hen ratio exceeds the ideal 1:7–8 range and provide a one-click button to auto-fill the sale of surplus roosters.
 
 ---
 
