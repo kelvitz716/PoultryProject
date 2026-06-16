@@ -1895,12 +1895,22 @@ async function _initApp() {
         setTimeout(() => document.getElementById('ecm-count')?.focus(), 80);
 
         document.getElementById('ecm-cancel').onclick = () => modal.remove();
+        /**
+         * Event handler for saving or updating an egg collection event.
+         * Validates inputs locally before posting to the server-side staging event buffer.
+         */
         document.getElementById('ecm-save').onclick = async () => {
             const countVal = document.getElementById('ecm-count').value.trim();
+            // Allow 0 intact eggs (explicit entry) but reject empty/blank inputs (resolve to NaN)
             const count = countVal === '' ? NaN : parseInt(countVal);
             const broken = parseInt(document.getElementById('ecm-broken').value) || 0;
             const time  = document.getElementById('ecm-time').value;
             const label = document.getElementById('ecm-label').value.trim();
+            
+            // Enforce that:
+            // 1. Intact egg count must be a valid number and non-negative.
+            // 2. Broken count must be non-negative.
+            // 3. A collection event must record at least 1 egg (either intact or broken).
             if (isNaN(count) || count < 0 || broken < 0 || (count === 0 && broken === 0)) {
                 document.getElementById('ecm-error').textContent = 'Enter a valid intact egg count or log at least 1 broken egg.';
                 document.getElementById('ecm-error').style.display = 'block';
@@ -3252,7 +3262,14 @@ async function _initApp() {
     };
 
 
-    // Modal logic for transactions
+    /**
+     * Opens the transaction modal for logging financial entries (purchases, sales, write-offs, or returns).
+     * Automatically pre-fills inputs if provided.
+     * 
+     * @param {string} type - The transaction type ('purchase', 'sale', 'write_off', 'return').
+     * @param {string|null} prefilledCategory - A preselected category for the transaction (e.g. 'roosters').
+     * @param {number|null} prefilledQty - A pre-filled quantity value.
+     */
     window.openTxModal = async function(type, prefilledCategory = null, prefilledQty = null) {
         const title = type === 'purchase' ? 'Log Purchase' : type === 'return' ? 'Log Egg Return' : type === 'write_off' ? 'Log Write-off / Wastage' : 'Log Sale';
         const bid = currentBatchId;
@@ -3584,6 +3601,12 @@ async function _initApp() {
         });
     }
 
+    /**
+     * Opens the transaction modal pre-filled for selling a specified quantity of surplus roosters.
+     * Triggered by the Rooster Ratio Advisory alert.
+     * 
+     * @param {number} qty - The quantity of surplus roosters to pre-fill.
+     */
     window.openSurplusRoostersSaleModal = function(qty) {
         window.openTxModal('sale', 'roosters', qty);
     };

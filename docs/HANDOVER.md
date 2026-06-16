@@ -35,6 +35,7 @@ All primary operating features—including lifecycle generation, algorithmic flo
 #### 5. Flock Split & Rooster Ratio Advisory
 *   **Live Flock Breakdown**: Implemented separate baseline configuration and live count calculations for hens and roosters.
 *   **Rooster Ratio Advisory**: Added a visual banner indicating whether the hen-to-rooster ratio is ideal (1:7–8), alert warnings under surplus, and a one-click button that pre-populates the transaction modal to facilitate selling off surplus roosters.
+*   **Egg Logging Validation**: Allowed logging `0` intact eggs as long as at least `1` broken egg is logged in the collection round, enabling farmers to record collections with only broken eggs successfully while still preventing completely empty logs.
 
 ---
 
