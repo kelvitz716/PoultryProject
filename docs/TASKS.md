@@ -164,7 +164,7 @@
   - `[x]` Add dashboard flag for active withdrawals (visual alerts).
 - `[x]` **Guest read-only access** — Implement role checks with limited UI (enforced via requireAuth and requireRole middleware on REST API level, supporting token-authenticated viewer roles).
 - `[ ]` **Multi-user support** — Add a `users` schema table and session middleware to scope database queries by `user_id`.
-- `[ ]` **Same-day log behavior resolution**:
-  - `[ ]` Egg collections: accumulate (sum multiple entries).
-  - `[ ]` Point-in-time metrics (feed weight, temp, humidity): overwrite (one value per day).
+- `[x]` **Same-day log behavior resolution**:
+  - `[x]` Egg collections: accumulate (sum multiple entries).
+  - `[x]` Point-in-time metrics (feed weight, temp, humidity): overwrite (one value per day).
 - `[x]` **Sensor offline alert via StoryFlow** — Track last sync timestamp, and dispatch Telegram alert if it exceeds a configurable threshold (e.g., 4 hours).

@@ -33,7 +33,7 @@ let computeTHI;
  * Holds local default fallback definitions to guarantee runtime safety before dynamic import completes.
  * @type {Object}
  */
-let BATCH_STATUS = { ACTIVE: 'active', POST_BATCH: 'post_batch' };
+let BATCH_STATUS = { ACTIVE: 'active', POST_BATCH: 'post_batch', COMPLETED: 'completed' };
 
 /**
  * Shared day-staging event status constants.
@@ -864,7 +864,7 @@ app.post('/api/payments/mpesa-callback', async (req, res) => {
             return res.json({ ResultCode: 0, ResultDesc: "Accepted" });
         }
 
-        const activeBatchRow = await getQuery("SELECT id FROM batches WHERE json_extract(data, '$.status') = '" + BATCH_STATUS.ACTIVE + "' LIMIT 1");
+        const activeBatchRow = await getQuery("SELECT id FROM batches WHERE json_extract(data, '$.status') = ? LIMIT 1", [BATCH_STATUS.ACTIVE]);
         const batchId = activeBatchRow ? activeBatchRow.id : '1779692918051';
 
         let matchedBuyer = null;
@@ -1214,7 +1214,7 @@ async function syncTuyaSensor() {
         // Write a sensor staging event for the active batch (replaces autoFillTodayLog)
         try {
             const batchesRows = await allQuery('SELECT data FROM batches');
-            const activeBatch = batchesRows.map(r => JSON.parse(r.data)).find(b => b.status === 'Active' || b.status === BATCH_STATUS.ACTIVE || b.status === BATCH_STATUS.POST_BATCH);
+            const activeBatch = batchesRows.map(r => JSON.parse(r.data)).find(b => b.status === BATCH_STATUS.ACTIVE || b.status === BATCH_STATUS.POST_BATCH);
             if (activeBatch) {
                 const stagingId = `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
                 const ts = getEATTimestamp();
@@ -1363,7 +1363,7 @@ app.get('/api/sensors/history', requireAuth, async (req, res) => {
         const batchesRows = await allQuery('SELECT data FROM batches');
         const activeBatch = batchesRows
             .map(r => JSON.parse(r.data))
-            .find(b => b.status === 'Active' || b.status === BATCH_STATUS.ACTIVE || b.status === BATCH_STATUS.POST_BATCH);
+            .find(b => b.status === BATCH_STATUS.ACTIVE || b.status === BATCH_STATUS.POST_BATCH);
 
         if (!activeBatch) {
             return res.json([]);

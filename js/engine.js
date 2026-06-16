@@ -622,8 +622,9 @@ export function computeEggInventoryAging(logs, txs, stagingToday = null) {
  * @type {Object}
  * @property {string} ACTIVE - Cohort is actively tracking and receiving sensor/daily logs.
  * @property {string} POST_BATCH - Cohort is winding down (only egg sales permitted).
+ * @property {string} COMPLETED - Cohort is finalized and archived (success snapshot saved).
  */
-export const BATCH_STATUS = { ACTIVE: 'active', POST_BATCH: 'post_batch' };
+export const BATCH_STATUS = { ACTIVE: 'active', POST_BATCH: 'post_batch', COMPLETED: 'completed' };
 
 /**
  * Shared day-staging event status constants.

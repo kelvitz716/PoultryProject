@@ -1101,7 +1101,7 @@ async function _initApp() {
         const list = $('batches-list');
         
         let bannerHtml = '';
-        const completedBatches = batches.filter(b => b.status === 'completed');
+        const completedBatches = batches.filter(b => b.status === BATCH_STATUS.COMPLETED);
         let latestCloseDate = null;
         for (const b of completedBatches) {
             if (b.closeDate) {
@@ -1142,7 +1142,7 @@ async function _initApp() {
             const stagedEggs = (stagingToday && stagingToday.eggs && stagingToday.eggs.collections && stagingToday.eggs.collections.length > 0);
             const hasEggs = stagedEggs || logs.some(l => (parseInt(l.eggs) || 0) > 0);
             
-            const isCompleted = b.status === 'completed';
+            const isCompleted = b.status === BATCH_STATUS.COMPLETED;
             let sopHtml = '';
             if (isCompleted) {
                 if (b.cleanoutSOP) {
@@ -1164,7 +1164,7 @@ async function _initApp() {
                 </div>
                 <div class="batch-metrics">
                     <div class="m-item"><span>Birds</span><strong>${b.stats?.birdsAlive || b.size}</strong></div>
-                    <div class="m-item"><span>Status</span><strong>${b.status === 'completed' ? 'Completed' : b.status === BATCH_STATUS.POST_BATCH ? 'Winding Down' : (hasEggs ? 'Laying' : 'Growing')}</strong></div>
+                    <div class="m-item"><span>Status</span><strong>${b.status === BATCH_STATUS.COMPLETED ? 'Completed' : b.status === BATCH_STATUS.POST_BATCH ? 'Winding Down' : (hasEggs ? 'Laying' : 'Growing')}</strong></div>
                 </div>
                 ${sopHtml}
                 <div class="batch-footer">
@@ -1326,7 +1326,7 @@ async function _initApp() {
                         <button class="btn btn-secondary btn-sm" onclick="window.open('/api/export/${batch.id}', '_blank')">
                             <i data-lucide="download" style="width:14px; height:14px;"></i> Export
                         </button>
-                        ${batch.status === 'completed' ? `
+                        ${batch.status === BATCH_STATUS.COMPLETED ? `
                         <span class="pill" style="background:var(--primary-soft); color:var(--primary); font-weight:bold; border:1px solid var(--primary);">Completed</span>
                         ` : batch.status === BATCH_STATUS.POST_BATCH ? `
                         <span class="pill" style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d;">Winding Down</span>
@@ -1411,9 +1411,9 @@ async function _initApp() {
             <div class="cockpit-grid-spec">
                 <!-- ROW 1 -->
                 <div class="card log-form-card" style="height:100%; display:flex; flex-direction:column; position:relative;">
-                    ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? `
+                    ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === BATCH_STATUS.COMPLETED || window.USER_ROLE === 'viewer' ? `
                     <div style="position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); backdrop-filter:blur(2px); z-index:10; display:flex; align-items:center; justify-content:center; border-radius:8px;">
-                        <span style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d; padding:8px 16px; border-radius:8px; display:flex; align-items:center;"><i data-lucide="lock" style="width:14px;height:14px;margin-right:6px;"></i>Daily Logging Disabled (${window.USER_ROLE === 'viewer' ? 'Read-Only Viewer' : batch.status === 'completed' ? 'Completed' : 'Winding Down'})</span>
+                        <span style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d; padding:8px 16px; border-radius:8px; display:flex; align-items:center;"><i data-lucide="lock" style="width:14px;height:14px;margin-right:6px;"></i>Daily Logging Disabled (${window.USER_ROLE === 'viewer' ? 'Read-Only Viewer' : batch.status === BATCH_STATUS.COMPLETED ? 'Completed' : 'Winding Down'})</span>
                     </div>
                     ` : ''}
                     <div class="card-header">
@@ -1518,7 +1518,7 @@ async function _initApp() {
                         <div>
                             <div class="price-advisory" id="price-advisory" style="margin-bottom:12px;">Enter logs to see pricing recommendations.</div>
                             <div id="flock-ratio-advisory" style="display:none; margin-bottom:12px; padding:12px; border-radius:8px; font-size:12px; border:1px solid var(--border-color);"></div>
-                             ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
+                             ${batch.status === BATCH_STATUS.COMPLETED || window.USER_ROLE === 'viewer' ? '' : `
                             <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="window.openTxModal('sale')"><i data-lucide="plus-circle" style="width:14px;height:14px;"></i> Record a Sale</button>
                             <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px; border-color:#f87171; color:#f87171;" onclick="window.openTxModal('write_off')"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> Log Write-off</button>
                             `}
@@ -1547,7 +1547,7 @@ async function _initApp() {
                             <div class="feed-metric"><span>Days Left</span><strong id="feed-days-left">—</strong></div>
                             <div class="feed-metric"><span>Daily Consumption</span><strong id="feed-daily">—</strong></div>
                         </div>
-                         ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
+                         ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === BATCH_STATUS.COMPLETED || window.USER_ROLE === 'viewer' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
                     </div>
                 </div>
 
@@ -1572,7 +1572,7 @@ async function _initApp() {
                 <div class="card" style="height:100%; display:flex; flex-direction:column; grid-column: 1 / -1;">
                     <div class="card-header">
                         <h3><i data-lucide="activity" style="width:16px;height:16px;"></i> Health & Immunization Log</h3>
-                        ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
+                        ${batch.status === BATCH_STATUS.COMPLETED || window.USER_ROLE === 'viewer' ? '' : `
                         <div>
                             <button class="btn btn-primary btn-sm" onclick="window.openHealthModal('vaccine')"><i data-lucide="syringe" style="width:14px; height:14px;"></i> Log Vaccine</button>
                             <button class="btn btn-secondary btn-sm" onclick="window.openHealthModal('meds')"><i data-lucide="pill" style="width:14px; height:14px;"></i> Log Meds</button>
@@ -2304,7 +2304,7 @@ async function _initApp() {
                                     Ratio Alert: Surplus Roosters
                                 </div>
                                 <div>Ratio is <strong>1:${ratio.toFixed(1)}</strong> (1 rooster per ${ratio.toFixed(1)} hens). Ideal ratio is 1:7-8. Target is ${target} roosters.</div>
-                                ${batch.status === 'completed' || window.USER_ROLE === 'viewer' ? '' : `
+                                ${batch.status === BATCH_STATUS.COMPLETED || window.USER_ROLE === 'viewer' ? '' : `
                                 <button class="btn btn-primary btn-xs" onclick="window.openSurplusRoostersSaleModal(${surplus})" style="margin-top:4px; background:#d97706; border-color:#d97706; color:#fff; width:100%; justify-content:center; display:flex; align-items:center; gap:4px; font-size:11px;">
                                     <i data-lucide="trending-up" style="width:12px; height:12px;"></i> Sell ${surplus} surplus roosters
                                 </button>
@@ -2858,7 +2858,7 @@ async function _initApp() {
 
 
     function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash, txs, healthLogs) {
-        if (batch.status === 'completed') {
+        if (batch.status === BATCH_STATUS.COMPLETED) {
             updateGlobalNotifications([]);
             return;
         }
@@ -4009,7 +4009,7 @@ async function _initApp() {
                 };
                 await updateAggregates(batch, logs, finalTxs, kpis);
                 await api.saveSnapshot(snapshot);
-                batch.status = 'completed';
+                batch.status = BATCH_STATUS.COMPLETED;
                 batch.closeDate = new Date().toISOString();
             } else {
                 batch.status = BATCH_STATUS.POST_BATCH;
