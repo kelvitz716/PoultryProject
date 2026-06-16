@@ -17,6 +17,14 @@ const session = require('express-session');
 const ConnectSQLite3 = require('connect-sqlite3')(session);
 const { runQuery, allQuery, getQuery, dbReady } = require('./db');
 
+/**
+ * Computes the Temperature-Humidity Index (THI) for poultry welfare assessment.
+ * Loaded dynamically from the browser-side engine.js ES module to establish a single source of truth.
+ * @type {Function}
+ * @param {number} temp - Dry-bulb temperature in °C.
+ * @param {number} humidity - Relative humidity as a percentage (0–100).
+ * @returns {number|null} THI value (dimensionless).
+ */
 let computeTHI;
 import('./js/engine.js').then(engine => {
     computeTHI = engine.computeTHI;
