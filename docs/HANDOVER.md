@@ -15,6 +15,7 @@ All primary operating features—including lifecycle generation, algorithmic flo
 *   **Authentication Gates**: Enforced `requireAuth` middleware on all operational query (GET) endpoints for proposals, batches, daily logs, transactions, snapshots, health, CSV exports, settings, and sensor logs. Unauthenticated requests are blocked.
 *   **Role-Based Access Control (RBAC)**: Integrated `requireRole('super_admin', 'admin', 'farmer')` on all write (POST/PUT) API endpoints to restrict modification capabilities to designated roles, ensuring guest/viewer sessions remain read-only.
 *   **Admin-Only Operations**: Restricted destructive actions (DELETE endpoints for proposals, batches, logs, transactions, and snapshots) to `super_admin` and `admin` roles via role validation.
+*   **Guest Access**: Authenticates view-only sessions via unique URL query tokens (`?guest=TOKEN`).
 
 #### 2. Database & Data Integrity Upgrades (June 2026)
 *   **Cascading Deletes**: Enabled connection-level `PRAGMA foreign_keys = ON;` in SQLite to ensure cascading purges work correctly.
