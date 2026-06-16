@@ -37,6 +37,12 @@ All primary operating features—including lifecycle generation, algorithmic flo
 *   **Rooster Ratio Advisory**: Added a visual banner indicating whether the hen-to-rooster ratio is ideal (1:7–8), alert warnings under surplus, and a one-click button that pre-populates the transaction modal to facilitate selling off surplus roosters.
 *   **Egg Logging Validation**: Allowed logging `0` intact eggs as long as at least `1` broken egg is logged in the collection round, enabling farmers to record collections with only broken eggs successfully while still preventing completely empty logs.
 
+#### 6. E2E Test Suite & Infrastructure Hardening (June 2026)
+*   **Tailscale CORS Support**: Added dynamic Tailscale CGNAT IP range (`100.64.0.0/10`) to the CORS configuration allowlist in [server.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/server.js), allowing seamless cross-origin requests when accessing the server via private VPN IP.
+*   **Test Auth Race Fix**: Refactored `handleAuth` in [tests/e2e.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/tests/e2e.js) to query `/api/auth/me` instead of racing on `#nav-dashboard` (which exists immediately in the static HTML structure prior to JS execution), resolving authentication failures.
+*   **Production Credentials Support**: Added support for `E2E_USERNAME` and `E2E_PASSWORD` environment variables in the Playwright suite to target production environments with real user credentials securely.
+*   **Elimination of Timing Flakiness**: Replaced brittle hardcoded sleeps with targeted `page.waitForSelector` selectors matching updated content (such as `.cockpit-header h2:has-text("...")`). Added a polling retry loop to verify database population during 60-day lifecycle simulation writes, ensuring test suite passes reliably on slow network links.
+
 ---
 
 ## Technical Backlog & Workarounds

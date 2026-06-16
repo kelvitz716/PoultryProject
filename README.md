@@ -203,12 +203,17 @@ git push master
 Run the full Playwright end-to-end test suite (requires the server to be running):
 
 ```bash
-npm test
-# or directly:
+# Run against local development server:
+node tests/e2e.js
+
+# Run against production/remote target (e.g. OCI Tailscale host) using custom credentials:
+BASE_URL=http://100.68.227.114:8089 \
+E2E_USERNAME=your_username \
+E2E_PASSWORD=your_password \
 node tests/e2e.js
 ```
 
-The suite covers 27 scenarios across proposals, batches, logs, transactions, health records, exports, and the Tuya sensor API.
+The suite covers 31 scenarios across authentication checkpoints, proposals, batches, daily logs, transactions, health records, exports, and the Tuya sensor API. It is optimized to bypass timing races and connection latencies.
 
 ---
 
