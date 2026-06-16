@@ -33,6 +33,17 @@ const assert = require('assert');
     await page.waitForSelector('.cockpit-header h2');
     console.log('Entered cockpit.');
 
+    // Clean up existing collections to start with a clean slate
+    await page.waitForTimeout(1000); // Wait for the list to load
+    const deleteButtons = page.locator('.egg-collection-row button:has-text("✕")');
+    let countToDelete = await deleteButtons.count();
+    console.log(`Cleaning up ${countToDelete} existing collections...`);
+    while (countToDelete > 0) {
+        await deleteButtons.first().click();
+        await page.waitForTimeout(300); // let it delete
+        countToDelete = await deleteButtons.count();
+    }
+
     // Open Egg Collection Modal
     console.log('Opening Egg Collection Modal...');
     await page.click('#btn-add-collection');
@@ -69,6 +80,29 @@ const assert = require('assert');
     const matchedRow = rows.find(text => text.includes('0 🥚') && text.includes('(1 broken)'));
     assert.ok(matchedRow, 'Could not find a row with "0 🥚" and "(1 broken)"');
     console.log('✅ Test 3 Passed: Egg collection row displayed correctly on UI.');
+
+    // Verify summary header shows "0 eggs + 1 broken"
+    const summaryText = await page.textContent('#egg-total-display');
+    console.log('Summary header text on UI:', summaryText.replace(/\s+/g, ' ').trim());
+    assert.ok(summaryText.includes('0 eggs') && summaryText.includes('1 broken'), 'Summary display text does not match "0 eggs + 1 broken"');
+    console.log('✅ Test 4 Passed: Summary header displayed correctly on UI.');
+
+    // Test 3: Log 1 intact and 1 broken eggs (the case from user's screenshot)
+    console.log('Test 5: Saving 1 intact and 1 broken eggs...');
+    await page.click('#btn-add-collection');
+    await page.waitForSelector('#ecm-count');
+    await page.fill('#ecm-count', '1');
+    await page.fill('#ecm-broken', '1');
+    await page.click('#ecm-save');
+    
+    // Modal should close
+    await page.waitForSelector('#ecm-count', { state: 'detached', timeout: 5000 });
+    
+    // Verify summary header shows "1 eggs + 2 broken" (cumulative: 0 + 1 = 1 intact, 1 + 1 = 2 broken)
+    const cumulativeSummaryText = await page.textContent('#egg-total-display');
+    console.log('Cumulative summary header text on UI:', cumulativeSummaryText.replace(/\s+/g, ' ').trim());
+    assert.ok(cumulativeSummaryText.includes('1 eggs') && cumulativeSummaryText.includes('2 broken'), 'Cumulative summary display text does not match "1 eggs + 2 broken"');
+    console.log('✅ Test 5 Passed: Cumulative summary header displayed correctly on UI.');
 
     console.log('All Egg logging test cases passed successfully!');
   } catch (err) {

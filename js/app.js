@@ -1736,16 +1736,15 @@ async function _initApp() {
         const hint = document.getElementById('egg-empty-hint');
         const totalEl = document.getElementById('egg-total-display');
         if (!list) return;
-        const total = _eggCollections.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
+        const totalIntact = _eggCollections.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
         const totalBroken = _eggCollections.reduce((s, e) => s + (parseInt(e.broken) || 0), 0);
-        const saleEggs = total - totalBroken;
         if (totalEl) {
-            if (total === 0) {
+            if (totalIntact === 0 && totalBroken === 0) {
                 totalEl.innerHTML = `<span style="color:var(--text-muted);font-size:1rem;font-weight:400;">0 eggs</span>`;
             } else if (totalBroken > 0) {
-                totalEl.innerHTML = `${saleEggs.toLocaleString()} eggs <span style="color:var(--danger);font-size:0.8rem;font-weight:600;">+ ${totalBroken} broken</span><span style="display:block;font-size:0.7rem;color:var(--text-muted);font-weight:400;margin-top:2px;">Broken excluded from sales</span>`;
+                totalEl.innerHTML = `${totalIntact.toLocaleString()} eggs <span style="color:var(--danger);font-size:0.8rem;font-weight:600;">+ ${totalBroken} broken</span><span style="display:block;font-size:0.7rem;color:var(--text-muted);font-weight:400;margin-top:2px;">Broken excluded from sales</span>`;
             } else {
-                totalEl.innerHTML = `${total.toLocaleString()} eggs`;
+                totalEl.innerHTML = `${totalIntact.toLocaleString()} eggs`;
             }
         }
         if (_eggCollections.length === 0) {
