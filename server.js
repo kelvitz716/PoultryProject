@@ -17,6 +17,18 @@ const session = require('express-session');
 const ConnectSQLite3 = require('connect-sqlite3')(session);
 const { runQuery, allQuery, getQuery, dbReady } = require('./db');
 
+let computeTHI;
+import('./js/engine.js').then(engine => {
+    computeTHI = engine.computeTHI;
+}).catch(err => {
+    console.error('Failed to dynamically import engine.js:', err.message);
+    // Fallback JSDoc compliant definition to guarantee runtime safety
+    computeTHI = function(temp, humidity) {
+        if (temp == null || humidity == null) return null;
+        return temp - (0.31 - 0.31 * (humidity / 100)) * (temp - 14.4);
+    };
+});
+
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -1749,7 +1761,7 @@ app.get('/api/staging/:batchId/today', requireAuth, async (req, res) => {
         const hums = sensorEvents.map(e => e.humidity).filter(v => v != null);
         const thiPeak = sensorEvents.reduce((max, e) => {
             if (e.temperature == null || e.humidity == null) return max;
-            const thi = e.temperature - (0.31 - 0.31 * (e.humidity / 100)) * (e.temperature - 14.4);
+            const thi = computeTHI(e.temperature, e.humidity);
             return thi > max ? thi : max;
         }, -Infinity);
 
@@ -1910,7 +1922,7 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         }
         const thiPeak = validReadings.reduce((max, e) => {
             if (e.temperature == null || e.humidity == null) return max;
-            const thi = e.temperature - (0.31 - 0.31 * (e.humidity / 100)) * (e.temperature - 14.4);
+            const thi = computeTHI(e.temperature, e.humidity);
             return thi > max ? thi : max;
         }, -Infinity);
         if (isFinite(thiPeak)) {
