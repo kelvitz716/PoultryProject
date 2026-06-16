@@ -35,7 +35,7 @@ All primary operating features—including lifecycle generation, algorithmic flo
 #### 5. Flock Split & Rooster Ratio Advisory
 *   **Live Flock Breakdown**: Implemented separate baseline configuration and live count calculations for hens and roosters.
 *   **Rooster Ratio Advisory**: Added a visual banner indicating whether the hen-to-rooster ratio is ideal (1:7–8), alert warnings under surplus, and a one-click button that pre-populates the transaction modal to facilitate selling off surplus roosters.
-*   **Egg Logging Validation**: Allowed logging `0` intact eggs as long as at least `1` broken egg is logged in the collection round, enabling farmers to record collections with only broken eggs successfully while still preventing completely empty logs.
+*   **Egg Logging Validation & Display**: Allowed logging `0` intact eggs as long as at least `1` broken egg is logged in the collection round, enabling farmers to record collections with only broken eggs successfully while still preventing completely empty logs. Fixed a double-subtraction display discrepancy where broken eggs were subtracted from the already-intact total in the summary header, ensuring it renders accurate intact and broken aggregates (e.g. `1 eggs + 1 broken`).
 
 #### 6. E2E Test Suite & Infrastructure Hardening (June 2026)
 *   **Tailscale CORS Support**: Added dynamic Tailscale CGNAT IP range (`100.64.0.0/10`) to the CORS configuration allowlist in [server.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/server.js), allowing seamless cross-origin requests when accessing the server via private VPN IP.

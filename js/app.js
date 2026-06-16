@@ -1731,11 +1731,19 @@ async function _initApp() {
     // This list is synced to /api/staging/:batchId/eggs via addStagingEvent.
     let _eggCollections = []; // loaded from today's staging on cockpit open
 
+    /**
+     * Renders the daily list of pending egg collections in the cockpit.
+     * Computes and displays the aggregate intact (saleable) and broken egg counts,
+     * ensuring that broken eggs are not subtracted from the already-intact total.
+     */
     function _renderEggCollectionList() {
         const list = document.getElementById('egg-collection-list');
         const hint = document.getElementById('egg-empty-hint');
         const totalEl = document.getElementById('egg-total-display');
         if (!list) return;
+
+        // Sum the counts of intact and broken eggs independently across all rounds.
+        // totalIntact is already the saleable egg total; do not subtract totalBroken.
         const totalIntact = _eggCollections.reduce((s, e) => s + (parseInt(e.count) || 0), 0);
         const totalBroken = _eggCollections.reduce((s, e) => s + (parseInt(e.broken) || 0), 0);
         if (totalEl) {
