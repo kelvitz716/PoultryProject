@@ -16,10 +16,7 @@ import {
 } from './engine.js';
 import { $, showToast, showConfirmModal, updateGlobalNotifications } from './ui.js';
 
-let farmProfile = { ...DEFAULT_FARM_PROFILE }; // Global farm profile, loaded at startup
-let currentBatchId = null;
-let _cockpitChartInstance = null;
-let allBatches = []; // Cache for batches
+import { store } from './store.js';
 
 window.addEventListener('unhandledrejection', e => {
     console.error('[unhandled rejection]', e.reason);
@@ -262,25 +259,17 @@ async function _initApp() {
     document.getElementById('btn-goto-generator')?.addEventListener('click', async () => { showStartBatchModal(); });
 
     async function loadFarmProfile() {
-        const stored = await api.getEntity('poultryFarmProfile', null);
-        if (stored) {
-            return { ...DEFAULT_FARM_PROFILE, ...stored, alertThresholds: { ...DEFAULT_FARM_PROFILE.alertThresholds, ...(stored.alertThresholds || {}) } };
-        }
-        return { ...DEFAULT_FARM_PROFILE };
+        return await store.loadFarmProfile();
     }
 
     async function saveFarmProfile(profile) {
-        await api.setEntity('poultryFarmProfile', profile);
-    }
-
-    window.syncBatches = async function() {
-        allBatches = await api.getBatches();
+        await store.saveFarmProfile(profile);
     }
 
     // Load initial data asynchronously in the background so we don't block DOM binding execution flow
     const initDataPromise = (async () => {
         try {
-            farmProfile = await loadFarmProfile();
+            await loadFarmProfile();
             await syncBatches();
         } catch (e) {
             console.error('Failed to load initial data:', e);
