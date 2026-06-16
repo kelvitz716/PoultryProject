@@ -1854,7 +1854,7 @@ async function _initApp() {
                 <h3>${isEdit ? 'Edit' : 'Add'} Egg Collection</h3>
                 <div class="input-group">
                     <label>Intact Eggs Count</label>
-                    <input id="ecm-count" type="number" min="1" value="${data.count||''}" placeholder="e.g. 120" onfocus="this.select()">
+                    <input id="ecm-count" type="number" min="0" value="${(data.count !== undefined && data.count !== null && data.count !== '') ? data.count : ''}" placeholder="e.g. 120" onfocus="this.select()">
                 </div>
                 <div class="input-group">
                     <label>Broken Eggs Count</label>
@@ -1896,12 +1896,13 @@ async function _initApp() {
 
         document.getElementById('ecm-cancel').onclick = () => modal.remove();
         document.getElementById('ecm-save').onclick = async () => {
-            const count = parseInt(document.getElementById('ecm-count').value);
+            const countVal = document.getElementById('ecm-count').value.trim();
+            const count = countVal === '' ? NaN : parseInt(countVal);
             const broken = parseInt(document.getElementById('ecm-broken').value) || 0;
             const time  = document.getElementById('ecm-time').value;
             const label = document.getElementById('ecm-label').value.trim();
-            if (!count || count < 1) {
-                document.getElementById('ecm-error').textContent = 'Enter a valid egg count.';
+            if (isNaN(count) || count < 0 || broken < 0 || (count === 0 && broken === 0)) {
+                document.getElementById('ecm-error').textContent = 'Enter a valid intact egg count or log at least 1 broken egg.';
                 document.getElementById('ecm-error').style.display = 'block';
                 return;
             }
