@@ -121,7 +121,13 @@ PoultryProject/
 ├── docs/                   # Technical specs, backlog, handover documents
 ├── js/
 │   ├── api.js              # Frontend API client — wraps all backend REST calls
-│   └── app.js              # Main frontend controller and DOM logic
+│   ├── app.js              # SPA router and main initialization orchestrator
+│   ├── store.js            # Central client state store and window integrations
+│   ├── dashboard.js        # Dashboard, live cockpit, and environment sensor view module
+│   ├── batches.js          # Batches tracking, biosecurity downtime, and closure wizard
+│   ├── settings.js         # Settings form, buyers, user management, and reconciliation console
+│   ├── health.js           # Health records, medication, vaccines, and drug withdrawal tracking
+│   └── sales.js            # Transactions, sales, feed buy calculator, and surplus rooster advisor
 ├── scripts/                # Utility/maintenance scripts
 ├── tests/
 │   └── e2e.js              # Playwright end-to-end test suite (27 tests)

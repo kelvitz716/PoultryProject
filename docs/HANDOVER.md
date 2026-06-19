@@ -44,6 +44,20 @@ All primary operating features—including lifecycle generation, algorithmic flo
 *   **Production Credentials Support**: Added support for `E2E_USERNAME` and `E2E_PASSWORD` environment variables in the Playwright suite to target production environments with real user credentials securely.
 *   **Elimination of Timing Flakiness**: Replaced brittle hardcoded sleeps with targeted `page.waitForSelector` selectors matching updated content (such as `.cockpit-header h2:has-text("...")`). Added a polling retry loop to verify database population during 60-day lifecycle simulation writes, ensuring test suite passes reliably on slow network links.
 
+#### 7. Architecture Refactoring & Modularization (June 2026)
+*   **Shared Status Constants**: Centralized status definitions (`BATCH_STATUS` and `STAGING_STATUS`) in [engine.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/engine.js) to eliminate magic strings in both frontend and backend queries.
+*   **Modular Backend Services**: Split the monolithic `server.js` into decoupled, specialized service layers under `services/`:
+    *   [staging.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/services/staging.js): Staging events compile-to-day log operations.
+    *   [tuya.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/services/tuya.js): Tuya IoT cloud sync and credentials signing.
+    *   [mpesa.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/services/mpesa.js): Safaricom Daraja STK-push and ledger journal entry logic.
+*   **Modular Frontend View Controllers**: Split the massive `js/app.js` into distinct, view-specific modules under `js/` with clean interface routing and a unified state store:
+    *   [store.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/store.js): Central client state store exposing variables globally via getter/setter window descriptors for backwards compatibility.
+    *   [dashboard.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/dashboard.js): Cockpit interface logic, 환경 sensors sync, simulation runs, and CSV backfill modals.
+    *   [batches.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/batches.js): Biosecurity closure SOPs, downtime warnings, and cohort lifecycle list.
+    *   [settings.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/settings.js): Buyer CRM, system users management, and transactional reconciliation tools.
+    *   [health.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/health.js): Flock vaccine schedules, medication entries, and off-label drug withdrawal status calculator.
+    *   [sales.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/sales.js): Sales entries, purchases calculators, and rooster/hen density ratio advisor.
+
 ---
 
 ## Technical Backlog & Workarounds
