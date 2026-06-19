@@ -22,6 +22,7 @@ import { initBatchesView } from './batches.js';
 import { getActiveWithdrawal } from './health.js';
 import './sales.js';
 import { initDashboardView } from './dashboard.js';
+import { initCockpitView } from './cockpit.js';
 
 window.addEventListener('unhandledrejection', e => {
     console.error('[unhandled rejection]', e.reason);
@@ -228,6 +229,7 @@ async function _initApp() {
     initSettingsView();
     initBatchesView();
     initDashboardView();
+    initCockpitView();
 
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view');
@@ -1255,6 +1257,9 @@ async function _initApp() {
                 }
             }
         });
+        // NOTE: renderAnalytics is defined inside the _initApp closure because it captures
+        // local chart instances (_capexChartInstance, _revenueChartInstance).
+        // It is exposed on window so other view modules (e.g. dashboard.js) can refresh the analytics view.
         window.renderAnalytics = renderAnalytics;
     }
 
@@ -1267,7 +1272,7 @@ async function _initApp() {
 
     // (window.openCleanoutSOP, deleteBatchUI, and clearAllBatchesUI moved to batches.js)
 
-    // (Flock adjustment and egg loss modals moved to dashboard.js)
+    // (Flock adjustment, sensor, and egg loss modals moved to cockpit.js)
 
     $('btn-clear-all-batches')?.addEventListener('click', () => { window.clearAllBatchesUI(); });
 
