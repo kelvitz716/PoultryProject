@@ -152,8 +152,8 @@ async function seedE2ETesterCli() {
         const hash = await bcrypt.hash(e2eTestPassword, 12);
         const id = `user_e2e_${Date.now()}`;
         await runQuery(
-            'INSERT INTO users (id, username, password_hash, role, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
-            [id, 'e2e_tester', hash, 'admin']
+            'INSERT INTO users (id, username, password_hash, role, created_by, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+            [id, 'e2e_tester', hash, 'admin', 'admin_cli']
         );
         console.log('Dedicated E2E test account created successfully.');
     } else {
@@ -199,8 +199,8 @@ dbReady.then(async () => {
                 const hash = await bcrypt.hash(password, 12);
                 const id = `user_${Date.now()}`;
                 await runQuery(
-                    'INSERT INTO users (id, username, password_hash, role, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
-                    [id, username.trim(), hash, role]
+                    'INSERT INTO users (id, username, password_hash, role, created_by, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                    [id, username.trim(), hash, role, 'admin_cli']
                 );
                 console.log(`User "${username}" created successfully with role "${role}".`);
                 break;
