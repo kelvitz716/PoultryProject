@@ -60,6 +60,11 @@ All primary operating features—including lifecycle generation, algorithmic flo
     *   [health.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/health.js): Flock vaccine schedules, medication entries, and off-label drug withdrawal status calculator.
     *   [sales.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/sales.js): Sales entries, purchases calculators, and rooster/hen density ratio advisor.
 
+#### 8. Coop Live Environment Sensor Popover Fixes (June 2026)
+*   **Gauge Rendering Race Fix**: Moved `renderSensorPopover()` execution strictly after the popover DOM node is fully appended to `document.body` via `appendChild` and Lucide icons are initialized. This prevents `getElementById()` queries from returning `null` when loading sensor gauges, resolving the empty gauges issue.
+*   **Empty State History Message**: Refactored the empty-history path in `renderSensorPopover` to unconditionally hide the canvas element and dynamically inject a visible `"No sensor history yet"` fallback text node into the DOM if the target element does not exist.
+*   **Responsive Viewport Clamping**: Implemented mobile viewport boundary clamps in `positionSensorPopover` (`left >= 8` and `left + 320 <= window.innerWidth - 8`) to keep the popover within visibility limits on smaller screens (such as ~390px viewports).
+
 ---
 
 ## Technical Backlog & Workarounds

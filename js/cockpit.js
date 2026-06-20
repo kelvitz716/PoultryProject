@@ -1325,10 +1325,10 @@ window.toggleSensorPopover = async function(e) {
         </div>
     `;
     document.body.appendChild(popover);
-    lucide.createIcons();
+    if (window.lucide) lucide.createIcons();
 
-    window.positionSensorPopover();
     await window.renderSensorPopover();
+    window.positionSensorPopover();
 
     document.addEventListener('click', function outsideClick(ev) {
         const pop = document.getElementById('sensor-popover');
@@ -1349,7 +1349,12 @@ window.positionSensorPopover = function() {
     popover.style.top = (rect.bottom + scrollY + 8) + 'px';
     const popW = 320;
     let left = rect.right - popW;
-    if (left < 8) left = 8;
+    if (left < 8) {
+        left = 8;
+    }
+    if (left + popW > window.innerWidth - 8) {
+        left = window.innerWidth - (popW + 8);
+    }
     popover.style.left = left + 'px';
     popover.style.display = 'block';
 };
@@ -1447,10 +1452,26 @@ window.renderSensorPopover = async function() {
     if (!canvas) return;
 
     if (!history || history.length === 0) {
-        if (noHistory) { noHistory.style.display = ''; canvas.style.display = 'none'; }
+        canvas.style.display = 'none';
+        if (noHistory) {
+            noHistory.style.display = '';
+        } else {
+            const parent = canvas.parentElement;
+            if (parent) {
+                const msg = document.createElement('div');
+                msg.id = 'sp-no-history';
+                msg.style.cssText = 'text-align:center; color:var(--text-muted); font-size:12px; padding:20px 0;';
+                const textNode = document.createTextNode('No sensor history yet');
+                msg.appendChild(textNode);
+                parent.appendChild(msg);
+            }
+        }
         return;
     }
-    if (noHistory) { noHistory.style.display = 'none'; canvas.style.display = ''; }
+    if (noHistory) {
+        noHistory.style.display = 'none';
+    }
+    canvas.style.display = '';
 
     const labels = history.map(h => {
         const d = new Date(h.date + 'T00:00:00');
