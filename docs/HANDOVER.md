@@ -16,6 +16,10 @@ All primary operating features—including lifecycle generation, algorithmic flo
 *   **Role-Based Access Control (RBAC)**: Integrated `requireRole('super_admin', 'admin', 'farmer')` on all write (POST/PUT) API endpoints to restrict modification capabilities to designated roles, ensuring guest/viewer sessions remain read-only.
 *   **Admin-Only Operations**: Restricted destructive actions (DELETE endpoints for proposals, batches, logs, transactions, and snapshots) to `super_admin` and `admin` roles via role validation.
 *   **Guest Access**: Authenticates view-only sessions via unique URL query tokens (`?guest=TOKEN`).
+*   **Cryptographic Session Secret**: Enforced strict environment-only `SESSION_SECRET` configuration in the backend with a startup validation guard that halts execution if it is missing, eliminating default fallbacks.
+*   **Brute-Force Rate Limiting**: Added an in-memory IP-based login rate limiter to `POST /api/auth/login` (maximum 10 attempts per 15-minute window, auto-purges stale records, and resets on successful authentication).
+*   **Helmet Security Headers**: Configured `helmet` middleware with Content Security Policy (CSP) disabled to apply essential HTTP security headers (e.g. HSTS, X-Content-Type-Options, Referrer-Policy, Frame-Options).
+*   **Cryptographically Secure UUIDs**: Migrated all random ID generation (for staging events and ledger transactions) from insecure `Math.random()` strings to standard `crypto.randomUUID()`.
 
 #### 2. Database & Data Integrity Upgrades (June 2026)
 *   **Cascading Deletes**: Enabled connection-level `PRAGMA foreign_keys = ON;` in SQLite to ensure cascading purges work correctly.
