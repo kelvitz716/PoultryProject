@@ -25,6 +25,9 @@ dist/
 build/
 .env
 
+# E2E Test Credentials
+E2E_TEST_PASSWORD
+
 # Database
 data/
 *.sqlite

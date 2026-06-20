@@ -933,6 +933,10 @@ app.post('/api/auth/setup', async (req, res) => {
             'INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
             [id, username.trim(), hash, 'super_admin']
         );
+
+        // Ensure dedicated E2E test account exists
+        await seedE2ETester();
+
         req.session.userId = id;
         req.session.username = username.trim();
         req.session.userRole = 'super_admin';
@@ -1281,12 +1285,54 @@ app.get('*', (req, res) => {
 });
 
 
+/**
+ * Ensures the dedicated E2E test account exists if the setup wizard has run.
+ */
+async function seedE2ETester() {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const e2eTestPassword = process.env.E2E_TEST_PASSWORD;
+
+    if (!e2eTestPassword) {
+        if (!isProduction) {
+            throw new Error('E2E_TEST_PASSWORD environment variable is required in non-production environments.');
+        }
+        return; // skip silently in production
+    }
+
+    try {
+        const superAdminExists = await getQuery("SELECT COUNT(*) as cnt FROM users WHERE role = 'super_admin'");
+        if (!superAdminExists || superAdminExists.cnt === 0) {
+            return; // Skip silently if no super_admin exists yet
+        }
+
+        const e2eTesterExists = await getQuery("SELECT id FROM users WHERE username = 'e2e_tester'");
+        if (!e2eTesterExists) {
+            console.log('Seeding dedicated E2E test account (e2e_tester)...');
+            const hash = await bcrypt.hash(e2eTestPassword, 12);
+            const id = `user_e2e_${Date.now()}`;
+            await runQuery(
+                'INSERT INTO users (id, username, password_hash, role, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+                [id, 'e2e_tester', hash, 'admin']
+            );
+            console.log('Dedicated E2E test account created successfully.');
+        }
+    } catch (err) {
+        console.error('Failed to seed E2E test account:', err.message);
+        if (!isProduction) {
+            throw err;
+        }
+    }
+}
+
 // ── Server Boot ────────────────────────────────────────────────────────────────
 // Wait for schema init to complete before binding the port or running queries.
 dbReady.then(() => {
     app.listen(PORT, async () => {
         console.log(`Poultry DSS backend running on port ${PORT}`);
         console.log(`EAT boot time: ${getEATDate()} ${getEATTime()}`);
+
+        // Seed E2E test account
+        await seedE2ETester();
 
         // Recover any staging rows from missed midnight commits (e.g. server was offline)
         await recoverMissedCommits();

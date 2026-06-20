@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Scratch / throwaway
+scratch/
+
+# Static assets (no logic)
+public/
+*.css
+
+# Generated / binary
+*.db
+*.db-shm
+*.db-wal
+*.log
+package-lock.json
+
+# Test fixtures (only needed when working on tests)
+tests/

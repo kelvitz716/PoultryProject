@@ -18,8 +18,8 @@
 const { chromium } = require('playwright');
 
 const BASE_URL   = process.env.BASE_URL    || 'http://localhost:8089';
-const E2E_USER   = process.env.E2E_USERNAME || 'admin';
-const E2E_PASS   = process.env.E2E_PASSWORD || 'password123';
+const E2E_USER   = process.env.E2E_USERNAME || 'e2e_tester';
+const E2E_PASS   = process.env.E2E_PASSWORD || process.env.E2E_TEST_PASSWORD;
 const TIMEOUT    = 30_000;
 
 // ─── helpers ───────────────────────────────────────────────────────────────
