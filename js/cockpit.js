@@ -707,6 +707,10 @@ window.submitDailyLog = async function(event) {
         }
     }
 
+    if (!feedGiven && !sacks && !isBackfill) {
+        showToast('Saved without feed data — enter sacks or kg if feed was given.', 'warning');
+    }
+
     const promises = [];
 
     if (isBackfill && _eggCollections.length > 0) {
@@ -833,8 +837,13 @@ window.refreshCockpitData = async function(batch) {
         feedbackEl.style.display = hasStagedEvents ? 'block' : 'none';
     }
     
-    // Update KPIs
-    if($('kpi-layrate')) $('kpi-layrate').innerText = (kpis.todayLayRate * 100).toFixed(1) + '%';
+    if ($('kpi-layrate')) {
+        if (stagingToday?.eggs?.total == null) {
+            $('kpi-layrate').innerText = '—';
+        } else {
+            $('kpi-layrate').innerText = (kpis.todayLayRate * 100).toFixed(1) + '%';
+        }
+    }
     if($('kpi-avg7')) $('kpi-avg7').innerText = (kpis.avg7LayRate * 100).toFixed(1) + '%';
     if($('kpi-fc')) $('kpi-fc').innerText = kpis.feedConversion.toFixed(2);
     if($('kpi-projected')) $('kpi-projected').innerText = kpis.projectedEggs.toLocaleString();
@@ -1055,7 +1064,7 @@ window.refreshCockpitData = async function(batch) {
     if (withdrawal.eggsUnderWithdrawal && discardContainer) {
         discardContainer.style.display = 'inline-flex';
         const daysLeft = Math.ceil((withdrawal.eggClearDate - new Date()) / 86400000);
-        $('info-discard').innerText = `${daysLeft} days (${withdrawal.discardedEggs.toLocaleString()} eggs)`;
+        $('info-discard').innerText = `${daysLeft} days (⚠️ ${withdrawal.discardedEggs.toLocaleString()} eggs discarded (withdrawal))`;
     } else if (discardContainer) {
         discardContainer.style.display = 'none';
     }
@@ -1349,12 +1358,8 @@ window.positionSensorPopover = function() {
     popover.style.top = (rect.bottom + scrollY + 8) + 'px';
     const popW = 320;
     let left = rect.right - popW;
-    if (left < 8) {
-        left = 8;
-    }
-    if (left + popW > window.innerWidth - 8) {
-        left = window.innerWidth - (popW + 8);
-    }
+    if (left < 8) left = 8;
+    if (left + popW > window.innerWidth - 8) left = window.innerWidth - popW - 8;
     popover.style.left = left + 'px';
     popover.style.display = 'block';
 };
@@ -1368,12 +1373,10 @@ window.renderSensorPopover = async function() {
     if (existingErrBox) existingErrBox.remove();
 
     if (syncLabel) {
-        if (res && res.last_updated) {
+        if (res && res.success && res.last_updated) {
             const diffMin = Math.round((Date.now() - new Date(res.last_updated).getTime()) / 60000);
             const timeStr = diffMin <= 0 ? 'just now' : diffMin < 60 ? `${diffMin}m ago` : `${Math.floor(diffMin/60)}h ago`;
-            syncLabel.innerHTML = res.success
-                ? `<span style="color:#22c55e;">●</span> Live · synced ${timeStr}`
-                : `<span style="color:#ef4444;">●</span> Sync error · ${timeStr}`;
+            syncLabel.innerHTML = `<span style="color:#22c55e;">●</span> Live · synced ${timeStr}`;
         } else {
             syncLabel.textContent = 'No data yet';
         }
@@ -1405,7 +1408,7 @@ window.renderSensorPopover = async function() {
         lucide.createIcons();
     }
 
-    if (res && res.temperature != null) {
+    if (res && res.temperature !== undefined && res.temperature !== null) {
         const tv = document.getElementById('sp-temp-val');
         const tb = document.getElementById('sp-temp-bar');
         if (tv) tv.textContent = res.temperature.toFixed(1) + '°C';
@@ -1418,7 +1421,7 @@ window.renderSensorPopover = async function() {
         }
     }
 
-    if (res && res.humidity != null) {
+    if (res && res.humidity !== undefined && res.humidity !== null) {
         const hv = document.getElementById('sp-hum-val');
         const hb = document.getElementById('sp-hum-bar');
         if (hv) hv.textContent = res.humidity.toFixed(0) + '%';
@@ -1430,7 +1433,7 @@ window.renderSensorPopover = async function() {
         }
     }
 
-    if (res && res.battery != null) {
+    if (res && res.battery !== undefined && res.battery !== null) {
         const bv = document.getElementById('sp-bat-val');
         const bb = document.getElementById('sp-bat-bar');
         const bg = document.getElementById('sp-gauge-bat');

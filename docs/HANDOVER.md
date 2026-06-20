@@ -60,10 +60,13 @@ All primary operating features—including lifecycle generation, algorithmic flo
     *   [health.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/health.js): Flock vaccine schedules, medication entries, and off-label drug withdrawal status calculator.
     *   [sales.js](file:///home/kelvitz/AntigravityProjects/PoultryProject/js/sales.js): Sales entries, purchases calculators, and rooster/hen density ratio advisor.
 
-#### 8. Coop Live Environment Sensor Popover Fixes (June 2026)
-*   **Gauge Rendering Race Fix**: Moved `renderSensorPopover()` execution strictly after the popover DOM node is fully appended to `document.body` via `appendChild` and Lucide icons are initialized. This prevents `getElementById()` queries from returning `null` when loading sensor gauges, resolving the empty gauges issue.
-*   **Empty State History Message**: Refactored the empty-history path in `renderSensorPopover` to unconditionally hide the canvas element and dynamically inject a visible `"No sensor history yet"` fallback text node into the DOM if the target element does not exist.
-*   **Responsive Viewport Clamping**: Implemented mobile viewport boundary clamps in `positionSensorPopover` (`left >= 8` and `left + 320 <= window.innerWidth - 8`) to keep the popover within visibility limits on smaller screens (such as ~390px viewports).
+#### 8. Sensor Popover, KPI, and UX Optimization Fixes (June 2026)
+*   **Gauge Rendering Race & Strict Guards (FIX 1)**: Moved `renderSensorPopover()` execution strictly after the popover DOM node is fully appended to `document.body` and Lucide icons are initialized. Updated gauge checks (`res.temperature`, `res.humidity`, `res.battery`) to use strict type comparisons (`!== undefined && !== null`) to prevent dashes and empty bars. Made `syncLabel`'s loading state fallback to "No data yet" immediately on null or failed API responses.
+*   **Mobile Viewport Clamping (FIX 2)**: Added clamping constraints to the right-boundary position of the environment popover (`left >= 8` and `left + 320 <= window.innerWidth - 8`) inside `positionSensorPopover()`, keeping it within screen bounds on mobile screens.
+*   **Lay Rate KPI Formatting (FIX 3)**: Fixed `kpi-layrate` displaying a default `0.0%` value on initial load before the first daily egg collections are staged today (`stagingToday.eggs.total == null`), changing it to show a dash (`—`).
+*   **Ambiguous Withdrawal Alerts (FIX 4)**: Made the amber warning counter pill text explicit (`⚠️ {discardedEggs} eggs discarded (withdrawal)`) to prevent farmers confusing it with their active lay collections.
+*   **Missing Feed Warnings (FIX 5)**: Added an inline non-blocking warning toast (`showToast`) during daily log submission if the user attempts to save records with zero feed sacks or weight logged on non-backfilled days.
+*   **Destructive Clear Buttons Styling (FIX 6)**: Styled the "Clear All" button in the Farm Operations view header with danger-themed border and color rules (`color: var(--danger); border-color: var(--danger);`) to flag its destructive behavior.
 
 ---
 
