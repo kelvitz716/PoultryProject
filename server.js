@@ -12,6 +12,24 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+
+// Load environment configurations locally if .env file exists
+const dotenvPath = path.join(__dirname, '.env');
+if (fs.existsSync(dotenvPath)) {
+    const envConfig = fs.readFileSync(dotenvPath, 'utf8');
+    envConfig.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+            const parts = trimmed.split('=');
+            const key = parts[0].trim();
+            const value = parts.slice(1).join('=').trim();
+            if (key && value && !process.env[key]) {
+                process.env[key] = value;
+            }
+        }
+    });
+}
+
 const bcrypt = require('bcrypt');
 const session = require('express-session');
 const ConnectSQLite3 = require('connect-sqlite3')(session);
@@ -93,7 +111,7 @@ app.use(session({
         dir: path.join(__dirname, 'data'),
         table: 'sessions'
     }),
-    secret: process.env.SESSION_SECRET || 'poultry-dss-default-secret-change-me',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     rolling: true,
@@ -783,23 +801,6 @@ app.get('/api/export/:batchId', requireAuth, async (req, res) => {
 
 // ===================== TUYA CLOUD INTEGRATION =====================
 
-// Load environment configurations locally if .env file exists
-const dotenvPath = path.join(__dirname, '.env');
-if (fs.existsSync(dotenvPath)) {
-    const envConfig = fs.readFileSync(dotenvPath, 'utf8');
-    envConfig.split('\n').forEach(line => {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#')) {
-            const parts = trimmed.split('=');
-            const key = parts[0].trim();
-            const value = parts.slice(1).join('=').trim();
-            if (key && value && !process.env[key]) {
-                process.env[key] = value;
-            }
-        }
-    });
-}
-
 const { syncTuyaSensor, fetchTuyaSensorHistory } = require('./services/tuya');
 
 // autoFillTodayLog() has been replaced by the staging layer.
@@ -1322,6 +1323,10 @@ async function seedE2ETester() {
             throw err;
         }
     }
+}
+
+if (!process.env.SESSION_SECRET) {
+    throw new Error('SESSION_SECRET environment variable is required.');
 }
 
 // ── Server Boot ────────────────────────────────────────────────────────────────
