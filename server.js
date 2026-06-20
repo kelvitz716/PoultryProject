@@ -10,6 +10,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 const fs = require('fs');
 
@@ -100,6 +101,9 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(helmet({
+    contentSecurityPolicy: false
+}));
 
 /**
  * Session middleware — sessions persisted in the same SQLite database via connect-sqlite3.

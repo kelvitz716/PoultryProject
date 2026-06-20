@@ -12,6 +12,7 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-session": "^1.19.0",
+    "helmet": "^8.2.0",
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
