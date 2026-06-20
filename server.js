@@ -11,6 +11,7 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
@@ -628,7 +629,7 @@ app.get('/api/transactions/:batchId', requireAuth, async (req, res) => {
 app.post('/api/transactions/:batchId', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
     try {
         const tx = req.body;
-        const id = tx.id || `${req.params.batchId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const id = tx.id || `${req.params.batchId}_${Date.now()}_${crypto.randomUUID()}`;
         tx.id = id;
         await runQuery('INSERT INTO transactions (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [id, req.params.batchId, JSON.stringify(tx)]);
         await syncTransactionToLedger(req.params.batchId, tx, false);
@@ -1205,7 +1206,7 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
             }
         }
 
-        const id = data.id || `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        const id = data.id || `stg_${Date.now()}_${crypto.randomUUID()}`;
         delete data.id; // remove from internal data payload to save space
         
         const timestamp = getEATTimestamp();

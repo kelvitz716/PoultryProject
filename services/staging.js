@@ -5,6 +5,7 @@
  */
 
 const { runQuery, allQuery, getQuery } = require('../db');
+const crypto = require('crypto');
 
 let computeTHI;
 let STAGING_STATUS = { PENDING: 'pending', AMENDMENT: 'amendment', COMMITTED: 'committed' };
@@ -285,7 +286,7 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
 
         if (byModule.health) {
             for (const h of byModule.health) {
-                const hId = h._id || `${batchId}_h_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+                const hId = h._id || `${batchId}_h_${Date.now()}_${crypto.randomUUID()}`;
                 const { _id, ...hData } = h;
                 hData.date = date;
                 await runQuery(

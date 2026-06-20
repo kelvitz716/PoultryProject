@@ -232,7 +232,7 @@ async function syncTuyaSensor() {
             const batchesRows = await allQuery('SELECT data FROM batches');
             const activeBatch = batchesRows.map(r => JSON.parse(r.data)).find(b => b.status === BATCH_STATUS.ACTIVE || b.status === BATCH_STATUS.POST_BATCH);
             if (activeBatch) {
-                const stagingId = `stg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+                const stagingId = `stg_${Date.now()}_${crypto.randomUUID()}`;
                 const ts = getEATTimestamp();
                 const date = getEATDate();
                 const payload = {
