@@ -294,6 +294,11 @@ async function _renderUserManagementPanel(container) {
                         ` : `<span class="pill">${u.role}</span>`}
                     </td>
                     <td style="padding:8px 10px;text-align:right;">
+                        ${u.id !== window.CURRENT_USER?.id ? `
+                            <button class="btn btn-ghost btn-sm" style="color:${u.is_active ? 'var(--danger)' : 'var(--success)'};" onclick="window._toggleUserActive('${u.id}','${u.username}',${u.is_active})">
+                                ${u.is_active ? 'Deactivate' : 'Reactivate'}
+                            </button>
+                        ` : ''}
                         <button class="btn btn-ghost btn-sm" onclick="window._changeUserPassword('${u.id}','${u.username}')">Reset PW</button>
                     </td>
                 </tr>`).join('')}
@@ -403,6 +408,21 @@ window._changeUserPassword = function(uid, username) {
     const pw = prompt(`New password for "${username}" (min 8 chars):`);
     if (!pw || pw.length < 8) { showToast('Password too short (min 8).', 'warning'); return; }
     api.changePassword(uid, pw).then(r => showToast(r.success ? 'Password changed.' : (r.error || 'Failed.'), r.success ? 'success' : 'error'));
+};
+
+window._toggleUserActive = function(uid, username, currentActive) {
+    const action = currentActive ? 'Deactivate' : 'Reactivate';
+    if (!confirm(`${action} user "${username}"?`)) return;
+    const newActive = currentActive ? 0 : 1;
+    api.toggleUserActive(uid, newActive).then(r => {
+        if (r.success) {
+            showToast(`User "${username}" ${currentActive ? 'deactivated' : 'reactivated'}.`, 'success');
+            const umContainer = document.getElementById('user-management-panel')?.querySelector('.card-body') || document.getElementById('user-management-panel');
+            if (umContainer) _renderUserManagementPanel(umContainer);
+        } else {
+            showToast(r.error || 'Failed to update user status.', 'error');
+        }
+    });
 };
 
 window._regenGuestToken = async function() {

@@ -163,6 +163,7 @@ function initializeDatabase(db, resolve, reject) {
                 role          TEXT NOT NULL DEFAULT 'viewer',
                 created_by    TEXT,
                 must_change_password INTEGER NOT NULL DEFAULT 0,
+                is_active     INTEGER NOT NULL DEFAULT 1,
                 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -219,10 +220,27 @@ function initializeDatabase(db, resolve, reject) {
             ON ledger_transactions (ref_type, ref_id)
         `);
 
-        console.log('Database schema initialized.');
-        // Final no-op run to confirm all prior CREATE TABLE runs have completed
-        db.run('SELECT 1', [], (err) => {
-            if (err) reject(err); else resolve();
+        // Migration: Add is_active column to users table if missing (SQLite ALTER COLUMN support guard)
+        db.all("PRAGMA table_info(users)", (err, columns) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            const hasIsActive = columns && columns.some(col => col.name === 'is_active');
+            if (!hasIsActive) {
+                db.run("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1", (alterErr) => {
+                    if (alterErr) {
+                        reject(alterErr);
+                    } else {
+                        console.log('Migration: added is_active column to users table.');
+                        console.log('Database schema initialized.');
+                        resolve();
+                    }
+                });
+            } else {
+                console.log('Database schema initialized.');
+                resolve();
+            }
         });
     });
 }

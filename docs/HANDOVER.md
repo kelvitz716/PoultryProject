@@ -83,3 +83,6 @@ All primary operating features—including lifecycle generation, algorithmic flo
 
 ### 2. Edge AI & SME Video Feed Benchmarking (Future Phase)
 * **Context**: Deploying Intel OpenVINO YOLOv8 and Phi-3 Mini GGUF locally on the target EliteBook 840 G3 dev machine to run computer-vision health surveillance and offline expert advisory support.
+
+### 3. Server Out-of-Band Administration
+* All server admin operations live in `scripts/admin.js`. Run `node scripts/admin.js --help` for the full command list.

@@ -1010,7 +1010,7 @@ app.post('/api/auth/login', loginRateLimiter, async (req, res) => {
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password required.' });
         }
-        const row = await getQuery('SELECT * FROM users WHERE username = ?', [username.trim()]);
+        const row = await getQuery('SELECT * FROM users WHERE username = ? AND is_active = 1', [username.trim()]);
         if (!row) return res.status(401).json({ error: 'Invalid username or password.' });
         const match = await bcrypt.compare(password, row.password_hash);
         if (!match) return res.status(401).json({ error: 'Invalid username or password.' });
@@ -1059,7 +1059,7 @@ app.post('/api/auth/logout', (req, res) => {
  */
 app.get('/api/auth/users', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
-        const rows = await allQuery('SELECT id, username, role, created_at FROM users ORDER BY created_at ASC');
+        const rows = await allQuery('SELECT id, username, role, is_active, created_at FROM users ORDER BY created_at ASC');
         res.json(rows);
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1103,6 +1103,22 @@ app.put('/api/auth/users/:id/role', requireRole('super_admin'), async (req, res)
         const validRoles = ['super_admin', 'admin', 'farmer', 'viewer'];
         if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role.' });
         await runQuery('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [role, req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * PUT /api/auth/users/:id/active
+ * Deactivates or reactivates a user account. Requires admin or super_admin.
+ */
+app.put('/api/auth/users/:id/active', requireRole('super_admin', 'admin'), async (req, res) => {
+    try {
+        const { isActive } = req.body;
+        if (isActive === undefined || (isActive !== 0 && isActive !== 1 && typeof isActive !== 'boolean')) {
+            return res.status(400).json({ error: 'isActive must be 0, 1, or boolean.' });
+        }
+        const activeVal = isActive ? 1 : 0;
+        await runQuery('UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [activeVal, req.params.id]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });

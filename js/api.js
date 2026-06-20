@@ -587,6 +587,23 @@ export const api = {
     },
 
     /**
+     * Deactivates or reactivates a user account (admin/super_admin only).
+     * @param {string} userId
+     * @param {number|boolean} isActive - 0/false for deactivated, 1/true for active
+     * @returns {Promise<Object>}
+     */
+    async toggleUserActive(userId, isActive) {
+        try {
+            const r = await fetch(`/api/auth/users/${userId}/active`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isActive })
+            });
+            return await r.json();
+        } catch (e) { return { error: e.message }; }
+    },
+
+    /**
      * Regenerates the guest share token (admin only).
      * @returns {Promise<{ success: true, token: string } | { error: string }>}
      */
