@@ -1476,6 +1476,10 @@ window.renderSensorPopover = async function() {
     const canvas = document.getElementById('sp-history-chart');
     if (!canvas) return;
 
+    // BUG 2 Fix: When history is empty, unconditionally hide the canvas element.
+    // If the '#sp-no-history' container is not found in the DOM (e.g. if the popover
+    // is re-opened and it is missing), dynamically create and insert a visible
+    // "No sensor history yet" fallback message instead of silently doing nothing.
     if (!history || history.length === 0) {
         canvas.style.display = 'none';
         if (noHistory) {
