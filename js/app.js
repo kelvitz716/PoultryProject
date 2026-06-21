@@ -245,7 +245,38 @@ async function _initApp() {
         if (gotoGenBtn) gotoGenBtn.style.display = 'none';
     }
 
+    if (window.USER_ROLE === 'farmer') {
+        const toHide = ['analytics', 'sales', 'settings'];
+        toHide.forEach(id => {
+            const el = document.getElementById(`nav-${id}`);
+            if (el) el.style.display = 'none';
+        });
+        const newProjBtn = document.getElementById('btn-new-project');
+        if (newProjBtn) newProjBtn.style.display = 'none';
+        const firstPropBtn = document.getElementById('btn-first-proposal');
+        if (firstPropBtn) firstPropBtn.style.display = 'none';
+        const gotoGenBtn = document.getElementById('btn-goto-generator');
+        if (gotoGenBtn) gotoGenBtn.style.display = 'none';
+    }
+
     window.switchView = function(viewId) {
+        if (window.USER_ROLE === 'farmer') {
+            if (viewId === 'dashboard' || viewId === 'generator' || viewId === 'analytics') {
+                const activeBatch = store.allBatches.find(b => b.status === BATCH_STATUS.ACTIVE);
+                if (activeBatch) {
+                    window.openBatchCockpit(activeBatch.id);
+                    return;
+                } else {
+                    viewId = 'batches';
+                }
+            } else if (viewId === 'batches') {
+                const activeBatch = store.allBatches.find(b => b.status === BATCH_STATUS.ACTIVE);
+                if (activeBatch) {
+                    window.openBatchCockpit(activeBatch.id);
+                    return;
+                }
+            }
+        }
         navItems.forEach(item => item.classList.toggle('active', item.id === `nav-${viewId}`));
         views.forEach(view => view.classList.toggle('active', view.id === `view-${viewId}`));
         if (viewId === 'dashboard') refreshDashboard();
@@ -1285,9 +1316,22 @@ async function _initApp() {
 
     // Await database values and sync cache before initial dashboard render
     initDataPromise.then(() => {
-        refreshDashboard();
+        if (window.USER_ROLE === 'farmer') {
+            const activeBatch = store.allBatches.find(b => b.status === BATCH_STATUS.ACTIVE);
+            if (activeBatch) {
+                window.openBatchCockpit(activeBatch.id);
+            } else {
+                window.switchView('batches');
+            }
+        } else {
+            refreshDashboard();
+        }
     }).catch(err => {
         console.error('Error during data init:', err);
-        refreshDashboard();
+        if (window.USER_ROLE === 'farmer') {
+            window.switchView('batches');
+        } else {
+            refreshDashboard();
+        }
     });
 } // end _initApp

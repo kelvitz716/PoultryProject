@@ -49,6 +49,10 @@ window.openBatchCockpit = async function(id) {
     store.currentBatchId = id;
     window.currentHistoryLimit = 10;
     
+    const isAdminPlus = ['super_admin','admin'].includes(window.USER_ROLE);
+    const isFarmer = window.USER_ROLE === 'farmer';
+    const isViewer = window.USER_ROLE === 'viewer';
+    
     const logs = await api.getLogs(id);
     const dayCount = logs.length;
     const targetDays = batch.type === 'layer' ? 504 : 42;
@@ -81,14 +85,16 @@ window.openBatchCockpit = async function(id) {
                 </div>
                 
                 <div class="cockpit-actions" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    ${isFarmer ? '' : `
                     <button class="btn btn-secondary btn-sm" onclick="window.open('/api/export/${batch.id}', '_blank')">
                         <i data-lucide="download" style="width:14px; height:14px;"></i> Export
                     </button>
+                    `}
                     ${batch.status === BATCH_STATUS.COMPLETED ? `
                     <span class="pill" style="background:var(--primary-soft); color:var(--primary); font-weight:bold; border:1px solid var(--primary);">Completed</span>
                     ` : batch.status === BATCH_STATUS.POST_BATCH ? `
                     <span class="pill" style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d;">Winding Down</span>
-                    ` : window.USER_ROLE === 'viewer' ? '' : `
+                    ` : isAdminPlus ? `
                     <button class="btn btn-secondary btn-sm" onclick="window.openCSVImportModal(${batch.id})">
                         <i data-lucide="upload" style="width:14px; height:14px;"></i> Import
                     </button>
@@ -101,7 +107,7 @@ window.openBatchCockpit = async function(id) {
                     <button class="btn btn-primary btn-sm" onclick="window.finishBatch(${batch.id})" style="margin-left:8px;">
                         <i data-lucide="flag" style="width:14px; height:14px;"></i> Snapshot
                     </button>
-                    `}
+                    ` : ''}
                 </div>
             </div>
             
@@ -143,7 +149,7 @@ window.openBatchCockpit = async function(id) {
                 <i data-lucide="edit-2" style="width:10px;height:10px;margin-left:4px;opacity:0.6;"></i>
             </div>
             <div class="info-chip"><i data-lucide="package" style="width:14px;height:14px;"></i> Feed: <strong id="info-feed">0 kg</strong></div>
-            <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash: <strong id="info-cash">KES 0</strong></div>
+            <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash: <strong id="info-cash">${isFarmer ? 'KES —' : 'KES 0'}</strong></div>
             <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Credit: <strong id="info-credit">KES 0</strong></div>
             <div class="info-chip"><i data-lucide="egg" style="width:14px;height:14px;"></i> Total: <strong id="info-totaleggs">0</strong> <span id="info-unsoldeggs" style="font-size:11px; margin-left:4px;">(0 in stock)</span></div>
             <div class="info-chip" style="cursor:pointer;" onclick="window.showEggLossModal()" title="Click to view Egg Loss & Reconciliation details">
@@ -168,10 +174,10 @@ window.openBatchCockpit = async function(id) {
         <!-- Main Cockpit Grid: matches spec §5.1, perfectly symmetric rows -->
         <div class="cockpit-grid-spec">
             <!-- ROW 1 -->
-            <div class="card log-form-card" style="height:100%; display:flex; flex-direction:column; position:relative;">
-                ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === BATCH_STATUS.COMPLETED || window.USER_ROLE === 'viewer' ? `
+            <div class="card log-form-card" style="height:100%; display:flex; flex-direction:column; position:relative; ${isFarmer ? 'grid-column: 1 / -1;' : ''}">
+                ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === BATCH_STATUS.COMPLETED || isViewer ? `
                 <div style="position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); backdrop-filter:blur(2px); z-index:10; display:flex; align-items:center; justify-content:center; border-radius:8px;">
-                    <span style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d; padding:8px 16px; border-radius:8px; display:flex; align-items:center;"><i data-lucide="lock" style="width:14px;height:14px;margin-right:6px;"></i>Daily Logging Disabled (${window.USER_ROLE === 'viewer' ? 'Read-Only Viewer' : batch.status === BATCH_STATUS.COMPLETED ? 'Completed' : 'Winding Down'})</span>
+                    <span style="background:#fef3c7; color:#d97706; font-weight:bold; border:1px solid #fcd34d; padding:8px 16px; border-radius:8px; display:flex; align-items:center;"><i data-lucide="lock" style="width:14px;height:14px;margin-right:6px;"></i>Daily Logging Disabled (${isViewer ? 'Read-Only Viewer' : batch.status === BATCH_STATUS.COMPLETED ? 'Completed' : 'Winding Down'})</span>
                 </div>
                 ` : ''}
                 <div class="card-header">
@@ -260,6 +266,7 @@ window.openBatchCockpit = async function(id) {
                 </div>
             </div>
 
+            ${isFarmer ? '' : `
             <div class="card pricing-card" style="height:100%; display:flex; flex-direction:column;">
                 <div class="card-header">
                     <h3><i data-lucide="tag" style="width:16px;height:16px;"></i> Pricing &amp; Flock Assistant</h3>
@@ -276,13 +283,14 @@ window.openBatchCockpit = async function(id) {
                     <div>
                         <div class="price-advisory" id="price-advisory" style="margin-bottom:12px;">Enter logs to see pricing recommendations.</div>
                         <div id="flock-ratio-advisory" style="display:none; margin-bottom:12px; padding:12px; border-radius:8px; font-size:12px; border:1px solid var(--border-color);"></div>
-                         ${batch.status === BATCH_STATUS.COMPLETED || window.USER_ROLE === 'viewer' ? '' : `
+                         ${batch.status === BATCH_STATUS.COMPLETED || isViewer ? '' : `
                         <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="window.openTxModal('sale')"><i data-lucide="plus-circle" style="width:14px;height:14px;"></i> Record a Sale</button>
                         <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px; border-color:#f87171; color:#f87171;" onclick="window.openTxModal('write_off')"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> Log Write-off</button>
                         `}
                     </div>
                 </div>
             </div>
+            `}
 
             <!-- ROW 2 -->
             <div class="card" style="height:100%; display:flex; flex-direction:column;">
@@ -305,18 +313,19 @@ window.openBatchCockpit = async function(id) {
                         <div class="feed-metric"><span>Days Left</span><strong id="feed-days-left">—</strong></div>
                         <div class="feed-metric"><span>Daily Consumption</span><strong id="feed-daily">—</strong></div>
                     </div>
-                     ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === BATCH_STATUS.COMPLETED || window.USER_ROLE === 'viewer' ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
+                     ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === BATCH_STATUS.COMPLETED || !isAdminPlus ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
                 </div>
             </div>
 
             <!-- ROW 3 -->
-            <div class="card" style="height:100%; display:flex; flex-direction:column;">
+            <div class="card" style="height:100%; display:flex; flex-direction:column; ${isFarmer ? 'grid-column: 1 / -1;' : ''}">
                 <div class="card-header">
                     <h3>Recent Logs</h3>
                 </div>
                 <div id="history-table" style="flex:1; overflow-y:auto; overflow-x:auto; width:100%;"></div>
             </div>
 
+            ${isFarmer ? '' : `
             <div class="card" style="height:100%; display:flex; flex-direction:column;">
                 <div class="card-header">
                     <h3>Financial Pulse</h3>
@@ -325,6 +334,7 @@ window.openBatchCockpit = async function(id) {
                     <p style="text-align:center; padding:20px; color:var(--text-muted);">Syncing transactions...</p>
                 </div>
             </div>
+            `}
 
             <!-- ROW 4 -->
             <div class="card" style="height:100%; display:flex; flex-direction:column; grid-column: 1 / -1;">
@@ -897,7 +907,13 @@ window.refreshCockpitData = async function(batch) {
     const liquidCash = (cashAcc.balance || 0) + (mpesaAcc.balance || 0) + (totalEntries === 0 ? initialCash : 0);
     const outstandingCredit = recAcc.balance || 0;
 
-    if($('info-cash')) $('info-cash').innerText = 'KES ' + liquidCash.toLocaleString();
+    if($('info-cash')) {
+        if (window.USER_ROLE === 'farmer') {
+            $('info-cash').innerText = 'KES —';
+        } else {
+            $('info-cash').innerText = 'KES ' + liquidCash.toLocaleString();
+        }
+    }
     if($('info-credit')) $('info-credit').innerText = 'KES ' + outstandingCredit.toLocaleString();
     
     let avg7SalePrice = 15;

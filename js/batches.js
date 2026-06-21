@@ -27,6 +27,11 @@ window.refreshBatches = async function() {
     const list = $('batches-list');
     if (!list) return;
     
+    const clearAllBtn = $('btn-clear-all-batches');
+    if (clearAllBtn) {
+        clearAllBtn.style.display = window.USER_ROLE === 'farmer' ? 'none' : 'inline-flex';
+    }
+
     let bannerHtml = '';
     const completedBatches = batches.filter(b => b.status === BATCH_STATUS.COMPLETED);
     let latestCloseDate = null;
@@ -52,6 +57,15 @@ window.refreshBatches = async function() {
                     Safe to start your next cohort on <strong>${safeDate}</strong>.
                 </div>
             </div>`;
+        }
+    }
+
+    const activeBatches = batches.filter(b => b.status === BATCH_STATUS.ACTIVE);
+    if (window.USER_ROLE === 'farmer') {
+        if (activeBatches.length === 0) {
+            list.innerHTML = bannerHtml + `<div class="empty-state"><i data-lucide="shield-alert"></i><p>No active batch — contact your farm manager.</p></div>`;
+            lucide.createIcons();
+            return;
         }
     }
 
@@ -82,9 +96,11 @@ window.refreshBatches = async function() {
         <div class="batch-card" onclick="window.openBatchCockpit(${b.id})">
             <div class="batch-header">
                 <span class="batch-badge ${b.status}">${b.status === BATCH_STATUS.POST_BATCH ? 'WINDING DOWN' : b.status.toUpperCase()}</span>
+                ${window.USER_ROLE === 'farmer' ? '' : `
                 <button class="project-delete" onclick="event.stopPropagation(); window.deleteBatchUI(${b.id})" title="Delete Batch">
                     <i data-lucide="trash-2"></i>
                 </button>
+                `}
             </div>
             <div style="margin-top: 8px;">
                 <h4 style="margin: 0;">${b.name}</h4>

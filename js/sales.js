@@ -11,6 +11,11 @@ import { computeEggInventoryAging } from './engine.js';
 import { $ } from './ui.js';
 
 window.openTxModal = async function(type, prefilledCategory = null, prefilledQty = null) {
+    const isAdminPlus = ['super_admin','admin'].includes(window.USER_ROLE);
+    if (!isAdminPlus) {
+        window.showToast('Access denied: Insufficient permissions.', 'danger');
+        return;
+    }
     const title = type === 'purchase' ? 'Log Purchase' : type === 'return' ? 'Log Egg Return' : type === 'write_off' ? 'Log Write-off / Wastage' : 'Log Sale';
     const bid = store.currentBatchId;
     if (!bid) return;
