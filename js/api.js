@@ -358,6 +358,19 @@ export const api = {
     },
 
     /**
+     * Retrieves aggregated 7-day environment sensor history from the database.
+     * @returns {Promise<Array<Object>>} List of historical temperature/humidity readings.
+     */
+    async getSensorHistory() {
+        try {
+            const r = await fetch('/api/sensors/history');
+            return r.ok ? await r.json() : [];
+        } catch (e) {
+            return [];
+        }
+    },
+
+    /**
      * Retrieves aggregated Tuya sensor history (avg/min/max temperature and humidity) for a
      * given date, for backfilling daily logs that were missed and entered later.
      * Limited to Tuya's free-edition 7-day device log retention.
