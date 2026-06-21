@@ -112,8 +112,8 @@ db.run('PRAGMA journal_mode=WAL;', () => {
         }
 
         db.run(
-            'INSERT INTO logs (id, batch_id, data, date, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP',
-            [logId, batchId, JSON.stringify(finalData), date],
+            'INSERT INTO logs (id, batch_id, data, date, logged_by, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, logged_by = excluded.logged_by, updated_at = CURRENT_TIMESTAMP',
+            [logId, batchId, JSON.stringify(finalData), date, 'admin_cli'],
             function(err) {
                 if (err) {
                     console.error('Write error:', err.message);

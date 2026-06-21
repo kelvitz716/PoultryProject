@@ -141,10 +141,30 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
     console.log(`Commit: processing ${rows.length} staging events for ${date} / batch ${batchId}`);
 
     const byModule = {};
+    const loggedByCounts = {};
+    let firstNonNullLoggedBy = null;
+
     for (const row of rows) {
         if (!byModule[row.module]) byModule[row.module] = [];
-        byModule[row.module].push({ _id: row.id, ...JSON.parse(row.data) });
+        byModule[row.module].push({ _id: row.id, _logged_by: row.logged_by, ...JSON.parse(row.data) });
+        
+        if (row.logged_by) {
+            if (!firstNonNullLoggedBy) {
+                firstNonNullLoggedBy = row.logged_by;
+            }
+            loggedByCounts[row.logged_by] = (loggedByCounts[row.logged_by] || 0) + 1;
+        }
     }
+
+    let mostFrequentLoggedBy = null;
+    let maxCount = 0;
+    for (const [user, count] of Object.entries(loggedByCounts)) {
+        if (count > maxCount) {
+            maxCount = count;
+            mostFrequentLoggedBy = user;
+        }
+    }
+    const carriedLoggedBy = mostFrequentLoggedBy || firstNonNullLoggedBy || 'midnight_cron';
 
     // Load or create the log record for this date
     const logId = `${batchId}_${date}`;
@@ -280,18 +300,19 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         await runQuery('BEGIN TRANSACTION');
 
         await runQuery(
-            'INSERT INTO logs (id, batch_id, data, date, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP',
-            [logId, batchId, JSON.stringify(logData), date]
+            'INSERT INTO logs (id, batch_id, data, date, logged_by, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, logged_by = excluded.logged_by, updated_at = CURRENT_TIMESTAMP',
+            [logId, batchId, JSON.stringify(logData), date, carriedLoggedBy]
         );
 
         if (byModule.health) {
             for (const h of byModule.health) {
                 const hId = h._id || `${batchId}_h_${Date.now()}_${crypto.randomUUID()}`;
-                const { _id, ...hData } = h;
+                const hLoggedBy = h._logged_by || 'midnight_cron';
+                const { _id, _logged_by, ...hData } = h;
                 hData.date = date;
                 await runQuery(
-                    'INSERT INTO health_logs (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP',
-                    [hId, batchId, JSON.stringify(hData)]
+                    'INSERT INTO health_logs (id, batch_id, data, logged_by, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, logged_by = excluded.logged_by, updated_at = CURRENT_TIMESTAMP',
+                    [hId, batchId, JSON.stringify(hData), hLoggedBy]
                 );
             }
         }

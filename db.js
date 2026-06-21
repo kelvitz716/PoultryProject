@@ -49,6 +49,36 @@ const dbReady = new Promise((resolve, reject) => {
 });
 
 /**
+ * Checks if a column exists in a table, and if not, adds it.
+ * @param {sqlite3.Database} db - SQLite database instance.
+ * @param {string} table - Table name.
+ * @param {string} column - Column name.
+ * @param {string} columnDef - SQLite column definition type.
+ * @returns {Promise<void>}
+ */
+function migrateTableColumn(db, table, column, columnDef) {
+    return new Promise((resolve, reject) => {
+        db.get(`SELECT COUNT(*) as count FROM pragma_table_info('${table}') WHERE name='${column}'`, (err, row) => {
+            if (err) {
+                return reject(err);
+            }
+            if (!row || row.count === 0) {
+                db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${columnDef}`, (alterErr) => {
+                    if (alterErr) {
+                        reject(alterErr);
+                    } else {
+                        console.log(`Migration: added ${column} column to ${table} table.`);
+                        resolve();
+                    }
+                });
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
+/**
  * Initializes the database tables and schemas if they do not already exist.
  * Executes sequentially inside db.serialize to avoid race conditions during creation.
  * @param {sqlite3.Database} db - Open database instance.
@@ -100,6 +130,7 @@ function initializeDatabase(db, resolve, reject) {
                 batch_id TEXT NOT NULL,
                 data TEXT NOT NULL,
                 date TEXT NOT NULL,
+                logged_by TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         `);
@@ -120,6 +151,7 @@ function initializeDatabase(db, resolve, reject) {
                 id TEXT PRIMARY KEY,
                 batch_id TEXT NOT NULL,
                 data TEXT NOT NULL,
+                logged_by TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         `);
@@ -139,6 +171,7 @@ function initializeDatabase(db, resolve, reject) {
                 data        TEXT NOT NULL,
                 status      TEXT NOT NULL DEFAULT 'pending',
                 sensor_id   TEXT NOT NULL DEFAULT 'primary',
+                logged_by   TEXT,
                 created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -227,19 +260,31 @@ function initializeDatabase(db, resolve, reject) {
                 return;
             }
             const hasIsActive = columns && columns.some(col => col.name === 'is_active');
+            
+            const runNextMigrations = () => {
+                migrateTableColumn(db, 'staging', 'logged_by', 'TEXT')
+                    .then(() => migrateTableColumn(db, 'health_logs', 'logged_by', 'TEXT'))
+                    .then(() => migrateTableColumn(db, 'logs', 'logged_by', 'TEXT'))
+                    .then(() => {
+                        console.log('Database schema initialized.');
+                        resolve();
+                    })
+                    .catch((migErr) => {
+                        reject(migErr);
+                    });
+            };
+
             if (!hasIsActive) {
                 db.run("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1", (alterErr) => {
                     if (alterErr) {
                         reject(alterErr);
                     } else {
                         console.log('Migration: added is_active column to users table.');
-                        console.log('Database schema initialized.');
-                        resolve();
+                        runNextMigrations();
                     }
                 });
             } else {
-                console.log('Database schema initialized.');
-                resolve();
+                runNextMigrations();
             }
         });
     });

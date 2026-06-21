@@ -248,8 +248,8 @@ async function syncTuyaSensor() {
                 if (payload.humidity != null && (payload.humidity < 0 || payload.humidity > 100)) suspect = true;
                 payload.suspect = suspect;
                 await runQuery(
-                    'INSERT OR IGNORE INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    [stagingId, activeBatch.id, 'sensors', date, ts, JSON.stringify(payload), STAGING_STATUS.PENDING, 'primary']
+                    'INSERT OR IGNORE INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id, logged_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [stagingId, activeBatch.id, 'sensors', date, ts, JSON.stringify(payload), STAGING_STATUS.PENDING, 'primary', 'tuya_sync']
                 );
                 if (suspect) console.warn(`Tuya Sync: suspect sensor values flagged for staging row ${stagingId}`);
             }

@@ -312,6 +312,11 @@ dbReady.then(async () => {
                 console.log(`- Staging queue depth  : ${pendingStaging ? pendingStaging.cnt : 0} pending row(s)`);
                 console.log(`- WAL file size        : ${walSize.toLocaleString()} bytes`);
                 console.log(`- Last commit date     : ${lastCommitDate}`);
+
+                const lastLogs = await allQuery('SELECT logged_by, MAX(date) as max_date FROM logs GROUP BY logged_by ORDER BY max_date DESC LIMIT 3');
+                lastLogs.forEach(entry => {
+                    console.log(`Last log entry by: ${entry.logged_by || 'unknown'} at ${entry.max_date}`);
+                });
                 break;
             }
 

@@ -589,7 +589,8 @@ app.post('/api/logs/:batchId', requireRole('super_admin', 'admin', 'farmer'), as
         const log = req.body;
         const id = log.id || `${req.params.batchId}_${log.date}`; // enforce unique compound id
         log.id = id;
-        await runQuery('INSERT INTO logs (id, batch_id, data, date, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [id, req.params.batchId, JSON.stringify(log), log.date]);
+        const loggedBy = (req.session && req.session.user && req.session.user.username) || (req.session && req.session.username) || null;
+        await runQuery('INSERT INTO logs (id, batch_id, data, date, logged_by, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, logged_by = excluded.logged_by, updated_at = CURRENT_TIMESTAMP', [id, req.params.batchId, JSON.stringify(log), log.date, loggedBy]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -822,7 +823,8 @@ app.post('/api/health/:batchId', requireRole('super_admin', 'admin', 'farmer'), 
         const log = req.body;
         const id = log.id || `${req.params.batchId}_h_${Date.now()}`;
         log.id = id;
-        await runQuery('INSERT INTO health_logs (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [id, req.params.batchId, JSON.stringify(log)]);
+        const loggedBy = (req.session && req.session.user && req.session.user.username) || (req.session && req.session.username) || null;
+        await runQuery('INSERT INTO health_logs (id, batch_id, data, logged_by, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, logged_by = excluded.logged_by, updated_at = CURRENT_TIMESTAMP', [id, req.params.batchId, JSON.stringify(log), loggedBy]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1243,10 +1245,11 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
         const status = isAmendment ? STAGING_STATUS.AMENDMENT : STAGING_STATUS.PENDING;
         const sensorId = data.sensor_id || 'primary';
         delete data.sensor_id;
+        const loggedBy = (req.session && req.session.user && req.session.user.username) || (req.session && req.session.username) || null;
 
         await runQuery(
-            'INSERT OR IGNORE INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [id, batchId, module, targetDate, timestamp, JSON.stringify(data), status, sensorId]
+            'INSERT OR IGNORE INTO staging (id, batch_id, module, date, timestamp, data, status, sensor_id, logged_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [id, batchId, module, targetDate, timestamp, JSON.stringify(data), status, sensorId, loggedBy]
         );
 
         // Amendments for past dates commit immediately (date is already closed)
