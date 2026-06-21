@@ -1371,6 +1371,11 @@ window.toggleSensorPopover = async function(e) {
     });
 };
 
+/**
+ * Dynamically positions the environment popover relative to the sensor chip trigger.
+ * Applies safety margins (clamping bounds) to ensure the 320px popover stays
+ * entirely within the user's viewport on mobile/narrow screens.
+ */
 window.positionSensorPopover = function() {
     const chip = document.getElementById('sensor-popover-chip');
     const popover = document.getElementById('sensor-popover');
@@ -1380,8 +1385,16 @@ window.positionSensorPopover = function() {
     popover.style.top = (rect.bottom + scrollY + 8) + 'px';
     const popW = 320;
     let left = rect.right - popW;
-    if (left < 8) left = 8;
-    if (left + popW > window.innerWidth - 8) left = window.innerWidth - popW - 8;
+
+    // Mobile Viewport Clamping:
+    // If the left boundary goes off-screen, clamp it to 8px padding.
+    // If the right boundary goes off-screen, shift it leftwards to retain 8px padding.
+    if (left < 8) {
+        left = 8;
+    }
+    if (left + 320 > window.innerWidth - 8) {
+        left = window.innerWidth - 328;
+    }
     popover.style.left = left + 'px';
     popover.style.display = 'block';
 };
