@@ -1399,6 +1399,16 @@ window.positionSensorPopover = function() {
     popover.style.display = 'block';
 };
 
+/**
+ * Renders the sensor readings and historical chart inside the popover.
+ * Fetches the live sensor values and 7-day environmental history from the API.
+ * 
+ * BUG 1 Fix Note: Assumes the popover DOM element (#sensor-popover) is already
+ * appended to the document body to prevent getElementById returning null.
+ * 
+ * BUG 2 Fix Note: If history is empty, unconditionally hides the canvas and
+ * dynamically creates a fallback message element if it isn't found in the DOM.
+ */
 window.renderSensorPopover = async function() {
     const res = await api.getLiveSensors();
     const history = await api.getSensorHistory();
