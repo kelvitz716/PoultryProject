@@ -4,8 +4,6 @@
 #   Production (OCI):  docker compose up -d --pull always --force-recreate poultry-dss
 #   Local development: comment `image:` line, uncomment `build:` block, then: docker compose up -d
 
-version: '3.8'
-
 services:
   poultry-dss:
     # ── Image ──────────────────────────────────────────────────────────────
