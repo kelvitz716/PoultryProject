@@ -1270,13 +1270,29 @@ window.triggerSensorSync = async function() {
     }
 };
 
+/**
+ * Toggles the visibility of the sensor popover.
+ * If the popover does not exist, it is created and appended to document.body,
+ * then populated with live sensor data and historical charts.
+ * 
+ * BUG 1 Fix: Ensure the popover DOM element (#sensor-popover) is fully appended to
+ * document.body and Lucide icons are initialized before calling renderSensorPopover().
+ * This prevents getElementById queries inside the render function from returning null
+ * and failing to update the UI gauges.
+ * 
+ * @param {Event} e - The click event triggering the toggle.
+ */
 window.toggleSensorPopover = async function(e) {
     e.stopPropagation();
     let popover = document.getElementById('sensor-popover');
     if (popover) {
         const isVisible = popover.style.display !== 'none';
         popover.style.display = isVisible ? 'none' : 'block';
-        if (!isVisible) await window.renderSensorPopover();
+        if (!isVisible) {
+            // Re-render and position the popover when opening it again
+            await window.renderSensorPopover();
+            window.positionSensorPopover();
+        }
         return;
     }
 
@@ -1333,9 +1349,15 @@ window.toggleSensorPopover = async function(e) {
             <div id="sp-no-history" style="display:none; text-align:center; color:var(--text-muted); font-size:12px; padding:20px 0;">No historical data yet. Log some days with the sensor connected.</div>
         </div>
     `;
+    // Strictly append the popover to the DOM first to ensure elements are present.
     document.body.appendChild(popover);
-    if (window.lucide) lucide.createIcons();
+    
+    // Initialize Lucide icons on the newly inserted DOM fragment.
+    if (window.lucide) {
+        lucide.createIcons();
+    }
 
+    // Await rendering sensor data strictly after DOM insertion to prevent null query errors.
     await window.renderSensorPopover();
     window.positionSensorPopover();
 
