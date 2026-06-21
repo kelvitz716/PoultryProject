@@ -72,6 +72,13 @@ All primary operating features—including lifecycle generation, algorithmic flo
 *   **Missing Feed Warnings (FIX 5)**: Added an inline non-blocking warning toast (`showToast`) during daily log submission if the user attempts to save records with zero feed sacks or weight logged on non-backfilled days.
 *   **Destructive Clear Buttons Styling (FIX 6)**: Styled the "Clear All" button in the Farm Operations view header with danger-themed border and color rules (`color: var(--danger); border-color: var(--danger);`) to flag its destructive behavior.
 
+#### 9. Farmhand Support & Farmer Role UI Restrictions (June 2026)
+*   **Role-Based UI Gating**: Gated sensitive views and actions for the `farmer` role. They can perform daily logging, view active batch progress, and check coops environment sensors, but cannot see financial balances (cash balances replaced with `"KES —"`), pricing tables, transaction ledgers, or batch management options (new/delete batches, "Clear All" buttons).
+*   **Grid Layout Auto-Expansion**: Configured "Today's Log" and "Recent Logs" cards to dynamically span the full container grid width (`grid-column: 1 / -1`) when the farmer role hides the financial/assistant panels, keeping the cockpit visually balanced.
+*   **Add User Onboarding UX**: Enhanced the User Management modal in Settings to display dynamic descriptions for each role during creation and render a clear credentials summary card with an inline `[Copy credentials]` button upon successful creation.
+*   **Strict Password Change Enforcement**: Implemented a full-screen blocker overlay for farmers if `mustChangePassword` is active, preventing app access until updated. Clicking the blocker's call-to-action automatically routes the session to Settings and triggers the Change Password dialog.
+*   **Self-Password Update Fix**: Corrected a client parameter bug that passed the current password instead of the user's ID to `api.changePassword`. The success callback now resolves the blocker state instantly and redirects the user to the active cockpit/batch view.
+
 ---
 
 ## Technical Backlog & Workarounds

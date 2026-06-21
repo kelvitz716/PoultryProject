@@ -121,8 +121,22 @@ export function initSettingsView() {
             const err = document.getElementById('pw-error');
             if (nw.length < 8) { err.textContent = 'New password must be ≥ 8 characters.'; err.style.display = 'block'; return; }
             if (nw !== cnf) { err.textContent = 'Passwords do not match.'; err.style.display = 'block'; return; }
-            const res = await api.changePassword(cur, nw);
-            if (res.success) { overlay.remove(); showToast('Password updated.', 'success'); }
+            const res = await api.changePassword(window.CURRENT_USER?.id, nw);
+            if (res.success) {
+                if (window.CURRENT_USER) {
+                    window.CURRENT_USER.mustChangePassword = false;
+                }
+                overlay.remove();
+                showToast('Password updated.', 'success');
+                if (window.USER_ROLE === 'farmer') {
+                    const activeBatch = store.allBatches.find(b => b.status === BATCH_STATUS.ACTIVE);
+                    if (activeBatch) {
+                        window.openBatchCockpit(activeBatch.id);
+                    } else {
+                        window.switchView('batches');
+                    }
+                }
+            }
             else { err.textContent = res.error || 'Failed.'; err.style.display = 'block'; }
         };
     });
@@ -340,7 +354,9 @@ function _showAddUserModal(onSuccess) {
             <div style="margin-bottom:18px;"><label style="font-size:0.8rem;opacity:0.65;display:block;margin-bottom:5px;">Role</label>
                 <select id="nu-role" style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.07);color:inherit;box-sizing:border-box;">
                     <option value="farmer">Farmer</option><option value="viewer">Viewer</option><option value="admin">Admin</option>
-                </select></div>
+                </select>
+                <p id="nu-role-desc" style="font-size:0.75rem;opacity:0.8;margin:8px 0 0;line-height:1.4;color:var(--text-muted);"></p>
+            </div>
             <div id="nu-error" style="display:none;color:#ef4444;font-size:0.82rem;margin-bottom:10px;"></div>
             <div style="display:flex;gap:10px;">
                 <button id="nu-cancel" style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:inherit;cursor:pointer;">Cancel</button>
@@ -348,6 +364,20 @@ function _showAddUserModal(onSuccess) {
             </div>
         </div>`;
     document.body.appendChild(overlay);
+
+    const roleSelect = overlay.querySelector('#nu-role');
+    const roleDesc = overlay.querySelector('#nu-role-desc');
+    const descs = {
+        farmer: "Can log daily data (eggs, feed, deaths). Cannot manage batches, view financials, or change settings.",
+        viewer: "Read-only access. Cannot log any data.",
+        admin: "Full access except user role changes."
+    };
+    const updateRoleDesc = () => {
+        roleDesc.textContent = descs[roleSelect.value] || "";
+    };
+    roleSelect.addEventListener('change', updateRoleDesc);
+    updateRoleDesc();
+
     document.getElementById('nu-cancel').onclick = () => overlay.remove();
     document.getElementById('nu-save').onclick = async () => {
         const username = document.getElementById('nu-username').value.trim();
@@ -356,7 +386,38 @@ function _showAddUserModal(onSuccess) {
         const errEl = document.getElementById('nu-error');
         if (!username || password.length < 8) { errEl.textContent = 'Username required and password ≥ 8 chars.'; errEl.style.display = 'block'; return; }
         const res = await api.createUser(username, password, role);
-        if (res.success) { overlay.remove(); showToast('User created.', 'success'); if (onSuccess) onSuccess(); }
+        if (res.success) {
+            const container = overlay.querySelector('div');
+            const originURL = window.location.origin;
+            const summaryText = `Farmhand account created\nUsername: ${username}\nPassword: ${password}\nURL: ${originURL}\nNote: They will be prompted to change their password on first login.`;
+            
+            container.innerHTML = `
+                <h3 style="margin:0 0 16px;">Farmhand Account Created</h3>
+                <div style="background:rgba(255,255,255,0.04); border:1px solid var(--border-color); border-radius:8px; padding:16px; font-family:monospace; font-size:0.85rem; line-height:1.5; margin-bottom:20px; white-space:pre-wrap; word-break:break-all;">Username: ${username}
+Password: ${password}
+URL: ${originURL}
+
+Note: They will be prompted to change their password on first login.</div>
+                <div style="display:flex; gap:10px;">
+                    <button id="nu-copy" class="btn btn-primary" style="flex:1.5; padding:10px; border-radius:8px; font-weight:600;">Copy credentials</button>
+                    <button id="nu-close" class="btn btn-secondary" style="flex:1; padding:10px; border-radius:8px;">Close</button>
+                </div>
+            `;
+            
+            document.getElementById('nu-copy').onclick = async () => {
+                try {
+                    await navigator.clipboard.writeText(summaryText);
+                    showToast('Credentials copied to clipboard!', 'success');
+                } catch (e) {
+                    showToast('Failed to copy to clipboard.', 'danger');
+                }
+            };
+            
+            document.getElementById('nu-close').onclick = () => {
+                overlay.remove();
+                if (onSuccess) onSuccess();
+            };
+        }
         else { errEl.textContent = res.error || 'Failed.'; errEl.style.display = 'block'; }
     };
 }

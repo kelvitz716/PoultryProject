@@ -103,7 +103,9 @@ if ('serviceWorker' in navigator) {
         window.USER_ROLE = authState.user.role;
         window.CURRENT_USER = authState.user;
         if (authState.user.mustChangePassword) {
-            showToast('⚠️ Please change your password in Settings.', 'warning');
+            if (window.USER_ROLE !== 'farmer') {
+                showToast('⚠️ Please change your password in Settings.', 'warning');
+            }
         }
     }
 
@@ -150,6 +152,11 @@ function _showLoginModal(errorMsg = '') {
         if (result.success) {
             window.USER_ROLE = result.user.role;
             window.CURRENT_USER = result.user;
+            if (result.user.mustChangePassword) {
+                if (window.USER_ROLE !== 'farmer') {
+                    showToast('⚠️ Please change your password in Settings.', 'warning');
+                }
+            }
             overlay.remove();
             _initApp();
         } else {
@@ -234,6 +241,44 @@ async function _initApp() {
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view');
 
+    function checkMustChangePasswordBlock() {
+        if (window.CURRENT_USER?.mustChangePassword && window.USER_ROLE === 'farmer') {
+            if (!document.getElementById('must-change-pw-blocker')) {
+                const overlay = document.createElement('div');
+                overlay.id = 'must-change-pw-blocker';
+                overlay.className = 'modal-overlay active';
+                overlay.style.cssText = 'z-index:99999; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,0.95); backdrop-filter:blur(12px); position:fixed; inset:0;';
+                overlay.innerHTML = `
+                    <div class="modal-content card" style="max-width:400px; padding:32px; text-align:center; border:1px solid rgba(255,255,255,0.1); background:var(--card-bg,#1e2535); border-radius:12px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1),0 10px 10px -5px rgba(0,0,0,0.04);">
+                        <div style="margin-bottom:20px; display:inline-flex; align-items:center; justify-content:center; width:64px; height:64px; border-radius:50%; background:rgba(239,68,68,0.1);">
+                            <i data-lucide="shield-alert" style="width:32px; height:32px; color:#ef4444;"></i>
+                        </div>
+                        <h3 style="margin:0 0 12px; font-size:1.3rem; font-weight:600; color:#fff;">Password Change Required</h3>
+                        <p style="font-size:0.875rem; color:#9ca3af; line-height:1.6; margin:0 0 24px;">
+                            For security, you must update your temporary password before accessing the farm cockpit.
+                        </p>
+                        <button id="btn-blocker-goto-settings" class="btn btn-primary" style="width:100%; padding:12px; font-weight:600; border-radius:8px;">
+                            Go to Settings & Change Password
+                        </button>
+                    </div>
+                `;
+                document.body.appendChild(overlay);
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+                document.getElementById('btn-blocker-goto-settings').onclick = () => {
+                    overlay.remove();
+                    window.switchView('settings');
+                    setTimeout(() => {
+                        document.getElementById('btn-change-own-password')?.click();
+                    }, 100);
+                };
+            }
+            return true;
+        }
+        return false;
+    }
+
     if (window.USER_ROLE === 'viewer') {
         const genNav = document.getElementById('nav-generator');
         if (genNav) genNav.style.display = 'none';
@@ -260,6 +305,12 @@ async function _initApp() {
     }
 
     window.switchView = function(viewId) {
+        if (viewId !== 'settings' && checkMustChangePasswordBlock()) {
+            return;
+        }
+        if (viewId === 'settings') {
+            document.getElementById('must-change-pw-blocker')?.remove();
+        }
         if (window.USER_ROLE === 'farmer') {
             if (viewId === 'dashboard' || viewId === 'generator' || viewId === 'analytics') {
                 const activeBatch = store.allBatches.find(b => b.status === BATCH_STATUS.ACTIVE);
@@ -1316,6 +1367,9 @@ async function _initApp() {
 
     // Await database values and sync cache before initial dashboard render
     initDataPromise.then(() => {
+        if (checkMustChangePasswordBlock()) {
+            return;
+        }
         if (window.USER_ROLE === 'farmer') {
             const activeBatch = store.allBatches.find(b => b.status === BATCH_STATUS.ACTIVE);
             if (activeBatch) {
@@ -1328,6 +1382,9 @@ async function _initApp() {
         }
     }).catch(err => {
         console.error('Error during data init:', err);
+        if (checkMustChangePasswordBlock()) {
+            return;
+        }
         if (window.USER_ROLE === 'farmer') {
             window.switchView('batches');
         } else {
