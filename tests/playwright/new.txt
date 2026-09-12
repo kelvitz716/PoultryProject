@@ -1,0 +1,58 @@
+    await runWorkflow(browser, runDir, origin, '02 inventory movements', async ({ page, capture }) => {
+      await login(page, origin, owner.username, owner.password);
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      await page.evaluate(() => window.openTxModal('write_off', 'eggs'));
+      await page.locator('#tx-modal').waitFor({ state: 'visible' });
+      await capture('default', page.locator('#tx-modal .modal-content'));
+      await page.locator('#tx-qty').fill('10');
+      await page.locator('#tx-reason').selectOption('cracked');
+      await capture('filled', page.locator('#tx-modal .modal-content'));
+      await page.locator('#tx-form button[type="submit"]').click();
+      await page.locator('#tx-modal').waitFor({ state: 'detached' });
+      await capture('submitted', page.locator('#view-batch-cockpit'));
+    }, results);
+
+    await runWorkflow(browser, runDir, origin, '03 purchases and sales', async ({ page, capture }) => {
+      await login(page, origin, owner.username, owner.password);
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      await page.evaluate(() => window.openTxModal('purchase', 'feed'));
+      await page.locator('#tx-modal').waitFor({ state: 'visible' });
+      await capture('default', page.locator('#tx-modal .modal-content'));
+      await page.locator('#tx-qty').fill('500');
+      await capture('filled', page.locator('#tx-modal .modal-content'));
+      await page.locator('#tx-form button[type="submit"]').click();
+      await page.locator('#tx-modal').waitFor({ state: 'detached' });
+      
+      await page.evaluate(() => window.openTxModal('sale', 'eggs'));
+      await page.locator('#tx-modal').waitFor({ state: 'visible' });
+      await page.locator('#tx-qty').fill('1');
+      await page.locator('#tx-unit').selectOption('pcs');
+      await page.locator('#tx-form button[type="submit"]').click();
+      await page.locator('#tx-modal').waitFor({ state: 'detached' });
+      
+      await capture('submitted', page.locator('#view-batch-cockpit'));
+    }, results);
+
+    await runWorkflow(browser, runDir, origin, '04 batch closure', async ({ page, capture }) => {
+      await login(page, origin, owner.username, owner.password);
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      await page.evaluate((bid) => window.finishBatch(bid), batchId);
+      await page.locator('.modal-content').waitFor({ state: 'visible' });
+      await capture('default', page.locator('.modal-content'));
+      await page.locator('#c-btn-next').click();
+      await page.locator('#c-btn-next').click();
+      await capture('filled', page.locator('.modal-content'));
+      await page.locator('#c-btn-finish').click();
+      await page.locator('.modal-content').waitFor({ state: 'hidden' });
+      await capture('submitted', page.locator('#view-batch-cockpit'));
+    }, results);
+
+    await runWorkflow(browser, runDir, origin, '05 reload persistence', async ({ page, capture }) => {
+      await login(page, origin, owner.username, owner.password);
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      await capture('default', page.locator('#view-batch-cockpit'));
+      await page.reload();
+      await page.locator('#view-batch-cockpit').waitFor({ state: 'visible' });
+      await capture('filled', page.locator('#view-batch-cockpit'));
+      await capture('submitted', page.locator('#view-batch-cockpit'));
+    }, results);

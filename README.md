@@ -108,6 +108,12 @@ TUYA_REGION=eu          # eu | us | cn | in
 
 ---
 
+## 💳 Payment handling (current state)
+
+The current manual transaction form records ordinary farm sales and purchases only; it does not yet capture a payment method or M-Pesa receipt reference. The backend ledger synchronizer preserves caller-supplied `payment_method: 'mpesa'` and `mpesa_code` values when another trusted workflow provides them. Capturing and reviewing those values in the interface belongs to a later Payment Inbox batch.
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -125,12 +131,12 @@ PoultryProject/
 │   ├── store.js            # Central client state store and window integrations
 │   ├── dashboard.js        # Dashboard, live cockpit, and environment sensor view module
 │   ├── batches.js          # Batches tracking, biosecurity downtime, and closure wizard
-│   ├── settings.js         # Settings form, buyers, user management, and reconciliation console
+│   ├── settings.js         # Settings form, buyers, and user management
 │   ├── health.js           # Health records, medication, vaccines, and drug withdrawal tracking
 │   └── sales.js            # Transactions, sales, feed buy calculator, and surplus rooster advisor
 ├── scripts/                # Utility/maintenance scripts
 ├── tests/
-│   └── e2e.js              # Playwright end-to-end test suite (27 tests)
+│   └── playwright/         # Isolated Playwright evidence harness
 ├── db.js                   # SQLite connection, WAL setup, schema definitions
 ├── docker-compose.yml      # Docker Compose stack definition
 ├── Dockerfile              # Multi-stage Node.js 20 Alpine container build
@@ -206,20 +212,16 @@ git push master
 
 ## 🧪 Testing
 
-Run the full Playwright end-to-end test suite (requires the server to be running):
+Run the isolated Batch 18A browser evidence harness:
 
 ```bash
-# Run against local development server:
-node tests/e2e.js
-
-# Run against production/remote target (e.g. OCI Tailscale host) using custom credentials:
-BASE_URL=http://100.68.227.114:8089 \
-E2E_USERNAME=your_username \
-E2E_PASSWORD=your_password \
-node tests/e2e.js
+npm run test:playwright:batch18a
 ```
 
-The suite covers 31 scenarios across authentication checkpoints, proposals, batches, daily logs, transactions, health records, exports, and the Tuya sensor API. It is optimized to bypass timing races and connection latencies.
+It rejects supplied target origins, copies the app to a temporary directory, and
+uses a generated loopback-only test server. See
+[the coverage matrix](docs/PLAYWRIGHT-COVERAGE-MATRIX.md) for the current
+auth/navigation scope and later workflow coverage.
 
 ---
 

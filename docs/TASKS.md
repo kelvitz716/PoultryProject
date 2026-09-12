@@ -124,17 +124,7 @@
 
 ---
 
-## Module 7 — Edge AI & SME Infrastructure
-
-- `[ ]` **Intel OpenVINO integration** — configure YOLOv8 nano export to OpenVINO IR format; target ≥ 60 FPS on i5-6200U CPU for single-camera bird activity/health feeds
-- `[ ]` **Model quantization** — convert detection models to INT8 or FP16 using OpenVINO NNCF; validate 2–2.4× speed improvement vs FP32 baseline
-- `[ ]` **Local LLM advisory engine** — integrate Ollama or Jan.ai running a quantized GGUF model (e.g., Phi-3 Mini 4K) for offline expert advisory; no data should leave the local machine
-- `[ ]` **Offline-first architecture validation** — confirm all core DSS modules function without internet connectivity; LLM advisory must degrade gracefully if model is not loaded
-- `[ ]` **CPU inference benchmarking script** — create a repeatable benchmark (`/scripts/benchmark_openvino.sh`) to measure FPS and latency on the target EliteBook hardware
-
----
-
-## Module 8 — End-to-End Visual Validation
+## End-to-End Visual Validation
 
 - `[x]` **Test Module 1** — Verify Biological Foundations (liveability constants, growth-delay warnings, and skeletal check prompts in the UI)
 - `[x]` **Test Module 2** — Verify Environmental Engineering (Kitale seasonal engine, humidity disease alerts, and evening curtain reminders)

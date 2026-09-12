@@ -1,0 +1,225 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const { handleE2ETestSeedFailure } = require('../../services/e2e-test-seed-policy');
+
+const root = path.join(__dirname, '..', '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+
+function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function request(baseUrl, pathname, { method = 'GET', body, cookie } = {}) {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+        method,
+        headers: {
+            ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+            ...(cookie ? { Cookie: cookie } : {})
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+    let json = null;
+    try { json = await response.json(); } catch (_) { json = null; }
+    return { status: response.status, json, cookie: response.headers.get('set-cookie')?.split(';')[0] || null };
+}
+
+async function waitForServer(baseUrl, child) {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+        if (child.exitCode !== null) throw new Error('Disposable server stopped before accepting requests');
+        try {
+            const result = await request(baseUrl, '/api/auth/me');
+            if (result.status === 200) return result;
+        } catch (_) { /* server is still starting */ }
+        await wait(50);
+    }
+    throw new Error('Disposable server did not start in time');
+}
+
+function copyDisposableProject(target) {
+    fs.cpSync(root, target, {
+        recursive: true,
+        filter(source) {
+            const relative = path.relative(root, source);
+            return !['.git', 'data', '.env'].includes(relative)
+                && !relative.startsWith(`.git${path.sep}`)
+                && !relative.startsWith(`data${path.sep}`);
+        }
+    });
+}
+
+test('production startup keeps E2E seeding optional and registers the release migrations in dependency order', () => {
+    const server = read('server.js');
+    const db = read('db.js');
+    assert.doesNotMatch(server, /E2E_TEST_PASSWORD environment variable is required/);
+    const migrations = [
+        'migrateCustomerSettlement(db)',
+        'migratePaymentImports(db)',
+        'migrateLedgerMinorUnits(db)',
+        'migrateManualCustomerReceipts(db)',
+        'migrateCustomerCreditNotes(db)',
+        'migrateCustomerRefunds(db)'
+    ];
+    let previous = -1;
+    for (const migration of migrations) {
+        const current = db.indexOf(migration);
+        assert.ok(current > previous, `${migration} must follow its prerequisite migration`);
+        previous = current;
+    }
+});
+
+test('E2E seed failure policy preserves the original error and only suppresses it in production', () => {
+    const original = new Error('seed write failed');
+    const logged = [];
+    const logger = { error: (...args) => logged.push(args) };
+    assert.throws(() => handleE2ETestSeedFailure(original, { isProduction: false, logger }), error => error === original);
+    assert.doesNotThrow(() => handleE2ETestSeedFailure(original, { isProduction: true, logger }));
+    assert.equal(logged.length, 2);
+    assert.equal(logged[0][1], 'seed write failed');
+});
+
+test('production server and browser wire every bounded payment and settlement surface', () => {
+    const server = read('server.js');
+    const app = read('js/app.js');
+    const timeline = read('js/customer-settlement-timeline.js');
+    const webhook = server.indexOf('registerPaymentImportWebhook(app');
+    const json = server.indexOf('app.use(express.json');
+    assert.ok(webhook >= 0 && webhook < json, 'webhook must preserve raw bytes before JSON parsing');
+    for (const registration of [
+        'registerPaymentImportApi(app',
+        'registerManualCustomerReceiptApi(app',
+        'registerCustomerSettlementApi(app',
+        'registerCustomerReconciliationSuggestionsApi(app',
+        'registerCustomerCreditNoteApi(app',
+        'registerCustomerRefundApi(app',
+        'registerCustomerRegistryApi(app',
+        'registerLegacyCustomerBootstrapApi(app',
+        'registerTransactionPersistenceApi(app'
+    ]) assert.ok(server.includes(registration), `${registration} must be registered`);
+    assert.match(app, /initPaymentInboxView\(\);/);
+    assert.match(app, /initCustomerSettlementTimelineView\(\);/);
+    assert.match(app, /viewId === 'payment-inbox'\) loadPaymentInbox\(\);/);
+    assert.match(app, /viewId === 'customer-accounts'\) loadCustomerSettlementTimeline\(\);/);
+    assert.match(timeline, /refundPending/);
+    assert.match(timeline, /creditNotePending/);
+    assert.match(timeline, /allocationPending/);
+    assert.match(timeline, /receiptPending/);
+});
+
+test('disposable real-server smoke starts without E2E credentials and reaches authenticated release routes safely', async t => {
+    const disposableRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-release-smoke-'));
+    const appDir = path.join(disposableRoot, 'app');
+    const port = 33000 + Math.floor(Math.random() * 2000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    copyDisposableProject(appDir);
+    const environment = { ...process.env, PORT: String(port), SESSION_SECRET: 'release-smoke-session-secret-0123456789' };
+    delete environment.E2E_TEST_PASSWORD;
+    delete environment.NODE_ENV;
+    const child = spawn(process.execPath, ['server.js'], { cwd: appDir, env: environment, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk.toString(); });
+    child.stderr.on('data', chunk => { output += chunk.toString(); });
+    t.after(async () => {
+        if (child.exitCode === null) {
+            await new Promise(resolve => {
+                child.once('exit', resolve);
+                child.kill('SIGTERM');
+            });
+        }
+        fs.rmSync(disposableRoot, { recursive: true, force: true });
+    });
+
+    const health = await waitForServer(baseUrl, child);
+    assert.deepEqual(health.json, { setupRequired: true });
+    const staticPage = await fetch(`${baseUrl}/`);
+    assert.equal(staticPage.status, 200);
+    assert.match(await staticPage.text(), /Poultry DSS/);
+    assert.equal((await request(baseUrl, '/api/payment-imports?limit=1')).status, 401);
+
+    const setup = await request(baseUrl, '/api/auth/setup', {
+        method: 'POST', body: { username: 'smoke-admin', password: 'SmokePass123!' }
+    });
+    assert.equal(setup.status, 200);
+    assert.equal(setup.json?.user?.role, 'super_admin');
+    assert.ok(setup.cookie);
+    const cookie = setup.cookie;
+    assert.equal((await request(baseUrl, '/api/auth/me', { cookie })).json?.user?.role, 'super_admin');
+
+    const customer = await request(baseUrl, '/api/customers', {
+        method: 'POST', cookie,
+        body: { display_name: 'Smoke Customer', payment_terms_days: 30, contact_phone: '0712345678', idempotency_key: 'smoke-customer-create-001' }
+    });
+    assert.equal(customer.status, 201);
+    const customerId = customer.json?.customer?.id;
+    assert.match(customerId, /^customer:/);
+
+    const receipt = await request(baseUrl, '/api/customer-receipts/manual', {
+        method: 'POST', cookie,
+        body: { customer_id: customerId, method: 'cash', amount: '10.12', external_reference: null, idempotency_key: 'smoke-receipt-cash-001' }
+    });
+    assert.equal(receipt.status, 201);
+    assert.equal(receipt.json?.receipt?.amount_minor, 1012);
+    const refund = await request(baseUrl, '/api/customer-refunds', {
+        method: 'POST', cookie,
+        body: {
+            customer_id: customerId,
+            method: 'cash',
+            amount: '0.07',
+            sources: [{ credit_event_id: receipt.json.customer_account_event_id, amount: '0.07' }],
+            reason_code: 'overpayment',
+            external_reference: null,
+            acknowledge_method_difference: false,
+            idempotency_key: 'smoke-refund-001'
+        }
+    });
+    assert.equal(refund.status, 201);
+    assert.equal(refund.json?.amount_minor, 7);
+
+    const settlement = await request(baseUrl, `/api/customers/${encodeURIComponent(customerId)}/settlement`, { cookie });
+    const suggestions = await request(baseUrl, `/api/customers/${encodeURIComponent(customerId)}/reconciliation-suggestions?limit=5`, { cookie });
+    const accounts = await request(baseUrl, '/api/ledger/accounts', { cookie });
+    assert.equal(settlement.status, 200);
+    assert.equal(settlement.json?.status, 'exact');
+    assert.equal(suggestions.status, 200);
+    assert.equal(suggestions.json?.status, 'exact');
+    assert.equal(accounts.status, 200);
+    assert.ok(accounts.json?.some(account => account.code === '1020' && account.status === 'exact'));
+
+    const paymentImport = await request(baseUrl, '/api/payment-imports/manual', {
+        method: 'POST', cookie,
+        body: { text: 'SMK1234XYZ Confirmed. Ksh20 received from SMOKE BUYER 0712345678 on 6/9/26 at 10:30 AM.', sender: 'MPESA' }
+    });
+    assert.equal(paymentImport.status, 201);
+    assert.equal(Object.hasOwn(paymentImport.json?.payment_import || {}, 'text'), false);
+    const importId = paymentImport.json?.payment_import?.id;
+    assert.match(importId, /^[0-9a-f-]{36}$/i);
+    const approval = await request(baseUrl, `/api/payment-imports/${encodeURIComponent(importId)}/approve`, {
+        method: 'POST', cookie, body: { customer_id: customerId }
+    });
+    assert.equal(approval.status, 200);
+    assert.equal(approval.json?.payment_import?.status, 'approved');
+
+    const rejectableImport = await request(baseUrl, '/api/payment-imports/manual', {
+        method: 'POST', cookie, body: { text: 'not a payment message', sender: 'MPESA' }
+    });
+    assert.equal(rejectableImport.status, 201);
+    const rejection = await request(baseUrl, `/api/payment-imports/${encodeURIComponent(rejectableImport.json?.payment_import?.id)}/reject`, {
+        method: 'POST', cookie, body: { review_notes: null }
+    });
+    assert.equal(rejection.status, 200);
+    assert.equal(rejection.json?.payment_import?.status, 'rejected');
+
+    assert.equal((await request(baseUrl, '/api/customer-credit-notes', {
+        method: 'POST', cookie,
+        body: { customer_id: customerId, invoice_event_id: 'invoice:missing', amount: '1.00', reason_code: 'other', idempotency_key: 'smoke-credit-note-001' }
+    })).status, 404);
+    assert.equal((await request(baseUrl, '/api/customer-settlement/allocations', {
+        method: 'POST', cookie,
+        body: { credit_event_id: receipt.json.customer_account_event_id, debit_event_id: 'invoice:missing', amount: '1.00', idempotency_key: 'smoke-allocation-001' }
+    })).status, 404);
+    assert.equal((await request(baseUrl, '/api/payment-imports/webhook', {
+        method: 'POST', body: { from: 'MPESA', text: 'x' }
+    })).status, 503);
+    assert.equal(child.exitCode, null, output);
+});

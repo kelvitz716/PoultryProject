@@ -23,6 +23,8 @@ import { getActiveWithdrawal } from './health.js';
 import './sales.js';
 import { initDashboardView } from './dashboard.js';
 import { initCockpitView } from './cockpit.js';
+import { initPaymentInboxView, loadPaymentInbox } from './payment-inbox.js';
+import { initCustomerSettlementTimelineView, loadCustomerSettlementTimeline } from './customer-settlement-timeline.js';
 
 window.addEventListener('unhandledrejection', e => {
     console.error('[unhandled rejection]', e.reason);
@@ -237,6 +239,8 @@ async function _initApp() {
     initBatchesView();
     initDashboardView();
     initCockpitView();
+    initPaymentInboxView();
+    initCustomerSettlementTimelineView();
 
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view');
@@ -288,6 +292,10 @@ async function _initApp() {
         if (firstPropBtn) firstPropBtn.style.display = 'none';
         const gotoGenBtn = document.getElementById('btn-goto-generator');
         if (gotoGenBtn) gotoGenBtn.style.display = 'none';
+        const paymentInboxNav = document.getElementById('nav-payment-inbox');
+        if (paymentInboxNav) paymentInboxNav.style.display = 'none';
+        const customerSettlementNav = document.getElementById('nav-customer-accounts');
+        if (customerSettlementNav) customerSettlementNav.style.display = 'none';
     }
 
     if (window.USER_ROLE === 'farmer') {
@@ -305,6 +313,9 @@ async function _initApp() {
     }
 
     window.switchView = function(viewId) {
+        if ((viewId === 'payment-inbox' || viewId === 'customer-accounts') && window.USER_ROLE === 'viewer') {
+            viewId = 'dashboard';
+        }
         if (viewId !== 'settings' && checkMustChangePasswordBlock()) {
             return;
         }
@@ -335,6 +346,8 @@ async function _initApp() {
         if (viewId === 'docs') resetDocsPanel();
         if (viewId === 'batches') refreshBatches();
         if (viewId === 'settings') loadSettingsForm();
+        if (viewId === 'payment-inbox') loadPaymentInbox();
+        if (viewId === 'customer-accounts') loadCustomerSettlementTimeline();
     }
 
     navItems.forEach(item => {

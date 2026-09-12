@@ -4,7 +4,11 @@
   "description": "Poultry Decision Support System",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/unit/*.test.js",
+    "test:playwright:batch18a": "node tests/playwright/batch18a.js",
+    "test:playwright:batch18a:twice": "node tests/playwright/batch18a.js && node tests/playwright/batch18a.js",
+    "test:playwright:batch18b1": "node tests/playwright/batch18b1.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

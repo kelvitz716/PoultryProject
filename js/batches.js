@@ -446,14 +446,17 @@ window.finishBatch = async function(id) {
         
         // 1. Process Bird Disposition
         if (birdsAlive > 0) {
-            const bDisp = document.getElementById('disp-birds').value;
+            const bDisp = document.getElementById('disp-birds') ? document.getElementById('disp-birds').value : 'cull';
             if (bDisp === 'sell') {
-                const amt = parseFloat(document.getElementById('disp-birds-amt').value) || 0;
-                await api.saveTransaction(batch.id, {
-                    id: Date.now().toString() + 'b', date: new Date().toISOString(),
-                    type: 'sale', category: 'spent', qty: birdsAlive, amount: amt, status: 'paid',
-                    notes: 'Final batch spent layer clearance'
-                });
+                const amt = parseFloat(document.getElementById('disp-birds-amt') ? document.getElementById('disp-birds-amt').value : 0) || 0;
+                if (amt > 0) {
+                    await api.saveTransaction(batch.id, {
+                        id: Date.now().toString() + 'b', date: new Date().toISOString(),
+                        type: 'sale', category: 'spent', qty: birdsAlive, amount: amt, status: 'paid',
+                        customerId: null, buyerName: 'Walk-in Customer', buyerTerms: 'COD', paymentTermsDays: 0,
+                        notes: 'Final batch spent layer clearance'
+                    });
+                }
             } else if (bDisp === 'cull') {
                 await api.saveLog(batch.id, {
                     id: Date.now().toString() + 'l', date: new Date().toISOString().split('T')[0],

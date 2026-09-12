@@ -1,3 +1,6 @@
+import { requestCustomerJson, requestTransactionJson } from './customer-ui-model.mjs';
+import { requestPaymentImportJson } from './payment-inbox-model.mjs';
+
 /**
  * @file api.js
  * @description Frontend API client wrapper library. Encapsulates all backend REST interactions
@@ -5,6 +8,137 @@
  */
 
 export const api = {
+    // ── PAYMENT INBOX REVIEW ──────────────────────────────────────────────────
+
+    async listPaymentImports({ status, source, limit = 25, offset = 0 } = {}) {
+        const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+        if (status) params.set('status', status);
+        if (source) params.set('source', source);
+        return requestPaymentImportJson(fetch, `/api/payment-imports?${params.toString()}`);
+    },
+
+    async getPaymentImport(id) {
+        return requestPaymentImportJson(fetch, `/api/payment-imports/${encodeURIComponent(id)}`);
+    },
+
+    async ingestManualPaymentImport(payload) {
+        return requestPaymentImportJson(fetch, '/api/payment-imports/manual', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async approvePaymentImport(id, customerId) {
+        return requestPaymentImportJson(fetch, `/api/payment-imports/${encodeURIComponent(id)}/approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customer_id: customerId })
+        });
+    },
+
+    async rejectPaymentImport(id, reviewNotes) {
+        return requestPaymentImportJson(fetch, `/api/payment-imports/${encodeURIComponent(id)}/reject`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ review_notes: reviewNotes || null })
+        });
+    },
+
+    // ── READ-ONLY CUSTOMER SETTLEMENT ────────────────────────────────────────
+
+    async getCustomerSettlement(id) {
+        return requestCustomerJson(fetch, `/api/customers/${encodeURIComponent(id)}/settlement`);
+    },
+
+    async getCustomerReconciliationSuggestions(id, { limit = 50 } = {}) {
+        const params = new URLSearchParams({ limit: String(limit) });
+        return requestCustomerJson(fetch, `/api/customers/${encodeURIComponent(id)}/reconciliation-suggestions?${params.toString()}`);
+    },
+
+    async recordManualCustomerReceipt(payload) {
+        return requestCustomerJson(fetch, '/api/customer-receipts/manual', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async allocateCustomerCredit(payload) {
+        return requestCustomerJson(fetch, '/api/customer-settlement/allocations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async reverseCustomerAllocation(id) {
+        return requestCustomerJson(fetch, `/api/customer-settlement/allocations/${encodeURIComponent(id)}/reverse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+    },
+
+    async issueCustomerCreditNote(payload) {
+        return requestCustomerJson(fetch, '/api/customer-credit-notes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async issueCustomerRefund(payload) {
+        return requestCustomerJson(fetch, '/api/customer-refunds', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    // ── STABLE CUSTOMER REGISTRY ─────────────────────────────────────────────
+
+    async bootstrapLegacyCustomers() {
+        return requestCustomerJson(fetch, '/api/customers/bootstrap-legacy-buyers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+    },
+
+    async listCustomers(includeInactive = false) {
+        const suffix = includeInactive ? '?include_inactive=true' : '';
+        return requestCustomerJson(fetch, `/api/customers${suffix}`);
+    },
+
+    async getCustomer(id) {
+        return requestCustomerJson(fetch, `/api/customers/${encodeURIComponent(id)}`);
+    },
+
+    async createCustomer(customer) {
+        return requestCustomerJson(fetch, '/api/customers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(customer)
+        });
+    },
+
+    async updateCustomer(id, patch) {
+        return requestCustomerJson(fetch, `/api/customers/${encodeURIComponent(id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch)
+        });
+    },
+
+    async deactivateCustomer(id, idempotencyKey) {
+        return requestCustomerJson(fetch, `/api/customers/${encodeURIComponent(id)}/deactivate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idempotency_key: idempotencyKey })
+        });
+    },
+
     /**
      * Retrieves a key-value pair entity from the database.
      * Used for application preferences, farm profiles, and database aggregates.
@@ -171,10 +305,10 @@ export const api = {
      * Saves a transaction log (revenue or cost) for a batch.
      * @param {string} bId - Unique ID of the batch.
      * @param {Object} tx - The transaction ledger record.
-     * @returns {Promise<void>}
+     * @returns {Promise<Object>}
      */
     async saveTransaction(bId, tx) {
-        await fetch('/api/transactions/' + bId, {
+        return requestTransactionJson(fetch, '/api/transactions/' + encodeURIComponent(bId), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(tx)
@@ -190,33 +324,6 @@ export const api = {
             const r = await fetch('/api/ledger/accounts');
             return r.ok ? await r.json() : [];
         } catch (e) { return []; }
-    },
-
-    /**
-     * Retrieves unassigned transactions in the M-Pesa suspense account.
-     * @returns {Promise<Array<Object>>} List of unassigned payments.
-     */
-    async getLedgerReconciliation() {
-        try {
-            const r = await fetch('/api/ledger/reconciliation');
-            return r.ok ? await r.json() : [];
-        } catch (e) { return []; }
-    },
-
-    /**
-     * Reconciles an unassigned M-Pesa transaction by moving it out of suspense.
-     * @param {Object} data - { transactionId, targetAccountId, buyerName, batchId }
-     * @returns {Promise<Object>} Status response.
-     */
-    async reconcileLedgerTransaction(data) {
-        try {
-            const r = await fetch('/api/ledger/reconcile', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            return r.ok ? await r.json() : { success: false };
-        } catch (e) { return { success: false, error: e.message }; }
     },
 
     /**
@@ -706,4 +813,3 @@ export const api = {
         }
     }
 };
-

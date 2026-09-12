@@ -1,0 +1,105 @@
+    await runWorkflow(browser, runDir, origin, '02 daily operational log', async ({ page, capture, callApi }) => {
+      await login(page, origin, owner.username, owner.password);
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      const initialSummary = (await callApi(`/api/staging/${batchId}/today`)).body;
+      const initialCounts = stagingModuleCounts(initialSummary);
+      assert.deepEqual(initialCounts, { eggs: 0, feed: 0, mortality: 0, sensors: 0, gases: 0, notes: 0 });
+      await capture('default', page.locator('.log-form-card'));
+
+      await page.locator('#log-feed').fill('12.5');
+      await page.locator('#log-mortality-hens').fill('1');
+      await page.locator('#log-mortality-roosters').fill('1');
+      await page.locator('#toggle-advanced-air').click();
+      await page.locator('#log-nh3').fill('8.2');
+      await page.locator('#log-co2').fill('850');
+      await page.locator('#log-temp').fill('24.6');
+      await page.locator('#log-humidity').fill('67');
+      await page.locator('#log-notes').fill('Disposable E2E observation: flock active and litter dry.');
+      const beforeSubmit = stagingModuleCounts((await callApi(`/api/staging/${batchId}/today`)).body);
+      assert.deepEqual(beforeSubmit, initialCounts, 'Filling the daily log must not create durable staging rows');
+      await capture('filled', page.locator('.log-form-card'));
+
+      const modules = ['feed', 'mortality', 'gases', 'sensors', 'notes'];
+      const writes = modules.map(module => page.waitForResponse(response =>
+        new URL(response.url()).pathname === `/api/staging/${batchId}/${module}`
+          && response.request().method() === 'POST'));
+      await page.locator('.btn-save-log').click();
+      const writeResponses = await Promise.all(writes);
+      expect(writeResponses.every(response => response.status() === 200),
+        `Daily writes returned ${writeResponses.map(response => response.status()).join(', ')}`);
+      await page.locator('.btn-save-log').filter({ hasText: 'Saved!' }).waitFor({ state: 'visible' });
+      await page.locator('.toast-success').filter({ hasText: 'Log saved!' }).waitFor({ state: 'visible' });
+      const stagedList = page.locator('#today-staged-non-eggs-list');
+      await stagedList.getByText('12.5 kg feed', { exact: false }).waitFor({ state: 'visible' });
+      await stagedList.getByText('2 bird(s) died', { exact: false }).waitFor({ state: 'visible' });
+      await stagedList.getByText('NH3 8.2 ppm, CO2 850 ppm', { exact: false }).waitFor({ state: 'visible' });
+      await stagedList.getByText('flock active and litter dry', { exact: false }).waitFor({ state: 'visible' });
+      await capture('submitted', page.locator('.log-form-card'));
+
+      const afterSubmit = stagingModuleCounts((await callApi(`/api/staging/${batchId}/today`)).body);
+      assert.deepEqual(afterSubmit, { eggs: 0, feed: 1, mortality: 1, sensors: 1, gases: 1, notes: 1 });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('#auth-overlay').waitFor({ state: 'detached' });
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      await page.locator('#today-staged-non-eggs-list').getByText('12.5 kg feed', { exact: false }).waitFor({ state: 'visible' });
+      const afterReloadSummary = (await callApi(`/api/staging/${batchId}/today`)).body;
+      const afterReload = stagingModuleCounts(afterReloadSummary);
+      assert.deepEqual(afterReload, afterSubmit, 'Daily operational events did not persist through reload');
+      expect(afterReloadSummary.sensors.current.temperature === 24.6, 'Temperature readback mismatch');
+      expect(afterReloadSummary.sensors.current.humidity === 67, 'Humidity readback mismatch');
+      return {
+        pre_submit: beforeSubmit,
+        persisted_after_reload: afterReload,
+        sensor_readback: afterReloadSummary.sensors.current
+      };
+    }, results);
+
+    await runWorkflow(browser, runDir, origin, '03 egg collection', async ({ page, capture, callApi }) => {
+      await login(page, origin, owner.username, owner.password);
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      const initialSummary = (await callApi(`/api/staging/${batchId}/today`)).body;
+      expect(initialSummary.eggs.collections.length === 0, 'Egg workflow must start with no egg collection');
+      await capture('default', page.locator('.log-form-card'));
+
+      await page.locator('#btn-add-collection').click();
+      await page.locator('#ecm-count').fill('37');
+      await page.locator('#ecm-broken').fill('2');
+      await page.locator('#ecm-time').fill('09:15');
+      await page.locator('#ecm-label').fill('Disposable morning round');
+      const beforeSubmit = (await callApi(`/api/staging/${batchId}/today`)).body;
+      expect(beforeSubmit.eggs.collections.length === 0,
+        'Filling the egg collection modal must not create a durable collection');
+      await capture('filled');
+
+      const write = page.waitForResponse(response =>
+        new URL(response.url()).pathname === `/api/staging/${batchId}/eggs`
+          && response.request().method() === 'POST');
+      await page.locator('#ecm-save').click();
+      const response = await write;
+      expect(response.status() === 200, `Egg collection save returned ${response.status()}`);
+      await page.locator('.egg-collection-row').filter({ hasText: 'Disposable morning round' }).waitFor({ state: 'visible' });
+      await page.locator('#egg-total-display').filter({ hasText: '37 eggs' }).waitFor({ state: 'visible' });
+      await page.locator('#egg-total-display').filter({ hasText: '2 broken' }).waitFor({ state: 'visible' });
+      await capture('submitted', page.locator('.log-form-card'));
+
+      const afterSubmit = (await callApi(`/api/staging/${batchId}/today`)).body;
+      expect(afterSubmit.eggs.collections.length === 1, 'Exactly one egg collection must be persisted');
+      expect(afterSubmit.eggs.intact === 37 && afterSubmit.eggs.broken === 2 && afterSubmit.eggs.total === 39,
+        'Egg totals did not match submitted intact and broken counts');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('#auth-overlay').waitFor({ state: 'detached' });
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      await page.locator('.egg-collection-row').filter({ hasText: 'Disposable morning round' }).waitFor({ state: 'visible' });
+      const afterReload = (await callApi(`/api/staging/${batchId}/today`)).body;
+      expect(afterReload.eggs.collections.length === 1 && afterReload.eggs.total === 39,
+        'Egg collection did not persist through reload');
+      return {
+        pre_submit_collections: beforeSubmit.eggs.collections.length,
+        persisted_after_reload: {
+          collections: afterReload.eggs.collections.length,
+          intact: afterReload.eggs.intact,
+          broken: afterReload.eggs.broken,
+          total: afterReload.eggs.total
+        }
+      };
+    }, results);

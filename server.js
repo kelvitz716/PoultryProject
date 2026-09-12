@@ -36,6 +36,32 @@ const bcrypt = require('bcrypt');
 const session = require('express-session');
 const ConnectSQLite3 = require('connect-sqlite3')(session);
 const { runQuery, allQuery, getQuery, dbReady } = require('./db');
+const paymentImportService = require('./services/payment-imports');
+const paymentImportReviewService = require('./services/payment-import-review');
+const paymentImportApprovalService = require('./services/payment-import-approval');
+const { registerPaymentImportWebhook, registerPaymentImportApi } = require('./services/payment-import-http');
+const manualCustomerReceiptService = require('./services/manual-customer-receipt');
+const { registerManualCustomerReceiptApi } = require('./services/manual-customer-receipt-http');
+const customerSettlementService = require('./services/customer-settlement');
+const customerSettlementReadService = require('./services/customer-settlement-read');
+const { registerCustomerSettlementApi } = require('./services/customer-settlement-http');
+const customerReconciliationSuggestionService = require('./services/customer-reconciliation-suggestions');
+const { registerCustomerReconciliationSuggestionsApi } = require('./services/customer-reconciliation-suggestions-http');
+const customerCreditNoteService = require('./services/customer-credit-note');
+const { registerCustomerCreditNoteApi } = require('./services/customer-credit-note-http');
+const customerRefundService = require('./services/customer-refund');
+const { registerCustomerRefundApi } = require('./services/customer-refund-http');
+const customerRegistryService = require('./services/customer-registry');
+const { registerCustomerRegistryApi } = require('./services/customer-registry-http');
+const legacyCustomerBootstrapService = require('./services/customer-legacy-bootstrap');
+const { registerLegacyCustomerBootstrapApi } = require('./services/customer-legacy-bootstrap-http');
+// Keep the generic ledger module as the transaction mirror authority; atomic
+// persistence injects its dedicated adapter through transaction-persistence.
+require('./services/ledger');
+const transactionPersistence = require('./services/transaction-persistence');
+const { registerTransactionPersistenceApi } = require('./services/transaction-persistence-http');
+const ledgerReporting = require('./services/ledger-reporting');
+const { handleE2ETestSeedFailure } = require('./services/e2e-test-seed-policy');
 
 /**
  * Computes the Temperature-Humidity Index (THI) for poultry welfare assessment.
@@ -79,6 +105,9 @@ import('./js/engine.js').then(engine => {
 
 const app = express();
 const PORT = process.env.PORT || 80;
+
+// Must stay before the application-wide JSON parser so HMAC covers exact raw bytes.
+registerPaymentImportWebhook(app, { paymentService: paymentImportService });
 
 /**
  * Configure Cross-Origin Resource Sharing (CORS) with LAN-subnet and loopback restrictions.
@@ -291,6 +320,21 @@ const requireRole = (...roles) => (req, res, next) => {
     next();
 };
 
+registerPaymentImportApi(app, {
+    paymentService: paymentImportService,
+    reviewService: paymentImportReviewService,
+    approvalService: paymentImportApprovalService,
+    requireRole
+});
+registerManualCustomerReceiptApi(app, { receiptService: manualCustomerReceiptService, requireRole });
+registerCustomerSettlementApi(app, { settlementService: customerSettlementService, settlementReadService: customerSettlementReadService, requireRole });
+registerCustomerReconciliationSuggestionsApi(app, { suggestionService: customerReconciliationSuggestionService, requireRole });
+registerCustomerCreditNoteApi(app, { creditNoteService: customerCreditNoteService, requireRole });
+registerCustomerRefundApi(app, { refundService: customerRefundService, requireRole });
+registerCustomerRegistryApi(app, { customerService: customerRegistryService, requireRole });
+registerLegacyCustomerBootstrapApi(app, { bootstrapService: legacyCustomerBootstrapService, requireRole });
+registerTransactionPersistenceApi(app, { transactionPersistence, requireRole });
+
 const {
     getEATDate,
     getEATTime,
@@ -301,8 +345,6 @@ const {
     recoverMissedCommits,
     scheduleMidnightCommit
 } = require('./services/staging');
-
-const { syncTransactionToLedger, handleMpesaCallback } = require('./services/mpesa');
 
 // ── ENTITY VALUE HELPERS ──────────────────────────────────────────────────────
 
@@ -362,8 +404,6 @@ app.get('/api/entities/:key', requireAuth, async (req, res) => {
             data = '••••••••••••••••';
         } else if (req.params.key === 'telegram_bot_token' && data) {
             data = '••••••••••••••••';
-        } else if (['mpesa_consumer_key', 'mpesa_consumer_secret', 'mpesa_passkey', 'mpesa_shortcode'].includes(req.params.key) && data) {
-            data = '••••••••••••••••';
         }
         res.json(data);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -396,11 +436,6 @@ app.post('/api/entities/:key', requireRole('super_admin', 'admin', 'farmer'), va
             }
         } else if (req.params.key === 'telegram_bot_token') {
             const existing = await getEntityValue('telegram_bot_token', null);
-            if (valueToSave === '••••••••••••••••') {
-                valueToSave = existing || '';
-            }
-        } else if (['mpesa_consumer_key', 'mpesa_consumer_secret', 'mpesa_passkey', 'mpesa_shortcode'].includes(req.params.key)) {
-            const existing = await getEntityValue(req.params.key, null);
             if (valueToSave === '••••••••••••••••') {
                 valueToSave = existing || '';
             }
@@ -624,7 +659,7 @@ app.delete('/api/logs/:batchId', requireRole('super_admin', 'admin'), async (req
 /**
  * Helper to sync a flat transaction to the double-entry general ledger.
  */
-// (syncTransactionToLedger moved to services/mpesa.js)
+// (syncTransactionToLedger moved to services/ledger.js)
 
 /**
  * GET /api/transactions/:batchId
@@ -634,172 +669,21 @@ app.get('/api/transactions/:batchId', requireAuth, async (req, res) => {
     try {
         const rows = await allQuery('SELECT data FROM transactions WHERE batch_id = ?', [req.params.batchId]);
         res.json(rows.map(r => JSON.parse(r.data)));
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * POST /api/transactions/:batchId
- * Saves a cost or revenue transaction to the ledger.
- */
-app.post('/api/transactions/:batchId', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
-    try {
-        const tx = req.body;
-        const id = tx.id || `${req.params.batchId}_${Date.now()}_${crypto.randomUUID()}`;
-        tx.id = id;
-        await runQuery('INSERT INTO transactions (id, batch_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [id, req.params.batchId, JSON.stringify(tx)]);
-        await syncTransactionToLedger(req.params.batchId, tx, false);
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * DELETE /api/transactions/:batchId/:id
- * Deletes a ledger transaction.
- */
-app.delete('/api/transactions/:batchId/:id', requireRole('super_admin', 'admin'), async (req, res) => {
-    try {
-        await syncTransactionToLedger(req.params.batchId, { id: req.params.id }, true);
-        await runQuery('DELETE FROM transactions WHERE batch_id = ? AND id = ?', [req.params.batchId, req.params.id]);
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * DELETE /api/transactions/:batchId
- * Clears all transactions for a specific batch.
- */
-app.delete('/api/transactions/:batchId', requireRole('super_admin', 'admin'), async (req, res) => {
-    try {
-        const id = req.params.batchId;
-        const rows = await allQuery('SELECT id FROM transactions WHERE batch_id = ?', [id]);
-        for (const row of rows) {
-            await syncTransactionToLedger(id, { id: row.id }, true);
-        }
-        await runQuery('DELETE FROM transactions WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { res.status(500).json({ error: 'Transactions unavailable' }); }
 });
 
 
-// ===================== DOUBLE-ENTRY GENERAL LEDGER & M-PESA DARAJA API =====================
+// ===================== DOUBLE-ENTRY GENERAL LEDGER =====================
 
 /**
  * GET /api/ledger/accounts
  * Retrieves all chart accounts with their computed current balances.
  */
 app.get('/api/ledger/accounts', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
-    try {
-        const rows = await allQuery(`
-            SELECT a.id, a.name, a.type, a.code,
-                   COALESCE(SUM(CASE WHEN e.entry_type = 'debit' THEN e.amount ELSE 0 END), 0) as total_debit,
-                   COALESCE(SUM(CASE WHEN e.entry_type = 'credit' THEN e.amount ELSE 0 END), 0) as total_credit
-            FROM ledger_accounts a
-            LEFT JOIN ledger_entries e ON a.id = e.account_id
-            GROUP BY a.id
-        `);
-        const accounts = rows.map(r => {
-            const dr = parseFloat(r.total_debit || 0);
-            const cr = parseFloat(r.total_credit || 0);
-            let balance = 0;
-            if (r.type === 'asset' || r.type === 'expense') {
-                balance = dr - cr;
-            } else {
-                balance = cr - dr;
-            }
-            return {
-                id: r.id,
-                name: r.name,
-                type: r.type,
-                code: r.code,
-                debit: dr,
-                credit: cr,
-                balance: balance
-            };
-        });
-        res.json(accounts);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    return ledgerReporting.createLedgerAccountsHandler({
+        listLedgerAccounts: () => ledgerReporting.listLedgerAccounts({ allQuery })
+    })(req, res);
 });
-
-/**
- * GET /api/ledger/reconciliation
- * Retrieves unassigned suspense payments (ledger entries in Account 9999).
- */
-app.get('/api/ledger/reconciliation', requireRole('super_admin', 'admin', 'farmer'), async (req, res) => {
-    try {
-        const rows = await allQuery(`
-            SELECT t.id, t.date, t.description, t.ref_id, le.amount
-            FROM ledger_transactions t
-            JOIN ledger_entries le ON t.id = le.transaction_id
-            WHERE le.account_id = '9999' AND le.entry_type = 'credit'
-        `);
-        res.json(rows);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * POST /api/ledger/reconcile
- * Manually re-routes a transaction from the Suspense account (9999) to a target customer or revenue account.
- */
-app.post('/api/ledger/reconcile', requireRole('super_admin', 'admin'), async (req, res) => {
-    try {
-        const { transactionId, targetAccountId, buyerName, batchId } = req.body;
-        if (!transactionId || !targetAccountId) {
-            return res.status(400).json({ error: 'Missing transactionId or targetAccountId' });
-        }
-
-        await runQuery('BEGIN TRANSACTION');
-
-        await runQuery(
-            "UPDATE ledger_entries SET account_id = ? WHERE transaction_id = ? AND account_id = '9999' AND entry_type = 'credit'",
-            [targetAccountId, transactionId]
-        );
-
-        if (buyerName || batchId) {
-            const row = await getQuery('SELECT data FROM transactions WHERE id = ?', [transactionId]);
-            if (row) {
-                const txData = JSON.parse(row.value || row.data || '{}');
-                if (buyerName) txData.buyerName = buyerName;
-                if (batchId) {
-                    await runQuery(
-                        'UPDATE transactions SET batch_id = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                        [batchId, JSON.stringify(txData), transactionId]
-                    );
-                } else {
-                    await runQuery(
-                        'UPDATE transactions SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                        [JSON.stringify(txData), transactionId]
-                    );
-                }
-            }
-        }
-
-        await runQuery('COMMIT');
-        res.json({ success: true });
-    } catch (e) {
-        await runQuery('ROLLBACK').catch(() => {});
-        res.status(500).json({ error: e.message });
-    }
-});
-
-/**
- * POST /api/payments/mpesa-callback
- * Handles Safaricom Daraja API C2B/STK push payment confirmation callbacks.
- * Open route (no session auth check) since Safaricom calls it directly.
- */
-app.post('/api/payments/mpesa-callback', async (req, res) => {
-    try {
-        const result = await handleMpesaCallback(req.body);
-        if (result.status) {
-            res.status(result.status).json(result.body);
-        } else {
-            res.json(result.body);
-        }
-    } catch (e) {
-        console.error('M-Pesa callback processing error:', e.message);
-        res.status(500).json({ error: e.message });
-    }
-});
-
 
 // ===================== HEALTH RECORDS =====================
 
@@ -1385,10 +1269,9 @@ async function seedE2ETester() {
     const e2eTestPassword = process.env.E2E_TEST_PASSWORD;
 
     if (!e2eTestPassword) {
-        if (!isProduction) {
-            throw new Error('E2E_TEST_PASSWORD environment variable is required in non-production environments.');
-        }
-        return; // skip silently in production
+        // A normal local or fresh-farm startup must not depend on browser-test
+        // credentials. Test runs that need this account explicitly provide it.
+        return;
     }
 
     try {
@@ -1409,10 +1292,7 @@ async function seedE2ETester() {
             console.log('Dedicated E2E test account created successfully.');
         }
     } catch (err) {
-        console.error('Failed to seed E2E test account:', err.message);
-        if (!isProduction) {
-            throw err;
-        }
+        handleE2ETestSeedFailure(err, { isProduction });
     }
 }
 

@@ -11,6 +11,7 @@ export const store = {
     farmProfile: { ...DEFAULT_FARM_PROFILE },
     currentBatchId: null,
     allBatches: [],
+    customers: [],
     _cockpitChartInstance: null,
 
     /**
@@ -51,6 +52,15 @@ export const store = {
     async syncBatches() {
         this.allBatches = await api.getBatches();
         return this.allBatches;
+    },
+
+    async syncCustomers(includeInactive = false) {
+        this.customers = await api.listCustomers(includeInactive);
+        return this.customers;
+    },
+
+    async bootstrapLegacyCustomers() {
+        return api.bootstrapLegacyCustomers();
     }
 };
 

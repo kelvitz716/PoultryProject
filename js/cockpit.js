@@ -21,6 +21,7 @@ import {
 } from './engine.js';
 import { $, showToast, updateGlobalNotifications } from './ui.js';
 import { getActiveWithdrawal } from './health.js';
+import { deriveCockpitLedgerDisplay } from './ledger-cockpit-model.mjs';
 
 let _eggCollections = [];
 let _sensorPopoverChartInstance = null;
@@ -313,7 +314,7 @@ window.openBatchCockpit = async function(id) {
                         <div class="feed-metric"><span>Days Left</span><strong id="feed-days-left">—</strong></div>
                         <div class="feed-metric"><span>Daily Consumption</span><strong id="feed-daily">—</strong></div>
                     </div>
-                     ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === BATCH_STATUS.COMPLETED || !isAdminPlus ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
+                     ${batch.status === BATCH_STATUS.POST_BATCH || batch.status === BATCH_STATUS.COMPLETED || !isAdminPlus ? '' : `<button class="btn btn-secondary btn-sm" style="width:100%; margin-top:12px;" onclick="window.openTxModal('purchase', 'feed')"><i data-lucide="shopping-cart" style="width:14px;height:14px;"></i> Buy Feed</button>`}
                 </div>
             </div>
 
@@ -809,6 +810,7 @@ window._onFeedKgInput = function(el) {
 };
 
 window.refreshCockpitData = async function(batch) {
+    try {
     if (!batch) return;
     const [logs, txs, healthLogs, stagingToday] = await Promise.all([
         api.getLogs(batch.id),
@@ -897,24 +899,19 @@ window.refreshCockpitData = async function(batch) {
 
     if($('info-totaleggs')) $('info-totaleggs').innerText = kpis.totalEggs.toLocaleString();
 
-    const initialCash = (batch.assumptions && batch.assumptions.workingCapital) ? batch.assumptions.workingCapital : 0;
+    const initialCash = batch.assumptions?.workingCapital || 0;
     const accounts = await api.getLedgerAccounts();
-    const cashAcc = accounts.find(a => a.code === '1000') || { balance: 0, debit: 0, credit: 0 };
-    const mpesaAcc = accounts.find(a => a.code === '1010') || { balance: 0, debit: 0, credit: 0 };
-    const recAcc = accounts.find(a => a.code === '1200') || { balance: 0, debit: 0, credit: 0 };
-    
-    const totalEntries = accounts.reduce((s, a) => s + (a.debit || 0) + (a.credit || 0), 0);
-    const liquidCash = (cashAcc.balance || 0) + (mpesaAcc.balance || 0) + (totalEntries === 0 ? initialCash : 0);
-    const outstandingCredit = recAcc.balance || 0;
+    const ledgerDisplay = deriveCockpitLedgerDisplay({
+        accounts,
+        initialCash,
+        isFarmer: window.USER_ROLE === 'farmer'
+    });
+    const liquidCash = ledgerDisplay.liquid_cash;
 
     if($('info-cash')) {
-        if (window.USER_ROLE === 'farmer') {
-            $('info-cash').innerText = 'KES —';
-        } else {
-            $('info-cash').innerText = 'KES ' + liquidCash.toLocaleString();
-        }
+        $('info-cash').innerText = ledgerDisplay.cash_text;
     }
-    if($('info-credit')) $('info-credit').innerText = 'KES ' + outstandingCredit.toLocaleString();
+    if($('info-credit')) $('info-credit').innerText = ledgerDisplay.credit_text;
     
     let avg7SalePrice = 15;
     const now = Date.now();
@@ -1112,6 +1109,9 @@ window.refreshCockpitData = async function(batch) {
     renderCockpitTransactions(txs, initialCash);
     if (window.renderHealthTable) await window.renderHealthTable(batch.id);
     await window.updateLiveSensorWidget();
+    } catch (err) {
+        console.error('[refreshCockpitData] Render error (non-fatal):', err);
+    }
 };
 
 window.handleLogDateChange = async function() {
@@ -1187,7 +1187,7 @@ window.updateLiveSensorWidget = async function() {
     
     container.style.display = 'inline-flex';
     
-    if (res.temperature !== null) {
+    if (res.temperature != null) {
         $('info-sensor-temp').innerText = res.temperature.toFixed(1) + ' °C';
         const chipTemp = $('sensor-chip-temp');
         if (chipTemp) chipTemp.innerText = res.temperature.toFixed(1) + '°C';
@@ -1207,7 +1207,7 @@ window.updateLiveSensorWidget = async function() {
         if (badgeTemp) badgeTemp.style.display = 'none';
     }
     
-    if (res.humidity !== null) {
+    if (res.humidity != null) {
         $('info-sensor-hum').innerText = res.humidity.toFixed(0) + '% RH';
         const chipHum = $('sensor-chip-hum');
         if (chipHum) chipHum.innerText = res.humidity.toFixed(0) + '%';
@@ -1236,7 +1236,7 @@ window.updateLiveSensorWidget = async function() {
         }
     }
     
-    if (res.battery !== null) {
+    if (res.battery != null) {
         $('info-sensor-battery').innerHTML = `<i data-lucide="battery" style="width:10px;height:10px;display:inline-block;vertical-align:middle;margin-right:2px;"></i>${res.battery}%`;
     } else {
         $('info-sensor-battery').innerHTML = '';
@@ -1644,7 +1644,7 @@ function updateCockpitAlerts(batch, kpis, inventory, breakEven, cash, txs, healt
     
     const dailyNeed = kpis.avgDailyFeedPerBird * kpis.currentBirds;
     if (dailyNeed > 0 && (inventory / dailyNeed) < t.lowInventoryDays) alerts.push({ type: 'danger', icon: 'package', text: `Low Feed: < ${t.lowInventoryDays} days left!` });
-    if (cash < 5000) alerts.push({ type: 'warning', icon: 'wallet', text: `Low Cash: KES ${cash.toLocaleString()}` });
+    if (Number.isFinite(cash) && cash < 5000) alerts.push({ type: 'warning', icon: 'wallet', text: `Low Cash: KES ${cash.toLocaleString()}` });
 
     const seasonInfo = getKitaleSeason(now);
     const latestLog = kpis.recent7[0] || {};

@@ -8,6 +8,13 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
+const { migratePaymentImports } = require('./migrations/payment-imports');
+const { migrateCustomerSettlement } = require('./migrations/customer-settlement');
+const { migrateLedgerMinorUnits } = require('./migrations/ledger-minor-units');
+const { migrateManualCustomerReceipts } = require('./migrations/manual-customer-receipts');
+const { migrateCustomerCreditNotes } = require('./migrations/customer-credit-notes');
+const { migrateCustomerRefunds } = require('./migrations/customer-refunds');
+const { createDedicatedTransactionBoundary } = require('./services/sqlite-transaction');
 
 // Ensure that the 'data' directory exists inside the project root directory
 const dataDir = path.join(__dirname, 'data');
@@ -235,6 +242,7 @@ function initializeDatabase(db, resolve, reject) {
         // Seed default chart of accounts
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1000', 'Liquid Cash Box', 'asset', '1000')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1010', 'M-Pesa Till', 'asset', '1010')");
+        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1020', 'Bank Account', 'asset', '1020')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1200', 'Accounts Receivable (CRM)', 'asset', '1200')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1300', 'Egg Inventory', 'asset', '1300')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('1310', 'Feed Inventory', 'asset', '1310')");
@@ -245,7 +253,6 @@ function initializeDatabase(db, resolve, reject) {
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5020', 'Utilities Expense', 'expense', '5020')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5030', 'Medication Expense', 'expense', '5030')");
         db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('5040', 'Chicks Expense', 'expense', '5040')");
-        db.run("INSERT OR IGNORE INTO ledger_accounts (id, name, type, code) VALUES ('9999', 'Suspense Account', 'asset', '9999')");
 
         // Add a unique index to handle existing/new databases and enforce ref_id uniqueness
         db.run(`
@@ -265,6 +272,12 @@ function initializeDatabase(db, resolve, reject) {
                 migrateTableColumn(db, 'staging', 'logged_by', 'TEXT')
                     .then(() => migrateTableColumn(db, 'health_logs', 'logged_by', 'TEXT'))
                     .then(() => migrateTableColumn(db, 'logs', 'logged_by', 'TEXT'))
+                    .then(() => migrateCustomerSettlement(db))
+                    .then(() => migratePaymentImports(db))
+                    .then(() => migrateLedgerMinorUnits(db))
+                    .then(() => migrateManualCustomerReceipts(db))
+                    .then(() => migrateCustomerCreditNotes(db))
+                    .then(() => migrateCustomerRefunds(db))
                     .then(() => {
                         console.log('Database schema initialized.');
                         resolve();
@@ -335,14 +348,27 @@ function getQuery(sql, params = []) {
     });
 }
 
+/**
+ * Runs a multi-statement financial operation on its own SQLite connection.
+ * The immediate transaction prevents other writers from joining this unit on
+ * the shared application connection; callers receive only the transaction adapter.
+ */
+async function withDedicatedTransaction(work) {
+    return createDedicatedTransactionBoundary(dbPath).withDedicatedTransaction(work);
+}
+async function withDedicatedReadTransaction(work) {
+    return createDedicatedTransactionBoundary(dbPath).withDedicatedReadTransaction(work);
+}
+
 module.exports = {
     dbReady,
     runQuery,
     allQuery,
-    getQuery
+    getQuery,
+    withDedicatedTransaction,
+    withDedicatedReadTransaction
 };
 
 // Export db as a live getter so callers always get the current value
 // (db is assigned synchronously when new sqlite3.Database() is called)
 Object.defineProperty(module.exports, 'db', { get: () => db, enumerable: true });
-

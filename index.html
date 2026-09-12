@@ -54,6 +54,14 @@
                     <i data-lucide="bar-chart-3"></i>
                     <span>Analytics</span>
                 </a>
+                <a href="#" class="nav-item" id="nav-payment-inbox">
+                    <i data-lucide="inbox"></i>
+                    <span>Payment Inbox</span>
+                </a>
+                <a href="#" class="nav-item" id="nav-customer-accounts">
+                    <i data-lucide="list-tree"></i>
+                    <span>Customer Accounts</span>
+                </a>
                 <a href="#" class="nav-item" id="nav-settings">
                     <i data-lucide="settings"></i>
                     <span>Farm Settings</span>
@@ -579,6 +587,256 @@
                 </div>
             </section>
             
+            <section id="view-payment-inbox" class="view">
+                <div class="view-container payment-inbox-container">
+                    <div class="step-title" style="margin-bottom:24px;">
+                        <h2>Payment Inbox</h2>
+                        <p>Review captured M-Pesa evidence. Pasting a message records evidence only; it does not mark an invoice paid.</p>
+                    </div>
+                    <div class="payment-inbox-grid">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Captured evidence</h3>
+                                <button type="button" id="payment-inbox-retry" class="btn btn-secondary btn-sm">Retry</button>
+                            </div>
+                            <div class="input-grid payment-inbox-filters">
+                                <div class="input-group">
+                                    <label for="payment-inbox-status">Status</label>
+                                    <select id="payment-inbox-status">
+                                        <option value="">All statuses</option>
+                                        <option value="received">Received</option>
+                                        <option value="needs_review">Needs review</option>
+                                        <option value="approved">Approved</option>
+                                        <option value="duplicate">Duplicate</option>
+                                        <option value="rejected">Rejected</option>
+                                        <option value="reversed">Reversed</option>
+                                    </select>
+                                </div>
+                                <div class="input-group">
+                                    <label for="payment-inbox-source">Source</label>
+                                    <select id="payment-inbox-source">
+                                        <option value="">All sources</option>
+                                        <option value="manual">Manual paste</option>
+                                        <option value="webhook">SMS forwarder</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <p id="payment-inbox-message" aria-live="polite" style="min-height:20px;font-size:13px;color:var(--text-muted);margin:14px 0;"></p>
+                            <div id="payment-inbox-list" aria-live="polite"></div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px;">
+                                <button type="button" id="payment-inbox-previous" class="btn btn-secondary btn-sm" disabled>Previous</button>
+                                <span id="payment-inbox-page" aria-live="polite" style="font-size:12px;color:var(--text-muted);">No results</span>
+                                <button type="button" id="payment-inbox-next" class="btn btn-secondary btn-sm" disabled>Next</button>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header"><h3>Redacted evidence detail</h3></div>
+                            <div id="payment-inbox-detail" tabindex="-1" aria-live="polite" style="outline:none;">Select an import to review its redacted evidence.</div>
+                        </div>
+                    </div>
+                    <div class="card" style="margin-top:24px;">
+                        <div class="card-header"><h3>Paste M-Pesa evidence</h3></div>
+                        <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px;">The message is sent once for parsing and is not kept in this browser. Only redacted evidence is shown after capture.</p>
+                        <form id="payment-inbox-manual-form">
+                            <div class="input-group">
+                                <label for="payment-inbox-manual-text">M-Pesa message</label>
+                                <textarea id="payment-inbox-manual-text" required rows="5" maxlength="1600" autocomplete="off" spellcheck="false" placeholder="Paste the received M-Pesa message here"></textarea>
+                            </div>
+                            <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;">
+                                <div class="input-group" style="min-width:160px;flex:1;">
+                                    <label for="payment-inbox-manual-sender">Sender label (optional)</label>
+                                    <input id="payment-inbox-manual-sender" type="text" maxlength="64" autocomplete="off" placeholder="M-PESA">
+                                </div>
+                                <button type="submit" id="payment-inbox-manual-submit" class="btn btn-primary">Capture for review</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <section id="view-customer-accounts" class="view">
+                <div class="view-container customer-settlement-container">
+                    <div class="step-title" style="margin-bottom:24px;">
+                        <h2>Customer Accounts</h2>
+                        <p>Settlement evidence and timeline are read-only. Separate confirmed forms record a receipt, apply existing credit, reverse an allocation, or issue a commercial credit note; commercial, money, and allocation tracks remain separate.</p>
+                    </div>
+                    <div class="card customer-settlement-selector-card">
+                        <div class="input-grid">
+                            <div class="input-group">
+                                <label for="customer-settlement-customer">Stable customer</label>
+                                <select id="customer-settlement-customer" aria-describedby="customer-settlement-message"></select>
+                            </div>
+                            <label class="customer-settlement-inactive-toggle"><input id="customer-settlement-include-inactive" type="checkbox"> Include inactive customers for historical evidence</label>
+                            <button type="button" id="customer-settlement-retry" class="btn btn-secondary btn-sm">Retry</button>
+                        </div>
+                        <p id="customer-settlement-message" aria-live="polite" style="min-height:20px;font-size:13px;color:var(--text-muted);margin:14px 0 0;"></p>
+                    </div>
+                    <div class="card manual-customer-receipt-card">
+                        <div class="card-header"><h3>Record customer receipt</h3></div>
+                        <p class="customer-settlement-help">Record money received as unallocated customer credit. It does not apply a payment to an invoice.</p>
+                        <p id="manual-customer-receipt-customer" class="customer-settlement-help" aria-live="polite">Select an active named customer to record a receipt.</p>
+                        <form id="manual-customer-receipt-form" novalidate>
+                            <fieldset id="manual-customer-receipt-fields" class="manual-customer-receipt-fields" disabled>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label for="manual-customer-receipt-method">Method</label>
+                                        <select id="manual-customer-receipt-method" required>
+                                            <option value="cash">Cash</option>
+                                            <option value="bank">Bank</option>
+                                        </select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="manual-customer-receipt-amount">Amount (KES)</label>
+                                        <input id="manual-customer-receipt-amount" type="text" inputmode="decimal" autocomplete="off" maxlength="32" placeholder="e.g. 1250.50" required>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="manual-customer-receipt-reference">Reference <span id="manual-customer-receipt-reference-help">(optional for cash)</span></label>
+                                        <input id="manual-customer-receipt-reference" type="text" autocomplete="off" maxlength="128" placeholder="Bank receipt/reference">
+                                    </div>
+                                </div>
+                                <label class="manual-customer-receipt-confirm"><input id="manual-customer-receipt-confirm" type="checkbox"> I confirm this records unallocated customer credit and does not mark an invoice paid.</label>
+                                <div class="form-actions"><button id="manual-customer-receipt-submit" type="submit" class="btn btn-primary">Record receipt</button></div>
+                            </fieldset>
+                        </form>
+                        <p id="manual-customer-receipt-message" aria-live="polite" style="min-height:20px;font-size:13px;color:var(--text-muted);margin:12px 0 0;"></p>
+                    </div>
+                    <div class="card customer-allocation-card">
+                        <div class="card-header"><h3>Apply customer credit to invoice</h3></div>
+                        <p class="customer-settlement-help">Select recorded customer credit and one invoice explicitly. This changes their remaining positions; it moves no new money and posts no general-ledger entry.</p>
+                        <p id="customer-allocation-customer" class="customer-settlement-help" aria-live="polite">Load an exact active customer settlement snapshot to apply credit.</p>
+                        <form id="customer-allocation-form" novalidate>
+                            <fieldset id="customer-allocation-fields" class="customer-allocation-fields" disabled>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label for="customer-allocation-credit">Available customer credit</label>
+                                        <select id="customer-allocation-credit"></select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="customer-allocation-invoice">Open invoice</label>
+                                        <select id="customer-allocation-invoice"></select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="customer-allocation-amount">Amount (KES)</label>
+                                        <input id="customer-allocation-amount" type="text" inputmode="decimal" autocomplete="off" maxlength="32" placeholder="e.g. 1250.50" required>
+                                    </div>
+                                </div>
+                                <label class="manual-customer-receipt-confirm"><input id="customer-allocation-confirm" type="checkbox"> I confirm this applies existing customer credit to this invoice. It creates no new money and posts no general-ledger entry.</label>
+                                <div class="form-actions"><button id="customer-allocation-submit" type="submit" class="btn btn-primary">Apply credit</button></div>
+                            </fieldset>
+                        </form>
+                        <p id="customer-allocation-message" aria-live="polite" style="min-height:20px;font-size:13px;color:var(--text-muted);margin:12px 0 0;"></p>
+                    </div>
+                    <div class="card customer-allocation-reversal-card">
+                        <div class="card-header"><h3>Reverse allocation</h3></div>
+                        <p class="customer-settlement-help">Reverse one recorded credit-to-invoice allocation as a historical correction. It restores the credit and invoice deficit, retains reversal history, moves no money, and posts no general-ledger entry.</p>
+                        <p id="customer-allocation-reversal-customer" class="customer-settlement-help" aria-live="polite">Load an exact settlement snapshot to reverse one active allocation.</p>
+                        <form id="customer-allocation-reversal-form" novalidate>
+                            <fieldset id="customer-allocation-reversal-fields" class="customer-allocation-reversal-fields" disabled>
+                                <div class="input-group">
+                                    <label for="customer-allocation-reversal-select">Active allocation</label>
+                                    <select id="customer-allocation-reversal-select"></select>
+                                </div>
+                                <label class="manual-customer-receipt-confirm"><input id="customer-allocation-reversal-confirm" type="checkbox"> I confirm this reverses only the selected allocation, restores its credit and invoice deficit, keeps reversal history, moves no money, and posts no general-ledger entry.</label>
+                                <div class="form-actions"><button id="customer-allocation-reversal-submit" type="submit" class="btn btn-secondary">Reverse allocation</button></div>
+                            </fieldset>
+                        </form>
+                        <p id="customer-allocation-reversal-message" aria-live="polite" style="min-height:20px;font-size:13px;color:var(--text-muted);margin:12px 0 0;"></p>
+                    </div>
+                    <div class="card customer-credit-note-card" id="customer-credit-note-card">
+                        <div class="card-header"><h3>Issue credit note</h3></div>
+                        <p class="customer-settlement-help">A credit note is a commercial correction, not a cash refund. It posts Dr Sales Returns and Allowances (4050) / Cr Accounts Receivable (1200).</p>
+                        <p id="customer-credit-note-customer" class="customer-settlement-help" aria-live="polite">Load an exact settlement snapshot to issue a credit note.</p>
+                        <form id="customer-credit-note-form" novalidate>
+                            <fieldset id="customer-credit-note-fields" class="customer-credit-note-fields" disabled>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label for="customer-credit-note-invoice">Original posted invoice</label>
+                                        <select id="customer-credit-note-invoice"></select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="customer-credit-note-amount">Amount (KES)</label>
+                                        <input id="customer-credit-note-amount" type="text" inputmode="decimal" autocomplete="off" maxlength="32" placeholder="e.g. 1250.50" required>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="customer-credit-note-reason">Reason</label>
+                                        <select id="customer-credit-note-reason" required>
+                                            <option value="">Select a reason</option>
+                                            <option value="return">Return</option>
+                                            <option value="pricing_adjustment">Pricing adjustment</option>
+                                            <option value="quality_issue">Quality issue</option>
+                                            <option value="cancellation">Cancellation</option>
+                                            <option value="other">Other commercial correction</option>
+                                        </select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="customer-credit-note-reference">External reference (optional)</label>
+                                        <input id="customer-credit-note-reference" type="text" autocomplete="off" maxlength="128" placeholder="Credit note reference">
+                                    </div>
+                                </div>
+                                <p id="customer-credit-note-preview" class="customer-settlement-help" aria-live="polite">Select a current invoice and enter an exact KES amount to preview the linked invoice correction.</p>
+                                <label class="manual-customer-receipt-confirm"><input id="customer-credit-note-confirm" type="checkbox"> I confirm this posts a commercial credit note, applies only this invoice's current deficit, leaves any remainder as customer credit, transfers no cash, and records Dr 4050 / Cr 1200.</label>
+                                <div class="form-actions"><button id="customer-credit-note-submit" type="submit" class="btn btn-secondary">Issue credit note</button></div>
+                            </fieldset>
+                        </form>
+                        <p id="customer-credit-note-message" aria-live="polite" style="min-height:20px;font-size:13px;color:var(--text-muted);margin:12px 0 0;"></p>
+                    </div>
+                    <div class="card customer-refund-card" id="customer-refund-card">
+                        <div class="card-header"><h3>Issue refund</h3></div>
+                        <p class="customer-settlement-help">A refund transfers money out of the business and consumes selected customer credit. It is not a credit note or a payment reversal.</p>
+                        <p id="customer-refund-customer" class="customer-settlement-help" aria-live="polite">Load an exact customer settlement snapshot to issue a historical refund.</p>
+                        <form id="customer-refund-form" novalidate>
+                            <fieldset id="customer-refund-fields" class="customer-refund-fields" disabled>
+                                <div class="input-grid">
+                                    <div class="input-group">
+                                        <label for="customer-refund-method">Refund method</label>
+                                        <select id="customer-refund-method" required><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="bank">Bank</option></select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="customer-refund-amount">Outgoing amount (KES)</label>
+                                        <input id="customer-refund-amount" type="text" inputmode="decimal" autocomplete="off" maxlength="32" placeholder="e.g. 1250.50" required>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="customer-refund-reason">Reason</label>
+                                        <select id="customer-refund-reason" required><option value="">Select a reason</option><option value="overpayment">Overpayment</option><option value="duplicate_payment">Duplicate payment</option><option value="customer_request">Customer request</option><option value="returned_goods">Returned goods</option><option value="other">Other</option></select>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="customer-refund-reference">External reference <span id="customer-refund-reference-help">(optional for cash)</span></label>
+                                        <input id="customer-refund-reference" type="text" autocomplete="off" maxlength="128" placeholder="M-Pesa or bank reference">
+                                    </div>
+                                </div>
+                                <p class="customer-settlement-help">Select the existing customer-credit sources to consume. Each source amount must be exact and the source total must equal the outgoing amount.</p>
+                                <div id="customer-refund-sources" class="customer-refund-sources" aria-live="polite"></div>
+                                <p id="customer-refund-mismatch" class="customer-settlement-help" aria-live="polite"></p>
+                                <label id="customer-refund-mismatch-confirm-wrap" class="manual-customer-receipt-confirm" hidden><input id="customer-refund-mismatch-confirm" type="checkbox"> I acknowledge that one or more payment sources use a different tender method from this refund.</label>
+                                <p id="customer-refund-preview" class="customer-settlement-help" aria-live="polite">Select customer-credit sources and enter exact amounts to preview the outgoing refund.</p>
+                                <label class="manual-customer-receipt-confirm"><input id="customer-refund-confirm" type="checkbox"> I confirm money will leave the business, the selected customer credits will be consumed, and this posts Dr Accounts Receivable (1200) / Cr the selected cash, M-Pesa, or bank account.</label>
+                                <div class="form-actions"><button id="customer-refund-submit" type="submit" class="btn btn-secondary">Issue refund</button></div>
+                            </fieldset>
+                        </form>
+                        <p id="customer-refund-message" aria-live="polite" style="min-height:20px;font-size:13px;color:var(--text-muted);margin:12px 0 0;"></p>
+                    </div>
+                    <p id="customer-settlement-reconciliation" class="customer-settlement-reconciliation" aria-live="polite"></p>
+                    <div class="customer-settlement-summary" aria-label="Current customer position">
+                        <div class="card"><span>Outstanding invoices</span><strong id="customer-settlement-outstanding">—</strong></div>
+                        <div class="card"><span>Available customer credit</span><strong id="customer-settlement-credit">—</strong></div>
+                        <div class="card"><span>Net position</span><strong id="customer-settlement-net">—</strong></div>
+                        <div class="card"><span>Recorded evidence</span><strong id="customer-settlement-counts">—</strong></div>
+                    </div>
+                    <div class="customer-settlement-grid">
+                        <div class="card">
+                            <div class="card-header"><h3>Settlement timeline</h3></div>
+                            <p class="customer-settlement-help">Tracks may overlap in time. Allocation links describe relationships; they are not a single event sequence.</p>
+                            <div id="customer-settlement-timeline" tabindex="-1" aria-live="polite">Select a stable customer to review recorded settlement evidence.</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header"><h3>Review cues</h3></div>
+                            <p class="customer-settlement-help">Advisory only. No allocation is created from this screen.</p>
+                            <div id="customer-settlement-suggestions" aria-live="polite">No safe reconciliation suggestions are available.</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section id="view-settings" class="view">
                 <div class="view-container" style="padding-top: 32px; max-width: 800px; margin: 0 auto;">
                     <div class="step-title" style="margin-bottom: 32px;">
@@ -679,50 +937,6 @@
                         </div>
                     </div>
 
-                    <!-- M-Pesa Daraja Integration -->
-                    <div class="card" style="margin-top: 24px;">
-                        <div class="card-header">
-                            <h3><i data-lucide="wallet" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;"></i>M-Pesa Daraja API Integration</h3>
-                        </div>
-                        <div class="card-body" style="padding: 24px;">
-                            <p style="font-size:0.85rem;opacity:0.6;margin:0 0 16px;">Configure your Safaricom Daraja API C2B/STK push credentials for automated customer payment updates.</p>
-                            <div class="input-grid">
-                                <div class="input-group">
-                                    <label>M-Pesa Shortcode</label>
-                                    <div style="display: flex; gap: 6px;">
-                                        <input type="password" id="set-mpesa-shortcode" placeholder="e.g. 174379" style="flex: 1;">
-                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-mpesa-shortcode'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
-                                    </div>
-                                </div>
-                                <div class="input-group">
-                                    <label>M-Pesa Passkey</label>
-                                    <div style="display: flex; gap: 6px;">
-                                        <input type="password" id="set-mpesa-passkey" placeholder="e.g. bfb279f9aa9e92106..." style="flex: 1;">
-                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-mpesa-passkey'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="input-grid" style="margin-top: 12px;">
-                                <div class="input-group">
-                                    <label>Consumer Key</label>
-                                    <div style="display: flex; gap: 6px;">
-                                        <input type="password" id="set-mpesa-consumer-key" placeholder="e.g. gA8...xyz" style="flex: 1;">
-                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-mpesa-consumer-key'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
-                                    </div>
-                                </div>
-                                <div class="input-group">
-                                    <label>Consumer Secret</label>
-                                    <div style="display: flex; gap: 6px;">
-                                        <input type="password" id="set-mpesa-consumer-secret" placeholder="e.g. 7hY...abc" style="flex: 1;">
-                                        <button type="button" class="btn btn-secondary" onclick="const input = document.getElementById('set-mpesa-consumer-secret'); if (input.type === 'password') { input.type = 'text'; this.innerHTML = '<i data-lucide=\'eye-off\' style=\'width:14px;height:14px;\'></i>'; } else { input.type = 'password'; this.innerHTML = '<i data-lucide=\'eye\' style=\'width:14px;height:14px;\'></i>'; } lucide.createIcons();" style="padding: 0 12px; display: flex; align-items: center; justify-content: center; height: 38px;"><i data-lucide="eye" style="width: 14px; height: 14px;"></i></button>
-                                    </div>
-                                </div>
-                            </div>
-                            <p style="font-size:0.78rem;opacity:0.45;margin:10px 0 0;">Enter your Safaricom Daraja credentials. Keys, Passkey and Shortcode are masked and stored securely.</p>
-                        </div>
-                    </div>
-
-
                     <!-- Account & Security -->
                     <div class="card" style="margin-top: 24px;">
                         <div class="card-header">
@@ -746,16 +960,20 @@
                             <!-- Populated by _renderUserManagementPanel() in app.js -->
                         </div>
                     </div>
-                    <!-- Buyer Registry card (kept in same layout region) -->
+                    <!-- Stable customer registry; legacy buyer JSON is never edited here. -->
                     <div class="card" style="margin-top: 24px;">
                         <div class="card-header">
-                            <h3>Buyer Registry (CRM)</h3>
+                            <h3>Customer Registry</h3>
                         </div>
                         <div class="card-body" style="padding: 24px;">
+                            <div id="customer-bootstrap-result" aria-live="polite" style="margin-bottom: 12px;"></div>
+                            <label style="display:flex;align-items:center;gap:6px;margin:0 0 12px;font-size:13px;color:var(--text-muted);">
+                                <input type="checkbox" id="customer-include-inactive"> Show inactive customers
+                            </label>
                             <div id="buyers-list" style="margin-bottom: 16px;"></div>
                             <form id="add-buyer-form" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
                                 <div class="input-group" style="flex: 2; min-width: 150px;">
-                                    <label>Buyer Name</label>
+                                    <label>Customer Name</label>
                                     <input type="text" id="buyer-name" required placeholder="e.g. Banoli Farm">
                                 </div>
                                 <div class="input-group" style="flex: 1.5; min-width: 120px;">
@@ -765,30 +983,16 @@
                                 <div class="input-group" style="flex: 1; min-width: 100px;">
                                     <label>Payment Terms</label>
                                     <select id="buyer-terms" required>
-                                        <option value="COD">Cash on Delivery</option>
-                                        <option value="Net 7">Net 7</option>
-                                        <option value="Net 14">Net 14</option>
-                                        <option value="Net 30">Net 30</option>
+                                        <option value="0">Cash on Delivery</option>
+                                        <option value="7">Net 7</option>
+                                        <option value="14">Net 14</option>
+                                        <option value="30">Net 30</option>
                                     </select>
                                 </div>
-                                <button type="submit" class="btn btn-secondary" style="height: 38px;">Add Buyer</button>
+                                <button type="submit" class="btn btn-secondary" style="height: 38px;">Add Customer</button>
                             </form>
                         </div>
                     </div>
-
-                    <!-- Pending Reconciliation Console Card -->
-                    <div class="card" id="reconciliation-console-card" style="margin-top: 24px; display: none;">
-                        <div class="card-header">
-                            <h3><i data-lucide="scale" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;"></i>Pending M-Pesa Reconciliation</h3>
-                        </div>
-                        <div class="card-body" style="padding: 24px;">
-                            <p style="font-size:0.85rem;opacity:0.6;margin:0 0 16px;">These are M-Pesa payments that were not automatically matched to a buyer. Assign them to the correct buyer to reconcile their outstanding credit.</p>
-                            <div id="reconciliation-list" style="display: flex; flex-direction: column; gap: 12px;">
-                                <!-- Populated dynamically by app.js -->
-                            </div>
-                        </div>
-                    </div>
-
 
                 </div>
             </section>

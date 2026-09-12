@@ -1,13 +1,22 @@
 /**
  * @file settings.js
  * @description Settings and CRM view module for PoultryDSS.
- * Manages user accounts, guest tokens, own password changes, buyer lists (CRM), and suspense account reconciliation.
+ * Manages user accounts, guest tokens, own password changes, and buyer lists (CRM).
  */
 
 import { api } from './api.js';
 import { store } from './store.js';
-import { BATCH_STATUS } from './engine.js';
 import { $, showToast, showConfirmModal } from './ui.js';
+import {
+    appendCustomerRegistryRow,
+    bootstrapIssueMessage,
+    canWriteCustomers,
+    customerTermsDays,
+    newIdempotencyKey
+} from './customer-ui-model.mjs';
+
+let legacyBootstrapAttempted = false;
+let showInactiveCustomers = false;
 
 export function initSettingsView() {
     // Settings form submission
@@ -28,29 +37,17 @@ export function initSettingsView() {
         
         store.saveFarmProfile(farmProfile);
 
-        // Save M-Pesa credentials
-        if ($('set-mpesa-consumer-key')) api.setEntity('mpesa_consumer_key', $('set-mpesa-consumer-key').value.trim());
-        if ($('set-mpesa-consumer-secret')) api.setEntity('mpesa_consumer_secret', $('set-mpesa-consumer-secret').value.trim());
-        if ($('set-mpesa-passkey')) api.setEntity('mpesa_passkey', $('set-mpesa-passkey').value.trim());
-        if ($('set-mpesa-shortcode')) api.setEntity('mpesa_shortcode', $('set-mpesa-shortcode').value.trim());
-
         showToast('Farm profile saved successfully!');
     });
 
-    // CRM / Add Buyer form submission
+    // Stable customer registry. Legacy farmProfile.buyers remains read-only input
+    // for the server-side bootstrap; this form never rewrites that JSON.
     $('add-buyer-form')?.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const farmProfile = store.farmProfile;
-        if (!farmProfile.buyers) farmProfile.buyers = [];
-        farmProfile.buyers.push({
-            name: $('buyer-name').value,
-            phone: $('buyer-phone') ? $('buyer-phone').value.trim() : '',
-            terms: $('buyer-terms').value
-        });
-        store.saveFarmProfile(farmProfile);
-        renderBuyersList();
-        _renderReconciliationConsole();
-        $('add-buyer-form').reset();
+        void createCustomerFromForm(e);
+    });
+    $('customer-include-inactive')?.addEventListener('change', event => {
+        showInactiveCustomers = event.target.checked;
+        void refreshCustomerRegistry();
     });
 
     // Export data click handler
@@ -158,20 +155,6 @@ export function loadSettingsForm() {
     if ($('set-telegram-chat-id'))   $('set-telegram-chat-id').value   = p.telegramChatId || '';
     if ($('set-telegram-bot-token')) $('set-telegram-bot-token').value = p.telegramBotToken || '';
 
-    // Load M-Pesa configuration keys
-    api.getEntity('mpesa_consumer_key', '').then(val => {
-        if ($('set-mpesa-consumer-key')) $('set-mpesa-consumer-key').value = val || '';
-    });
-    api.getEntity('mpesa_consumer_secret', '').then(val => {
-        if ($('set-mpesa-consumer-secret')) $('set-mpesa-consumer-secret').value = val || '';
-    });
-    api.getEntity('mpesa_passkey', '').then(val => {
-        if ($('set-mpesa-passkey')) $('set-mpesa-passkey').value = val || '';
-    });
-    api.getEntity('mpesa_shortcode', '').then(val => {
-        if ($('set-mpesa-shortcode')) $('set-mpesa-shortcode').value = val || '';
-    });
-
     // Account & Security panel
     if ($('settings-username-display')) {
         $('settings-username-display').textContent = window.CURRENT_USER?.username || '—';
@@ -180,8 +163,7 @@ export function loadSettingsForm() {
         $('settings-role-display').textContent = window.USER_ROLE || '—';
     }
 
-    renderBuyersList();
-    _renderReconciliationConsole();
+    void refreshCustomerRegistry();
 
     // User Management panel (admin+ only)
     const umContainer = $('user-management-panel')?.querySelector('.card-body') || $('user-management-panel');
@@ -196,89 +178,134 @@ export function loadSettingsForm() {
     if (window.USER_ROLE === 'viewer') {
         const settingsView = document.getElementById('view-settings');
         const inputs = settingsView?.querySelectorAll('input, select, textarea, button:not(#btn-logout)');
-        inputs?.forEach(inp => inp.disabled = true);
+        inputs?.forEach(inp => {
+            if (inp.id !== 'customer-include-inactive') inp.disabled = true;
+        });
         const submitBtn = settingsView?.querySelector('button[type="submit"]');
         if (submitBtn) submitBtn.style.display = 'none';
     }
 }
 
-export function renderBuyersList() {
-    const list = $('buyers-list');
-    if (!list) return;
-    const buyers = store.farmProfile.buyers || [];
-    if (buyers.length === 0) {
-        list.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">No buyers added yet.</p>';
-        return;
-    }
-    list.innerHTML = buyers.map((b, i) => `
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border-color); font-size:13px;">
-            <div>
-                <strong>${b.name}</strong> 
-                ${b.phone ? `<span style="color:var(--text-muted); margin-left:8px;">(${b.phone})</span>` : ''}
-                <span style="color:var(--text-muted); margin-left:8px;">(${b.terms})</span>
-            </div>
-            <button type="button" class="btn btn-sm" style="color:var(--danger); padding:2px 6px;" onclick="window.removeBuyer(${i})"><i data-lucide="trash-2" style="width:14px; height:14px;"></i></button>
-        </div>
-    `).join('');
-    lucide.createIcons();
+function canWriteCustomerRegistry() {
+    return canWriteCustomers(window.USER_ROLE);
 }
 
-async function _renderReconciliationConsole() {
-    const card = $('reconciliation-console-card');
-    const list = $('reconciliation-list');
-    if (!card || !list) return;
+function renderBootstrapResult(result) {
+    const container = $('customer-bootstrap-result');
+    if (!container) return;
+    container.replaceChildren();
+    if (!result) return;
 
-    const userRole = window.USER_ROLE;
-    if (!['super_admin', 'admin', 'farmer'].includes(userRole)) {
-        card.style.display = 'none';
+    const summary = document.createElement('p');
+    summary.style.cssText = 'font-size:13px;margin:0 0 6px;color:var(--text-muted);';
+    if (!result.profile_found) {
+        summary.textContent = 'No legacy buyer profile was found.';
+    } else {
+        summary.textContent = `Legacy buyer bootstrap: ${result.imported} imported, ${result.existing} already linked, ${result.issues.length} need review.`;
+    }
+    container.append(summary);
+
+    if (!result.issues.length) return;
+    const guidance = document.createElement('p');
+    guidance.style.cssText = 'font-size:12px;margin:0 0 4px;color:var(--warning,#b45309);';
+    guidance.textContent = 'Correct the legacy entry by creating a named customer below. Legacy buyer data was not changed.';
+    container.append(guidance);
+    const issueList = document.createElement('ul');
+    issueList.style.cssText = 'margin:0;padding-left:18px;font-size:12px;color:var(--text-muted);';
+    result.issues.forEach(issue => {
+        const item = document.createElement('li');
+        item.textContent = `Entry ${Number(issue.index) + 1}: ${bootstrapIssueMessage(issue)}`;
+        issueList.append(item);
+    });
+    if (result.issues_truncated) {
+        const item = document.createElement('li');
+        item.textContent = 'Additional entries need review.';
+        issueList.append(item);
+    }
+    container.append(issueList);
+}
+
+function renderCustomersList(customers) {
+    const list = $('buyers-list');
+    if (!list) return;
+    list.replaceChildren();
+    if (!customers.length) {
+        const empty = document.createElement('p');
+        empty.style.cssText = 'color:var(--text-muted);font-size:13px;';
+        empty.textContent = 'No stable customers yet. Named customers are needed for credit sales and future balances.';
+        list.append(empty);
         return;
     }
 
-    const items = await api.getLedgerReconciliation();
-    if (items.length === 0) {
-        card.style.display = 'block';
-        list.innerHTML = '<p style="color:var(--text-muted); font-size:13px; text-align:center; padding:16px;">No pending payments in suspense account.</p>';
-        return;
+    customers.forEach(customer => {
+        const row = appendCustomerRegistryRow(list, customer);
+        if (!canWriteCustomerRegistry()) return;
+        const action = document.createElement('button');
+        action.type = 'button';
+        action.className = 'btn btn-sm';
+        action.style.cssText = 'padding:2px 6px;';
+        action.textContent = customer.is_active ? 'Deactivate' : 'Reactivate';
+        action.addEventListener('click', () => {
+            void setCustomerActive(customer, !customer.is_active);
+        });
+        row.append(action);
+    });
+}
+
+async function refreshCustomerRegistry() {
+    const resultContainer = $('customer-bootstrap-result');
+    if (resultContainer && !legacyBootstrapAttempted && canWriteCustomerRegistry()) {
+        legacyBootstrapAttempted = true;
+        try {
+            renderBootstrapResult(await store.bootstrapLegacyCustomers());
+        } catch (error) {
+            resultContainer.textContent = `Legacy buyer bootstrap could not run: ${error.message}`;
+            showToast('Legacy buyer bootstrap could not run.', 'danger');
+        }
     }
+    try {
+        const customers = await store.syncCustomers(showInactiveCustomers);
+        renderCustomersList(customers);
+    } catch (error) {
+        const list = $('buyers-list');
+        if (list) list.textContent = `Customer registry could not load: ${error.message}`;
+        showToast('Customer registry could not load.', 'danger');
+    }
+}
 
-    card.style.display = 'block';
-    const buyers = store.farmProfile.buyers || [];
-    const isViewerOrFarmer = ['farmer', 'viewer'].includes(userRole) && userRole !== 'super_admin' && userRole !== 'admin';
-
-    list.innerHTML = items.map(item => {
-        let optionsHtml = `<option value="">-- Select Destination Account --</option>`;
-        optionsHtml += `<option value="4000|Egg Sales">Direct Sale: Egg Sales Revenue (4000)</option>`;
-        buyers.forEach(buyer => {
-            optionsHtml += `<option value="1200|${buyer.name}">Credit: ${buyer.name} (Accounts Receivable)</option>`;
+async function createCustomerFromForm(event) {
+    event.preventDefault();
+    if (!canWriteCustomerRegistry()) return;
+    try {
+        await api.createCustomer({
+            display_name: $('buyer-name').value,
+            contact_phone: $('buyer-phone')?.value.trim() || '',
+            payment_terms_days: customerTermsDays($('buyer-terms').value),
+            idempotency_key: newIdempotencyKey('customer-create')
         });
+        $('add-buyer-form').reset();
+        showToast('Customer created.', 'success');
+        await refreshCustomerRegistry();
+    } catch (error) {
+        showToast(`Customer was not created: ${error.message}`, 'danger');
+    }
+}
 
-        const formattedDate = new Date(item.date).toLocaleDateString('en-KE', {
-            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-        });
-
-        return `
-            <div class="reconciliation-item" style="display:flex; flex-direction:column; gap:10px; padding:12px; border:1px solid var(--border-color); border-radius:6px; background:var(--bg-main); font-size:13px;">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
-                    <div>
-                        <strong style="color:var(--primary); font-size:14px;">KES ${item.amount.toLocaleString()}</strong>
-                        <span style="color:var(--text-muted); margin-left:8px;">Ref: ${item.ref_id}</span>
-                        <div style="margin-top:4px; font-weight:500;">${item.description}</div>
-                        <div style="color:var(--text-muted); font-size:11px; margin-top:2px;">${formattedDate}</div>
-                    </div>
-                </div>
-                ${isViewerOrFarmer ? `
-                    <div style="color:var(--text-muted); font-style:italic; font-size:11px;">Reconciliation actions restricted to Administrators.</div>
-                ` : `
-                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                        <select class="select-md" style="flex:1; min-width:200px;" id="rec-dest-${item.id}">
-                            ${optionsHtml}
-                        </select>
-                        <button class="btn btn-primary btn-sm" onclick="window.reconcileTransaction('${item.id}')">Reconcile</button>
-                    </div>
-                `}
-            </div>
-        `;
-    }).join('');
+async function setCustomerActive(customer, isActive) {
+    try {
+        if (isActive) {
+            await api.updateCustomer(customer.id, {
+                is_active: true,
+                idempotency_key: newIdempotencyKey('customer-reactivate')
+            });
+        } else {
+            await api.deactivateCustomer(customer.id, newIdempotencyKey('customer-deactivate'));
+        }
+        showToast(isActive ? 'Customer reactivated.' : 'Customer deactivated.', 'success');
+        await refreshCustomerRegistry();
+    } catch (error) {
+        showToast(`Customer was not updated: ${error.message}`, 'danger');
+    }
 }
 
 async function _renderUserManagementPanel(container) {
@@ -424,46 +451,7 @@ Note: They will be prompted to change their password on first login.</div>
 
 // Bind global functions to window for backward compatibility
 window.loadSettingsForm = loadSettingsForm;
-window.renderBuyersList = renderBuyersList;
-window._renderReconciliationConsole = _renderReconciliationConsole;
-
-window.removeBuyer = function(idx) {
-    if (!confirm('Remove this buyer?')) return;
-    store.farmProfile.buyers.splice(idx, 1);
-    store.saveFarmProfile(store.farmProfile);
-    renderBuyersList();
-    _renderReconciliationConsole();
-};
-
-window.reconcileTransaction = async function(txId) {
-    const select = document.getElementById(`rec-dest-${txId}`);
-    if (!select || !select.value) {
-        showToast('Please select a destination account first.', 'danger');
-        return;
-    }
-
-    const [targetAccountId, buyerName] = select.value.split('|');
-    const activeBatch = store.allBatches.find(b => b.status === BATCH_STATUS.ACTIVE);
-    const batchId = activeBatch ? activeBatch.id : null;
-
-    const res = await api.reconcileLedgerTransaction({
-        transactionId: txId,
-        targetAccountId,
-        buyerName,
-        batchId
-    });
-
-    if (res.success) {
-        showToast('Transaction reconciled successfully!', 'success');
-        await _renderReconciliationConsole();
-        if (store.currentBatchId) {
-            const batch = store.allBatches.find(b => String(b.id) === String(store.currentBatchId));
-            if (batch) window.refreshCockpitData(batch);
-        }
-    } else {
-        showToast(res.error || 'Failed to reconcile transaction.', 'danger');
-    }
-};
+window.renderBuyersList = renderCustomersList;
 
 window._changeUserPassword = function(uid, username) {
     const pw = prompt(`New password for "${username}" (min 8 chars):`);
