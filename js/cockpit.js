@@ -98,6 +98,11 @@ window.openBatchCockpit = async function(id) {
                         <i data-lucide="download" style="width:14px; height:14px;"></i> Export
                     </button>
                     `}
+                    ${isAdminPlus && (batch.status === BATCH_STATUS.COMPLETED || batch.status === BATCH_STATUS.POST_BATCH) ? `
+                    <button class="btn btn-secondary btn-sm" data-batch-transfer="${encodeURIComponent(String(batch.id))}">
+                        <i data-lucide="arrow-right-left" style="width:14px; height:14px;"></i> Transfer history
+                    </button>
+                    ` : ''}
                     ${batch.status === BATCH_STATUS.COMPLETED ? `
                     <span class="pill" style="background:var(--primary-soft); color:var(--primary); font-weight:bold; border:1px solid var(--primary);">Completed</span>
                     ` : batch.status === BATCH_STATUS.POST_BATCH ? `
@@ -111,6 +116,9 @@ window.openBatchCockpit = async function(id) {
                     </button>
                     <button class="btn btn-secondary btn-sm" onclick="window.markLitterChanged()">
                         <i data-lucide="leaf" style="width:14px; height:14px;"></i> Litter Done
+                    </button>
+                    <button class="btn btn-secondary btn-sm" data-batch-transfer="${encodeURIComponent(String(batch.id))}">
+                        <i data-lucide="arrow-right-left" style="width:14px; height:14px;"></i> Transfer birds
                     </button>
                     <button class="btn btn-primary btn-sm" onclick="window.finishBatch(${batch.id})" style="margin-left:8px;">
                         <i data-lucide="flag" style="width:14px; height:14px;"></i> Close batch
@@ -359,6 +367,9 @@ window.openBatchCockpit = async function(id) {
             </div>
         </div>
     `;
+    cockpit.querySelectorAll('[data-batch-transfer]').forEach(button => {
+        button.addEventListener('click', () => window.openBatchTransferModal(decodeURIComponent(button.dataset.batchTransfer)));
+    });
     lucide.createIcons();
 
     // Inject sensor chip programmatically
@@ -1904,6 +1915,196 @@ function renderCockpitTransactions(txs, initialCash = 0) {
         </div>
     `;
 }
+
+window.openBatchTransferModal = async function(batchId) {
+    if (!['super_admin', 'admin'].includes(window.USER_ROLE)) {
+        showToast('Access denied: bird transfers require an administrator.', 'danger');
+        return;
+    }
+    const batch = window.getBatches().find(item => String(item.id) === String(batchId));
+    if (!batch) {
+        showToast('The batch is no longer available. Refresh and try again.', 'warning');
+        return;
+    }
+    const canRecord = batch.status !== BATCH_STATUS.COMPLETED && !batch.closure_review;
+    const newTransferIdempotencyKey = () => `transfer:${window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`}`;
+    let idempotencyKey = newTransferIdempotencyKey();
+    const today = new Date().toISOString().slice(0, 10);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay active';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Bird transfer record');
+    modal.innerHTML = `
+        <div class="modal-content card" style="max-width:680px; padding:24px; position:relative;">
+            <button type="button" class="btn btn-secondary btn-sm" data-close-transfer style="position:absolute; top:16px; right:16px;">Close</button>
+            <h3>Bird transfers</h3>
+            <p style="font-size:13px; color:var(--text-muted); line-height:1.55; margin:8px 0 16px;">Each move is permanent evidence for this cohort. The signed-in administrator is recorded by the server.</p>
+            ${canRecord ? `
+            <form id="batch-transfer-form" style="display:flex; flex-direction:column; gap:12px; padding:14px; border:1px solid var(--border-color); border-radius:8px; margin-bottom:18px;">
+                <h4 style="margin:0;">Record a move</h4>
+                <p id="batch-transfer-error" role="alert" style="display:none; color:var(--danger); font-size:13px; margin:0;"></p>
+                <div class="input-grid">
+                    <div class="input-group">
+                        <label for="transfer-source">Source location</label>
+                        <select id="transfer-source" class="input-md" required></select>
+                    </div>
+                    <div class="input-group">
+                        <label for="transfer-destination">Destination location ID</label>
+                        <input id="transfer-destination" class="input-md" maxlength="128" required placeholder="e.g. house:layer-2">
+                    </div>
+                    <div class="input-group">
+                        <label for="transfer-date">Transfer date</label>
+                        <input id="transfer-date" class="input-md" type="date" required value="${today}">
+                    </div>
+                    <div class="input-group">
+                        <label for="transfer-quantity">Birds moved</label>
+                        <input id="transfer-quantity" class="input-md" type="number" min="1" max="1000000" step="1" required>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label for="transfer-reason">Reason</label>
+                    <textarea id="transfer-reason" class="input-md" maxlength="500" rows="2" required placeholder="Why were these birds moved?"></textarea>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:8px;">
+                    <button type="submit" class="btn btn-primary" id="transfer-submit">Record permanent transfer</button>
+                </div>
+            </form>` : `
+            <div style="padding:12px; border-radius:8px; background:var(--bg-main); border:1px solid var(--border-color); font-size:13px; margin-bottom:18px;">This batch is closed. Its transfer history remains available, but no new move can be recorded.</div>`}
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px;">
+                <h4 style="margin:0;">Immutable transfer history</h4>
+                <button type="button" class="btn btn-secondary btn-sm" id="refresh-transfer-history">Refresh</button>
+            </div>
+            <p id="transfer-history-status" style="font-size:13px; color:var(--text-muted); margin:0 0 8px;">Loading transfer history…</p>
+            <div style="max-height:280px; overflow:auto; border:1px solid var(--border-color); border-radius:8px;">
+                <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                    <thead><tr style="text-align:left; background:var(--bg-main);"><th style="padding:9px;">Date</th><th style="padding:9px;">Move</th><th style="padding:9px;">Birds</th><th style="padding:9px;">Reason</th><th style="padding:9px;">Recorded by</th></tr></thead>
+                    <tbody id="transfer-history-body"></tbody>
+                </table>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    lucide.createIcons();
+
+    const close = () => { if (modal.parentNode) modal.parentNode.removeChild(modal); };
+    modal.querySelectorAll('[data-close-transfer]').forEach(button => button.addEventListener('click', close));
+    const historyBody = modal.querySelector('#transfer-history-body');
+    const historyStatus = modal.querySelector('#transfer-history-status');
+    const source = modal.querySelector('#transfer-source');
+
+    const setSources = transfers => {
+        if (!source) return;
+        const sources = new Map();
+        if (typeof batch.location_id === 'string' && batch.location_id.trim()) {
+            sources.set(batch.location_id, batch.location_name ? `Opening location — ${batch.location_name}` : 'Opening location');
+        }
+        transfers.forEach(transfer => {
+            if (typeof transfer.destination_location_id === 'string' && transfer.destination_location_id) {
+                sources.set(transfer.destination_location_id, 'Previously recorded destination');
+            }
+        });
+        source.replaceChildren();
+        sources.forEach((label, locationId) => {
+            const option = document.createElement('option');
+            option.value = locationId;
+            option.textContent = `${label}: ${locationId}`;
+            source.appendChild(option);
+        });
+    };
+    const renderHistory = transfers => {
+        historyBody.replaceChildren();
+        if (transfers.length === 0) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = 5;
+            cell.style.padding = '12px';
+            cell.style.color = 'var(--text-muted)';
+            cell.textContent = 'No transfers have been recorded for this batch.';
+            row.appendChild(cell);
+            historyBody.appendChild(row);
+            return;
+        }
+        transfers.forEach(transfer => {
+            const row = document.createElement('tr');
+            row.style.borderTop = '1px solid var(--border-color)';
+            const values = [
+                transfer.transfer_date || '—',
+                `${transfer.source_location_id || '—'} → ${transfer.destination_location_id || '—'}`,
+                Number.isSafeInteger(transfer.quantity) ? String(transfer.quantity) : '—',
+                transfer.reason || '—',
+                transfer.created_by_user_id || '—'
+            ];
+            values.forEach(value => {
+                const cell = document.createElement('td');
+                cell.style.padding = '9px';
+                cell.style.verticalAlign = 'top';
+                cell.textContent = value;
+                row.appendChild(cell);
+            });
+            historyBody.appendChild(row);
+        });
+    };
+    const loadHistory = async () => {
+        historyStatus.textContent = 'Loading transfer history…';
+        const result = await api.getBatchTransfers(batchId);
+        if (!result.ok || !Array.isArray(result.body?.transfers)) {
+            historyStatus.textContent = 'Transfer history is unavailable. Refresh and try again.';
+            renderHistory([]);
+            setSources([]);
+            return;
+        }
+        const transfers = result.body.transfers;
+        historyStatus.textContent = transfers.length ? `${transfers.length} recorded transfer${transfers.length === 1 ? '' : 's'}.` : 'No recorded transfers.';
+        renderHistory(transfers);
+        setSources(transfers);
+    };
+    modal.querySelector('#refresh-transfer-history').addEventListener('click', () => { void loadHistory(); });
+
+    const form = modal.querySelector('#batch-transfer-form');
+    if (form) {
+        form.addEventListener('submit', async event => {
+            event.preventDefault();
+            if (!form.reportValidity()) return;
+            const error = modal.querySelector('#batch-transfer-error');
+            const submit = modal.querySelector('#transfer-submit');
+            const destination = modal.querySelector('#transfer-destination').value.trim();
+            const payload = {
+                source_location_id: source.value,
+                destination_location_id: destination,
+                transfer_date: modal.querySelector('#transfer-date').value,
+                quantity: Number(modal.querySelector('#transfer-quantity').value),
+                reason: modal.querySelector('#transfer-reason').value.trim(),
+                idempotency_key: idempotencyKey
+            };
+            if (payload.source_location_id === payload.destination_location_id) {
+                error.textContent = 'Choose a destination different from the source location.';
+                error.style.display = 'block';
+                return;
+            }
+            error.style.display = 'none';
+            submit.disabled = true;
+            submit.textContent = 'Recording…';
+            const result = await api.recordBatchTransfer(batchId, payload);
+            if (result.ok) {
+                form.reset();
+                idempotencyKey = newTransferIdempotencyKey();
+                showToast(result.body?.idempotent ? 'This transfer was already recorded.' : 'Permanent bird transfer recorded.', 'success');
+                await loadHistory();
+            } else if (result.status === 403) {
+                error.textContent = 'Your account is not authorised to record transfers.';
+            } else if (result.status === 409) {
+                error.textContent = 'This transfer conflicts with the recorded batch, location, or live-bird count.';
+            } else {
+                error.textContent = 'The transfer was not recorded. Check the fields and try again.';
+            }
+            if (!result.ok) error.style.display = 'block';
+            submit.disabled = false;
+            submit.textContent = 'Record permanent transfer';
+        });
+    }
+    await loadHistory();
+};
 
 window.openCSVImportModal = async function(batchId) {
     const modal = document.createElement('div');

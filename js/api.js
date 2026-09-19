@@ -302,6 +302,50 @@ export const api = {
         };
     },
 
+    /** Records one server-attributed, immutable cohort transfer. */
+    async recordBatchTransfer(batchId, transfer) {
+        if ((typeof batchId !== 'string' && typeof batchId !== 'number') || !transfer || typeof transfer !== 'object' || Array.isArray(transfer)) {
+            return { ok: false, status: null, error: 'Invalid batch transfer request' };
+        }
+        const id = String(batchId).trim();
+        if (!id) return { ok: false, status: null, error: 'Invalid batch transfer request' };
+        const payload = {
+            source_location_id: transfer.source_location_id,
+            destination_location_id: transfer.destination_location_id,
+            transfer_date: transfer.transfer_date,
+            quantity: transfer.quantity,
+            reason: transfer.reason,
+            idempotency_key: transfer.idempotency_key
+        };
+        return this._requestBatchTransfer(`/api/batches/${encodeURIComponent(id)}/transfers`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+    },
+
+    /** Reads a bounded, immutable transfer history for an admin review screen. */
+    async getBatchTransfers(batchId, limit = 50) {
+        if ((typeof batchId !== 'string' && typeof batchId !== 'number') || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+            return { ok: false, status: null, error: 'Invalid transfer history request' };
+        }
+        const id = String(batchId).trim();
+        if (!id) return { ok: false, status: null, error: 'Invalid transfer history request' };
+        return this._requestBatchTransfer(`/api/batches/${encodeURIComponent(id)}/transfers?limit=${limit}`);
+    },
+
+    async _requestBatchTransfer(path, options = {}) {
+        let response;
+        try { response = await fetch(path, options); }
+        catch (_) { return { ok: false, status: null, error: 'Batch transfer service is unavailable' }; }
+        let body = null;
+        try { body = await response.json(); } catch (_) { /* Safe fallback below. */ }
+        if (response.ok) return { ok: true, status: response.status, body };
+        return {
+            ok: false,
+            status: Number.isInteger(response.status) ? response.status : null,
+            error: typeof body?.error === 'string' ? body.error : 'Batch transfer request was not completed'
+        };
+    },
+
     /**
      * Deletes a specific batch.
      * Requires the `x-confirm-delete` confirmation header.

@@ -27,12 +27,28 @@ function transferDate(value) {
     return value;
 }
 function digest(value) { return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
-function defaultDependencies() { return { withDedicatedTransaction: require('../db').withDedicatedTransaction }; }
+function defaultDependencies() {
+    const db = require('../db');
+    return {
+        withDedicatedTransaction: db.withDedicatedTransaction,
+        withDedicatedReadTransaction: db.withDedicatedReadTransaction
+    };
+}
+
+function historyLimit(value) {
+    if (!Number.isSafeInteger(value) || value < 1 || value > 100) throw new BatchTransferValidationError('invalid transfer history limit');
+    return value;
+}
 
 function createBatchTransferService(overrides = {}) {
     const defaults = overrides.withDedicatedTransaction === undefined ? defaultDependencies() : {};
-    const dependencies = { ...defaults, ...overrides };
+    const dependencies = {
+        ...defaults,
+        ...overrides,
+        withDedicatedReadTransaction: overrides.withDedicatedReadTransaction || defaults.withDedicatedReadTransaction || overrides.withDedicatedTransaction
+    };
     if (typeof dependencies.withDedicatedTransaction !== 'function') throw new TypeError('batch transfer requires a transaction boundary');
+    if (typeof dependencies.withDedicatedReadTransaction !== 'function') throw new TypeError('batch transfer requires a read transaction boundary');
 
     async function recordTransfer(input = {}) {
         const request = {
@@ -78,7 +94,21 @@ function createBatchTransferService(overrides = {}) {
         });
     }
 
-    return { recordTransfer };
+    async function listTransfers({ batch_id, limit = 50 } = {}) {
+        const requestedBatchId = batchId(batch_id);
+        const boundedLimit = historyLimit(limit);
+        return dependencies.withDedicatedReadTransaction(async db => {
+            const batch = await db.getQuery('SELECT id FROM batches WHERE id IN (?, ?) ORDER BY id = ? DESC LIMIT 1', [requestedBatchId, `${requestedBatchId}.0`, requestedBatchId]);
+            if (!batch) throw new BatchTransferNotFoundError('batch was not found');
+            const rows = await db.allQuery(`SELECT id, batch_id, cohort_id, source_location_id, destination_location_id,
+                transfer_date, quantity, reason, created_by_user_id, created_at
+                FROM batch_transfers WHERE batch_id = ?
+                ORDER BY transfer_date DESC, created_at DESC, id DESC LIMIT ?`, [batch.id, boundedLimit]);
+            return { transfers: rows.map(safe) };
+        });
+    }
+
+    return { recordTransfer, listTransfers };
 }
 
 function safe(row) {

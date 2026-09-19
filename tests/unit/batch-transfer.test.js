@@ -36,10 +36,17 @@ test('batch transfers are immutable, session-attributed, idempotent, and cannot 
     await assert.rejects(service.recordTransfer({ ...input, idempotency_key: 'batch-transfer-003', quantity: 91 }), /exceeds recorded live birds/);
     await assert.rejects(service.recordTransfer({ ...input, idempotency_key: 'batch-transfer-003a', transfer_date: '2026-02-30' }), /invalid transfer date/);
     await assert.rejects(service.recordTransfer({ ...input, batch_id: 'closed', idempotency_key: 'batch-transfer-004' }), /closed batches/);
+    const later = await service.recordTransfer({ ...input, source_location_id: 'house:b', destination_location_id: 'house:c', transfer_date: '2026-09-20', quantity: 10, idempotency_key: 'batch-transfer-005' });
+    const history = await service.listTransfers({ batch_id: 'batch-1', limit: 10 });
+    assert.deepEqual(history.transfers.map(row => [row.id, row.source_location_id, row.destination_location_id, row.transfer_date, row.created_by_user_id]), [
+        [later.transfer.id, 'house:b', 'house:c', '2026-09-20', 'admin-1'],
+        [created.transfer.id, 'house:a', 'house:b', '2026-09-19', 'admin-1']
+    ]);
+    await assert.rejects(service.listTransfers({ batch_id: 'batch-1', limit: 101 }), /history limit/);
     const verify = await open(filename);
     try {
         await assert.rejects(run(verify, "UPDATE batch_transfers SET quantity = 1 WHERE id = ?", [created.transfer.id]), /immutable/);
         await assert.rejects(run(verify, "DELETE FROM batch_transfers WHERE id = ?", [created.transfer.id]), /cannot be deleted/);
-        assert.equal((await get(verify, 'SELECT COUNT(*) AS count FROM batch_transfers')).count, 1);
+        assert.equal((await get(verify, 'SELECT COUNT(*) AS count FROM batch_transfers')).count, 2);
     } finally { await close(verify); }
 });
