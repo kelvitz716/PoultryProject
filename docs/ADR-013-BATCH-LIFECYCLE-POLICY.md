@@ -8,9 +8,13 @@
   quantity, reason, and operator. Transfers are immutable, idempotent API
   records; generic batch updates cannot silently change a recorded cohort or
   location.
-- Feed is inventory when purchased and is expensed to a batch on consumption.
+- Feed is inventory when purchased and moves into batch production WIP on
+  consumption; it becomes egg COGS when the resulting eggs are sold.
 - Eggs are inventory when collected; revenue and cost of goods sold occur only
   when eggs are sold.
+- Prospective inventory uses moving weighted-average cost. Historical feed and
+  egg records are not backfilled or assigned fabricated values; the first
+  inventory opening is zero at deployment.
 - A batch may close with unresolved reconciliation evidence only through a
   permanent reviewed exception. The closure record preserves its code, bounded
   note, reviewer, timestamp, cohort, final location, and affected ledger IDs.

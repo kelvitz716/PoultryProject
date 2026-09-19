@@ -6,6 +6,9 @@
 
 const { runQuery, allQuery, getQuery } = require('../db');
 const crypto = require('crypto');
+const { createProductionInventoryService } = require('./production-inventory');
+
+const productionInventory = createProductionInventoryService();
 
 let computeTHI;
 let STAGING_STATUS = { PENDING: 'pending', AMENDMENT: 'amendment', COMMITTED: 'committed' };
@@ -314,6 +317,35 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
                     'INSERT INTO health_logs (id, batch_id, data, logged_by, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, logged_by = excluded.logged_by, updated_at = CURRENT_TIMESTAMP',
                     [hId, batchId, JSON.stringify(hData), hLoggedBy]
                 );
+            }
+        }
+
+        // Accounting is deliberately attached to the immutable staging-event
+        // IDs, not to the daily aggregate.  That makes a retry harmless and
+        // leaves pre-policy/backfilled dates outside the prospective inventory
+        // sub-ledger.  Event timestamp order gives same-day feed issues a
+        // deterministic WIP-to-egg hand-off.
+        const inventoryAdapter = { runQuery, allQuery, getQuery };
+        for (const row of rows) {
+            const event = JSON.parse(row.data);
+            const actor = row.logged_by || carriedLoggedBy;
+            if (row.module === 'feed' && event.amount_kg !== undefined && Number(event.amount_kg) > 0) {
+                await productionInventory.recordFeedConsumptionWithAdapter(inventoryAdapter, {
+                    batchId,
+                    sourceId: row.id,
+                    kilograms: event.amount_kg,
+                    occurredOn: date,
+                    actor
+                });
+            }
+            if (row.module === 'eggs' && event.count !== undefined && Number(event.count) > 0) {
+                await productionInventory.recordEggCollectionWithAdapter(inventoryAdapter, {
+                    batchId,
+                    sourceId: row.id,
+                    eggs: event.count,
+                    occurredOn: date,
+                    actor
+                });
             }
         }
 

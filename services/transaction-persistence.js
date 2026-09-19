@@ -15,6 +15,11 @@ const {
     SettlementNotFoundError,
     recordCustomerAccountEventWithAdapter
 } = require('./customer-settlement');
+const {
+    ProductionInventoryValidationError,
+    ProductionInventoryConflictError,
+    createProductionInventoryService
+} = require('./production-inventory');
 
 class TransactionPersistenceValidationError extends Error {}
 class TransactionPersistenceConflictError extends Error {}
@@ -89,6 +94,16 @@ function actorId(value) {
     return value.trim();
 }
 
+function translateInventoryError(error) {
+    if (error instanceof ProductionInventoryValidationError) {
+        throw new TransactionPersistenceValidationError(error.message);
+    }
+    if (error instanceof ProductionInventoryConflictError) {
+        throw new TransactionPersistenceConflictError(error.message);
+    }
+    throw error;
+}
+
 function isNamedSale(transaction) {
     return transaction.type === 'sale' && typeof transaction.customerId === 'string' && transaction.customerId.length > 0;
 }
@@ -96,11 +111,23 @@ function isNamedSale(transaction) {
 function createTransactionPersistenceService(overrides = {}) {
     const required = ['withDedicatedTransaction', 'resolveTransactionCustomer', 'syncTransactionToLedgerWithAdapter', 'recordCustomerAccountEventWithAdapter'];
     const defaults = required.some(name => overrides[name] === undefined) ? defaultDependencies() : {};
-    const dependencies = { ...defaults, ...overrides };
+    const dependencies = {
+        ...defaults,
+        productionInventory: createProductionInventoryService(),
+        ...overrides
+    };
     for (const name of required) {
         if (typeof dependencies[name] !== 'function') {
             throw new TypeError(`transaction persistence requires ${name}`);
         }
+    }
+    if (!dependencies.productionInventory
+        || typeof dependencies.productionInventory.recordTransactionWithAdapter !== 'function'
+        || typeof dependencies.productionInventory.assertTransactionMutableWithAdapter !== 'function'
+        || typeof dependencies.productionInventory.hasTransactionMovementWithAdapter !== 'function'
+        || typeof dependencies.productionInventory.assertTransactionDeletableWithAdapter !== 'function'
+        || typeof dependencies.productionInventory.assertBatchTransactionsDeletableWithAdapter !== 'function') {
+        throw new TypeError('transaction persistence requires production inventory service');
     }
 
     async function createOrUpdateTransaction(batchIdValue, requestedTransaction, authenticatedActorId) {
@@ -153,6 +180,21 @@ function createTransactionPersistenceService(overrides = {}) {
                     return previous;
                 }
             }
+            // Once a feed receipt or egg dispatch has reached the prospective
+            // inventory sub-ledger, changing the source JSON would desync the
+            // physical and financial audit trails. Exact named-sale retries
+            // returned above remain idempotent.
+            let exactExisting = false;
+            if (existing) {
+                let previous;
+                try { previous = JSON.parse(existing.data); } catch { throw new TransactionPersistenceConflictError('stored transaction is invalid'); }
+                exactExisting = stableJson(previous) === stableJson(tx);
+            }
+            try {
+                await dependencies.productionInventory.assertTransactionMutableWithAdapter(adapter, tx, { allowExisting: exactExisting });
+            } catch (error) {
+                translateInventoryError(error);
+            }
             const actor = namedSale ? actorId(authenticatedActorId) : null;
             // A legacy `.0` alias identifies the same batch. Preserve the exact
             // stored batch ID so an update never silently moves historical JSON.
@@ -184,6 +226,22 @@ function createTransactionPersistenceService(overrides = {}) {
                     throw error;
                 }
             }
+            // A source that existed before this feature is a historical record,
+            // even if an operator later corrects its JSON.  Only a new source,
+            // or a retry of an already-tracked source, can affect the
+            // prospective zero-opening sub-ledger.
+            const alreadyTracked = existing
+                ? await dependencies.productionInventory.hasTransactionMovementWithAdapter(adapter, tx.id)
+                : false;
+            if (!existing || alreadyTracked) {
+                try {
+                    await dependencies.productionInventory.recordTransactionWithAdapter(
+                        adapter, storedBatchId, tx, amountMinor, authenticatedActorId || 'system'
+                    );
+                } catch (error) {
+                    translateInventoryError(error);
+                }
+            }
             return tx;
         });
     }
@@ -202,6 +260,11 @@ function createTransactionPersistenceService(overrides = {}) {
             const invoice = await adapter.getQuery(`SELECT id FROM customer_account_events
                 WHERE kind = 'invoice' AND status = 'posted' AND source_transaction_id = ?`, [transactionIdValueNormalized]);
             if (invoice) throw new TransactionPersistenceConflictError('posted invoice sale cannot be deleted');
+            try {
+                await dependencies.productionInventory.assertTransactionDeletableWithAdapter(adapter, transactionIdValueNormalized);
+            } catch (error) {
+                translateInventoryError(error);
+            }
             await dependencies.syncTransactionToLedgerWithAdapter(
                 adapter,
                 candidates[0],
@@ -227,6 +290,11 @@ function createTransactionPersistenceService(overrides = {}) {
                 const invoice = await adapter.getQuery(`SELECT id FROM customer_account_events
                     WHERE kind = 'invoice' AND status = 'posted' AND source_transaction_id = ?`, [row.id]);
                 if (invoice) throw new TransactionPersistenceConflictError('posted invoice sale cannot be deleted');
+            }
+            try {
+                await dependencies.productionInventory.assertBatchTransactionsDeletableWithAdapter(adapter, candidates);
+            } catch (error) {
+                translateInventoryError(error);
             }
             for (const row of rows) {
                 await dependencies.syncTransactionToLedgerWithAdapter(adapter, candidates[0], { id: row.id }, true);
