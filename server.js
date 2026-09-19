@@ -65,6 +65,8 @@ const { handleE2ETestSeedFailure } = require('./services/e2e-test-seed-policy');
 const { isLegacyDarajaEntityKey } = require('./services/legacy-daraja-credentials');
 const batchDeletionService = require('./services/batch-deletion');
 const { registerBatchDeletionApi } = require('./services/batch-deletion-http');
+const { createBatchClosureService } = require('./services/batch-closure');
+const { registerBatchClosureApi } = require('./services/batch-closure-http');
 const lifecycleSimulation = require('./services/lifecycle-simulation');
 const { registerLifecycleSimulationApi } = require('./services/lifecycle-simulation-http');
 
@@ -345,6 +347,7 @@ registerCustomerRegistryApi(app, { customerService: customerRegistryService, req
 registerLegacyCustomerBootstrapApi(app, { bootstrapService: legacyCustomerBootstrapService, requireRole });
 registerTransactionPersistenceApi(app, { transactionPersistence, requireRole });
 registerBatchDeletionApi(app, { batchDeletionService, requireRole, requireConfirm });
+registerBatchClosureApi(app, { batchClosureService: createBatchClosureService(), requireRole });
 registerLifecycleSimulationApi(app, {
     simulationService: lifecycleSimulation.createLifecycleSimulationService(),
     requireRole
@@ -539,6 +542,19 @@ app.post('/api/batches', requireRole('super_admin', 'admin', 'farmer'), validate
         const batch = req.body;
         const id = normalizeId(batch.id);
         batch.id = id;
+        if (batch.status === BATCH_STATUS.COMPLETED || batch.closure_review) {
+            return res.status(400).json({ error: 'Use the reviewed batch closure route.' });
+        }
+        const existing = await getQuery('SELECT data FROM batches WHERE id = ? OR id = ? ORDER BY id = ? DESC LIMIT 1', [id, `${id}.0`, id]);
+        if (existing) {
+            const prior = JSON.parse(existing.data);
+            if (prior.status === BATCH_STATUS.COMPLETED || prior.closure_review) {
+                return res.status(409).json({ error: 'Closed batches are immutable.' });
+            }
+            if ((prior.cohort_id && batch.cohort_id !== prior.cohort_id) || (prior.location_id && batch.location_id !== prior.location_id)) {
+                return res.status(400).json({ error: 'Cohort and location changes require an audited transfer.' });
+            }
+        }
         await runQuery('INSERT INTO batches (id, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP', [id, JSON.stringify(batch)]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }

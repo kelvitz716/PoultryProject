@@ -95,7 +95,8 @@ test('production server and browser wire every bounded payment and settlement su
         'registerCustomerRefundApi(app',
         'registerCustomerRegistryApi(app',
         'registerLegacyCustomerBootstrapApi(app',
-        'registerTransactionPersistenceApi(app'
+        'registerTransactionPersistenceApi(app',
+        'registerBatchClosureApi(app'
     ]) assert.ok(server.includes(registration), `${registration} must be registered`);
     assert.match(app, /initPaymentInboxView\(\);/);
     assert.match(app, /initCustomerSettlementTimelineView\(\);/);
@@ -145,6 +146,19 @@ test('disposable real-server smoke starts without E2E credentials and reaches au
     assert.ok(setup.cookie);
     const cookie = setup.cookie;
     assert.equal((await request(baseUrl, '/api/auth/me', { cookie })).json?.user?.role, 'super_admin');
+
+    assert.equal((await request(baseUrl, '/api/batches', {
+        method: 'POST', cookie,
+        body: { id: 'smoke-closed-bypass', status: 'completed', cohort_id: 'cohort:smoke', location_id: 'house:smoke' }
+    })).status, 400);
+    assert.equal((await request(baseUrl, '/api/batches', {
+        method: 'POST', cookie,
+        body: { id: 'smoke-close', status: 'post_batch', cohort_id: 'cohort:smoke', location_id: 'house:smoke' }
+    })).status, 200);
+    const closure = await request(baseUrl, '/api/batches/smoke-close/close', { method: 'POST', cookie, body: {} });
+    assert.equal(closure.status, 201);
+    assert.equal(closure.json?.batch?.closure_review?.status, 'exact');
+    assert.equal(closure.json?.batch?.closure_review?.reviewed_by_user_id, setup.json?.user?.id);
 
     const customer = await request(baseUrl, '/api/customers', {
         method: 'POST', cookie,
