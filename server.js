@@ -69,6 +69,8 @@ const { createBatchClosureService } = require('./services/batch-closure');
 const { registerBatchClosureApi } = require('./services/batch-closure-http');
 const { createBatchTransferService } = require('./services/batch-transfer');
 const { registerBatchTransferApi } = require('./services/batch-transfer-http');
+const { createProductionInventoryReportingService } = require('./services/production-inventory-reporting');
+const { registerProductionInventoryApi } = require('./services/production-inventory-http');
 const lifecycleSimulation = require('./services/lifecycle-simulation');
 const { registerLifecycleSimulationApi } = require('./services/lifecycle-simulation-http');
 
@@ -351,6 +353,7 @@ registerTransactionPersistenceApi(app, { transactionPersistence, requireRole });
 registerBatchDeletionApi(app, { batchDeletionService, requireRole, requireConfirm });
 registerBatchClosureApi(app, { batchClosureService: createBatchClosureService(), requireRole });
 registerBatchTransferApi(app, { batchTransferService: createBatchTransferService(), requireRole });
+registerProductionInventoryApi(app, { productionInventoryReportingService: createProductionInventoryReportingService(), requireRole });
 registerLifecycleSimulationApi(app, {
     simulationService: lifecycleSimulation.createLifecycleSimulationService(),
     requireRole

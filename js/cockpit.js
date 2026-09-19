@@ -98,6 +98,11 @@ window.openBatchCockpit = async function(id) {
                         <i data-lucide="download" style="width:14px; height:14px;"></i> Export
                     </button>
                     `}
+                    ${isAdminPlus ? `
+                    <button class="btn btn-secondary btn-sm" data-production-inventory="${encodeURIComponent(String(batch.id))}">
+                        <i data-lucide="boxes" style="width:14px; height:14px;"></i> Inventory
+                    </button>
+                    ` : ''}
                     ${isAdminPlus && (batch.status === BATCH_STATUS.COMPLETED || batch.status === BATCH_STATUS.POST_BATCH) ? `
                     <button class="btn btn-secondary btn-sm" data-batch-transfer="${encodeURIComponent(String(batch.id))}">
                         <i data-lucide="arrow-right-left" style="width:14px; height:14px;"></i> Transfer history
@@ -369,6 +374,9 @@ window.openBatchCockpit = async function(id) {
     `;
     cockpit.querySelectorAll('[data-batch-transfer]').forEach(button => {
         button.addEventListener('click', () => window.openBatchTransferModal(decodeURIComponent(button.dataset.batchTransfer)));
+    });
+    cockpit.querySelectorAll('[data-production-inventory]').forEach(button => {
+        button.addEventListener('click', () => window.openProductionInventoryModal(decodeURIComponent(button.dataset.productionInventory)));
     });
     lucide.createIcons();
 
@@ -1915,6 +1923,98 @@ function renderCockpitTransactions(txs, initialCash = 0) {
         </div>
     `;
 }
+
+window.openProductionInventoryModal = async function(batchId) {
+    if (!['super_admin', 'admin'].includes(window.USER_ROLE)) {
+        showToast('Access denied: production inventory requires an administrator.', 'danger');
+        return;
+    }
+    const batch = window.getBatches().find(item => String(item.id) === String(batchId));
+    if (!batch) {
+        showToast('The batch is no longer available. Refresh and try again.', 'warning');
+        return;
+    }
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay active';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Production inventory');
+    modal.innerHTML = `
+        <div class="modal-content card" style="max-width:760px; padding:24px; position:relative;">
+            <button type="button" class="btn btn-secondary btn-sm" data-close-inventory style="position:absolute; top:16px; right:16px;">Close</button>
+            <h3>Production inventory</h3>
+            <p id="production-inventory-policy" style="font-size:13px; color:var(--text-muted); line-height:1.55; margin:8px 0 16px;">Loading prospective inventory policy…</p>
+            <p id="production-inventory-status" role="alert" style="display:none; color:var(--danger); font-size:13px; margin:0 0 12px;"></p>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(145px, 1fr)); gap:10px; margin-bottom:18px;">
+                <div style="padding:12px; border:1px solid var(--border-color); border-radius:8px;"><span style="font-size:11px; color:var(--text-muted);">Batch feed inventory</span><strong id="inventory-feed-quantity" style="display:block; margin-top:5px;">—</strong><span id="inventory-feed-value" style="font-size:12px; color:var(--text-muted);"></span></div>
+                <div style="padding:12px; border:1px solid var(--border-color); border-radius:8px;"><span style="font-size:11px; color:var(--text-muted);">Batch WIP</span><strong id="inventory-wip-value" style="display:block; margin-top:5px;">—</strong><span style="font-size:12px; color:var(--text-muted);">Feed issued, not yet collected</span></div>
+                <div style="padding:12px; border:1px solid var(--border-color); border-radius:8px;"><span style="font-size:11px; color:var(--text-muted);">Egg inventory</span><strong id="inventory-egg-quantity" style="display:block; margin-top:5px;">—</strong><span id="inventory-egg-value" style="font-size:12px; color:var(--text-muted);"></span></div>
+                <div style="padding:12px; border:1px solid var(--border-color); border-radius:8px;"><span style="font-size:11px; color:var(--text-muted);">Egg COGS</span><strong id="inventory-cogs-value" style="display:block; margin-top:5px;">—</strong><span style="font-size:12px; color:var(--text-muted);">Cost transferred on sale</span></div>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px;"><h4 style="margin:0;">Recent immutable movements</h4><button type="button" class="btn btn-secondary btn-sm" id="refresh-production-inventory">Refresh</button></div>
+            <div style="max-height:280px; overflow:auto; border:1px solid var(--border-color); border-radius:8px;"><table style="width:100%; border-collapse:collapse; font-size:12px;"><thead><tr style="text-align:left; background:var(--bg-main);"><th style="padding:9px;">Date</th><th style="padding:9px;">Movement</th><th style="padding:9px;">Quantity</th><th style="padding:9px;">Value</th><th style="padding:9px;">Recorded by</th></tr></thead><tbody id="production-inventory-movements"></tbody></table></div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    lucide.createIcons();
+    const close = () => { if (modal.parentNode) modal.parentNode.removeChild(modal); };
+    modal.querySelectorAll('[data-close-inventory]').forEach(button => button.addEventListener('click', close));
+    const status = modal.querySelector('#production-inventory-status');
+    const movementsBody = modal.querySelector('#production-inventory-movements');
+    const money = value => `KES ${(Number(value || 0) / 100).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const kilograms = value => `${(Number(value || 0) / 1000).toLocaleString('en-KE', { maximumFractionDigits: 3 })} kg`;
+    const eggs = value => `${(Number(value || 0) / 1000).toLocaleString('en-KE', { maximumFractionDigits: 0 })} eggs`;
+    const renderMovements = movements => {
+        movementsBody.replaceChildren();
+        if (movements.length === 0) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = 5;
+            cell.style.padding = '12px';
+            cell.style.color = 'var(--text-muted)';
+            cell.textContent = 'No prospective inventory movements have been recorded for this batch.';
+            row.appendChild(cell);
+            movementsBody.appendChild(row);
+            return;
+        }
+        movements.forEach(movement => {
+            const row = document.createElement('tr');
+            row.style.borderTop = '1px solid var(--border-color)';
+            const label = `${movement.item_type === 'feed' ? 'Feed' : 'Eggs'}: ${movement.movement_type || 'movement'}`;
+            const quantity = movement.item_type === 'feed' ? kilograms(movement.quantity_milli) : eggs(movement.quantity_milli);
+            [movement.occurred_on || '—', label, quantity, money(movement.value_minor), movement.created_by_user_id || '—'].forEach(value => {
+                const cell = document.createElement('td');
+                cell.style.padding = '9px';
+                cell.style.verticalAlign = 'top';
+                cell.textContent = value;
+                row.appendChild(cell);
+            });
+            movementsBody.appendChild(row);
+        });
+    };
+    const load = async () => {
+        status.style.display = 'none';
+        const result = await api.getBatchProductionInventory(batchId);
+        if (!result.ok || !result.body?.balances || !Array.isArray(result.body.movements)) {
+            status.textContent = 'Production inventory is unavailable. Refresh and try again.';
+            status.style.display = 'block';
+            return;
+        }
+        const balances = result.body.balances;
+        modal.querySelector('#production-inventory-policy').textContent = result.body.policy?.starts_on
+            ? `Prospective weighted-average tracking started on ${result.body.policy.starts_on}. Opening balances are intentionally zero; earlier activity is not backfilled.`
+            : 'Prospective inventory policy information is unavailable.';
+        modal.querySelector('#inventory-feed-quantity').textContent = kilograms(balances.feed_inventory?.quantity_milli);
+        modal.querySelector('#inventory-feed-value').textContent = money(balances.feed_inventory?.value_minor);
+        modal.querySelector('#inventory-wip-value').textContent = money(balances.batch_wip?.value_minor);
+        modal.querySelector('#inventory-egg-quantity').textContent = eggs(balances.egg_inventory?.quantity_milli);
+        modal.querySelector('#inventory-egg-value').textContent = money(balances.egg_inventory?.value_minor);
+        modal.querySelector('#inventory-cogs-value').textContent = money(balances.egg_cogs?.value_minor);
+        renderMovements(result.body.movements);
+    };
+    modal.querySelector('#refresh-production-inventory').addEventListener('click', () => { void load(); });
+    await load();
+};
 
 window.openBatchTransferModal = async function(batchId) {
     if (!['super_admin', 'admin'].includes(window.USER_ROLE)) {

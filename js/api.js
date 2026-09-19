@@ -346,6 +346,26 @@ export const api = {
         };
     },
 
+    /** Reads the prospective, immutable production-inventory sub-ledger for one batch. */
+    async getBatchProductionInventory(batchId, limit = 25) {
+        if ((typeof batchId !== 'string' && typeof batchId !== 'number') || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+            return { ok: false, status: null, error: 'Invalid production inventory request' };
+        }
+        const id = String(batchId).trim();
+        if (!id) return { ok: false, status: null, error: 'Invalid production inventory request' };
+        let response;
+        try { response = await fetch(`/api/batches/${encodeURIComponent(id)}/production-inventory?limit=${limit}`); }
+        catch (_) { return { ok: false, status: null, error: 'Production inventory is unavailable' }; }
+        let body = null;
+        try { body = await response.json(); } catch (_) { /* Safe fallback below. */ }
+        if (response.ok) return { ok: true, status: response.status, body };
+        return {
+            ok: false,
+            status: Number.isInteger(response.status) ? response.status : null,
+            error: typeof body?.error === 'string' ? body.error : 'Production inventory is unavailable'
+        };
+    },
+
     /**
      * Deletes a specific batch.
      * Requires the `x-confirm-delete` confirmation header.
