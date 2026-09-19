@@ -1,0 +1,8 @@
+# Local-only source-build override. Never use this file on the OCI deployment
+# host: production must run the immutable image pulled by CI.
+services:
+  poultry-dss:
+    image: poultry-dss:local
+    build:
+      context: .
+      dockerfile: Dockerfile

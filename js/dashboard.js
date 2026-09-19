@@ -8,6 +8,12 @@ import { api } from './api.js';
 import { store } from './store.js';
 import { BATCH_STATUS } from './engine.js';
 import { $ } from './ui.js';
+import { createDashboardArController, renderDashboardAr } from './dashboard-ar-model.mjs';
+
+const dashboardArController = createDashboardArController({
+    listCustomers: api.listCustomers.bind(api),
+    getCustomerSettlement: api.getCustomerSettlement.bind(api)
+});
 
 export function initDashboardView() {
     console.log('Initializing Dashboard View...');
@@ -76,59 +82,15 @@ window.refreshDashboard = async function() {
         }
     }
 
-    // Accounts Receivable (Outstanding Credit Sales)
+    // Accounts Receivable comes exclusively from immutable customer settlement
+    // snapshots. A transaction's UI status is never payment evidence.
     const arListEl = $('ar-list');
     if (arListEl) {
-        let allUnpaid = [];
-        for (const b of batches) {
-            const txs = await api.getTransactions(b.id);
-            const unpaid = txs.filter(t => t.status === 'unpaid' && t.type === 'sale');
-            unpaid.forEach(t => { t.batchName = b.name; t.batchId = b.id; });
-            allUnpaid = allUnpaid.concat(unpaid);
-        }
-        
-        if (allUnpaid.length === 0) {
-            arListEl.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">No outstanding credit invoices.</p>';
-        } else {
-            // Sort by date oldest first
-            allUnpaid.sort((a, b) => new Date(a.date) - new Date(b.date));
-            arListEl.innerHTML = allUnpaid.map(t => {
-                const txDate = new Date(t.date);
-                const termsDays = parseInt((t.buyerTerms || '').replace('Net ', '')) || 0;
-                const dueDate = new Date(txDate.getTime() + termsDays * 86400000);
-                const daysOverdue = Math.floor((new Date() - dueDate) / 86400000);
-                
-                const statusHtml = daysOverdue > 0 
-                    ? `<span style="color:var(--danger); font-weight:bold;">${daysOverdue} days overdue</span>` 
-                    : `<span style="color:var(--text-muted);">Due in ${Math.abs(daysOverdue)} days</span>`;
-                    
-                return `
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border-color); font-size:13px;">
-                    <div>
-                        <strong>${t.buyerName || 'Unknown Buyer'}</strong> <span style="color:var(--text-muted); font-size:11px;">(${t.batchName})</span><br>
-                        <span style="color:var(--text-muted);">${new Date(t.date).toLocaleDateString()} • ${t.qty} eggs</span>
-                    </div>
-                    <div style="text-align:right;">
-                        <strong>KES ${t.amount.toLocaleString()}</strong><br>
-                        ${statusHtml}
-                        <button class="btn btn-sm" style="padding:2px 6px; margin-top:4px;" onclick="window.markInvoicePaid(${t.batchId}, ${t.id})">Mark Paid</button>
-                    </div>
-                </div>
-            `}).join('');
-        }
+        const ar = await dashboardArController.load(window.USER_ROLE);
+        if (ar.status !== 'stale') renderDashboardAr(arListEl, ar);
     }
 
     lucide.createIcons();
-};
-
-window.markInvoicePaid = async function(batchId, txId) {
-    if (!confirm('Mark this invoice as paid?')) return;
-    const txs = await api.getTransactions(batchId);
-    const idx = txs.findIndex(t => t.id === txId);
-    if (idx >= 0) {
-        txs[idx].status = 'paid';
-        await api.saveTransaction(batchId, txs[idx]);
-    }
 };
 
 window.deleteProposal = async function(id) {

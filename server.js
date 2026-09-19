@@ -62,6 +62,11 @@ const transactionPersistence = require('./services/transaction-persistence');
 const { registerTransactionPersistenceApi } = require('./services/transaction-persistence-http');
 const ledgerReporting = require('./services/ledger-reporting');
 const { handleE2ETestSeedFailure } = require('./services/e2e-test-seed-policy');
+const { isLegacyDarajaEntityKey } = require('./services/legacy-daraja-credentials');
+const batchDeletionService = require('./services/batch-deletion');
+const { registerBatchDeletionApi } = require('./services/batch-deletion-http');
+const lifecycleSimulation = require('./services/lifecycle-simulation');
+const { registerLifecycleSimulationApi } = require('./services/lifecycle-simulation-http');
 
 /**
  * Computes the Temperature-Humidity Index (THI) for poultry welfare assessment.
@@ -213,6 +218,14 @@ app.get('/js/:file', (req, res) => {
     res.sendFile(path.join(__dirname, 'js', req.params.file));
 });
 
+// Container orchestration needs an unauthenticated readiness response that is
+// distinct from the authenticated per-batch health record API below. This route
+// is registered before static/fallback handling and the server binds only after
+// dbReady resolves, so a 200 proves the app has completed its startup boundary.
+app.get('/api/healthz', (req, res) => {
+    res.status(200).json({ status: 'ok' });
+});
+
 // Expose public folder static files with hidden dotfiles blocked
 app.use(express.static(__dirname, { index: 'index.html', dotfiles: 'deny' }));
 
@@ -334,6 +347,11 @@ registerCustomerRefundApi(app, { refundService: customerRefundService, requireRo
 registerCustomerRegistryApi(app, { customerService: customerRegistryService, requireRole });
 registerLegacyCustomerBootstrapApi(app, { bootstrapService: legacyCustomerBootstrapService, requireRole });
 registerTransactionPersistenceApi(app, { transactionPersistence, requireRole });
+registerBatchDeletionApi(app, { batchDeletionService, requireRole, requireConfirm });
+registerLifecycleSimulationApi(app, {
+    simulationService: lifecycleSimulation.createLifecycleSimulationService(),
+    requireRole
+});
 
 const {
     getEATDate,
@@ -384,6 +402,9 @@ async function setEntityValue(key, val) {
  */
 app.get('/api/entities/:key', requireAuth, async (req, res) => {
     try {
+        if (isLegacyDarajaEntityKey(req.params.key)) {
+            return res.status(404).json({ error: 'Entity key not available.' });
+        }
         const row = await getQuery('SELECT value FROM entities WHERE key = ?', [req.params.key]);
         let data = row ? JSON.parse(row.value) : null;
         if (req.params.key === 'poultryFarmProfile' && data) {
@@ -415,6 +436,9 @@ app.get('/api/entities/:key', requireAuth, async (req, res) => {
  */
 app.post('/api/entities/:key', requireRole('super_admin', 'admin', 'farmer'), validateBody, async (req, res) => {
     try {
+        if (isLegacyDarajaEntityKey(req.params.key)) {
+            return res.status(404).json({ error: 'Entity key not available.' });
+        }
         let valueToSave = req.body.value;
 
         if (req.params.key === 'poultryFarmProfile') {
@@ -522,37 +546,6 @@ app.post('/api/batches', requireRole('super_admin', 'admin', 'farmer'), validate
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-/**
- * DELETE /api/batches/:id
- * Deletes a specific batch and purges all logs, transactions, and health records linked to it.
- */
-app.delete('/api/batches/:id', requireRole('super_admin', 'admin'), async (req, res) => {
-    try {
-        const id = normalizeId(req.params.id);
-        await runQuery('DELETE FROM batches WHERE id = ? OR id = ?', [id, id + '.0']);
-        // Cascade delete all operational logs for this batch
-        await runQuery('DELETE FROM logs WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
-        await runQuery('DELETE FROM transactions WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
-        await runQuery('DELETE FROM health_logs WHERE batch_id = ? OR batch_id = ?', [id, id + '.0']);
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * DELETE /api/batches
- * Bulk clears all batch records and operational logs. Requires safety confirmation header.
- */
-app.delete('/api/batches', requireRole('super_admin', 'admin'), requireConfirm, async (req, res) => {
-    try {
-        await runQuery('DELETE FROM batches');
-        await runQuery('DELETE FROM logs');
-        await runQuery('DELETE FROM transactions');
-        await runQuery('DELETE FROM health_logs');
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 
 // ===================== SNAPSHOTS =====================
 

@@ -2,7 +2,7 @@
 #
 # Usage:
 #   Production (OCI):  docker compose up -d --pull always --force-recreate poultry-dss
-#   Local development: comment `image:` line, uncomment `build:` block, then: docker compose up -d
+#   Local source build: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 
 services:
   poultry-dss:
@@ -12,14 +12,9 @@ services:
     # instructs OCI to pull it. OCI (Ampere A1, ARM64) automatically selects
     # the native arm64 layer from the manifest — no emulation overhead.
     #
-    # For local development: comment this line and uncomment the build block
-    # below to build the image directly from the local Dockerfile.
-    # image: ghcr.io/kelvitz716/poultryproject:latest
-
-    # ── Local development build (alternative to the image: line above) ─────
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Local source builds belong in docker-compose.dev.yml. Keeping production
+    # image-only ensures the CI deployment actually runs the image it pulled.
+    image: ghcr.io/kelvitz716/poultryproject:latest
 
     container_name: poultry-dss
 
@@ -34,6 +29,15 @@ services:
     # `always` ensures the container restarts automatically after an OCI
     # instance reboot or Docker daemon restart.
     restart: always
+
+    # A real JSON readiness endpoint, not the SPA fallback. The process only
+    # binds after SQLite schema initialization has completed.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:80/api/healthz').then(r => r.json()).then(b => { if (b.status !== 'ok') process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
     # ── Volumes ────────────────────────────────────────────────────────────
     # Bind-mounts the host ./data directory to /app/data inside the container.

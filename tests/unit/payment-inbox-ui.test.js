@@ -199,9 +199,12 @@ test('Payment Inbox decision gates, duplicate customer identities, acknowledgeme
     const rejectionForm = descendants(rejectionDetail, 'form')[0];
     const note = descendants(rejectionForm, 'textarea')[0];
     const confirmation = descendants(rejectionForm, 'input')[0];
+    const rejectionButton = descendants(rejectionForm, 'button')[0];
+    assert.equal(rejectionButton.disabled, true);
     note.value = 'QWE123ABC Confirmed. Ksh1,250.50 received from JANE DOE 0712345678.';
     confirmation.checked = true;
     confirmation.listeners.change();
+    assert.equal(rejectionButton.disabled, false);
     rejectionForm.listeners.submit({ preventDefault() {} });
     assert.equal(note.value, '');
     assert.equal(rejectedRawNoteMessage, true);

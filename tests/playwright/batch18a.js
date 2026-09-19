@@ -77,8 +77,8 @@ async function waitForHealth(origin, child) {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) fail('Disposable app exited before its health check');
     try {
-      const response = await fetch(`${origin}/api/health`);
-      if (response.ok) return;
+      const response = await fetch(`${origin}/api/healthz`);
+      if (response.ok && (await response.json()).status === 'ok') return;
     } catch { /* The listener is still starting. */ }
     await new Promise(resolve => setTimeout(resolve, 100));
   }

@@ -1,6 +1,39 @@
 import { requestCustomerJson, requestTransactionJson } from './customer-ui-model.mjs';
 import { requestPaymentImportJson } from './payment-inbox-model.mjs';
 
+export class CockpitReadError extends Error {
+    constructor(message, { path, status = null, cause } = {}) {
+        super(message, cause === undefined ? undefined : { cause });
+        this.name = 'CockpitReadError';
+        this.path = path;
+        this.status = Number.isInteger(status) ? status : null;
+    }
+}
+
+/**
+ * Strict read contract for the batch cockpit. Unlike legacy list helpers,
+ * cockpit reads must not turn an unavailable backend into believable empty data.
+ */
+export async function requestCockpitReadJson(fetchImpl, path) {
+    let response;
+    try {
+        response = await fetchImpl(path);
+    } catch (cause) {
+        throw new CockpitReadError(`Cockpit data request is unavailable for ${path}`, { path, cause });
+    }
+    if (!response.ok) {
+        throw new CockpitReadError(`Cockpit data request failed (${response.status || 'unknown status'}) for ${path}`, {
+            path,
+            status: response.status
+        });
+    }
+    try {
+        return await response.json();
+    } catch (cause) {
+        throw new CockpitReadError(`Cockpit data response is invalid for ${path}`, { path, status: response.status, cause });
+    }
+}
+
 /**
  * @file api.js
  * @description Frontend API client wrapper library. Encapsulates all backend REST interactions
@@ -273,6 +306,12 @@ export const api = {
         }
     },
 
+    // These strict variants are reserved for the cockpit error boundary.
+    // A successful empty array remains valid; failed reads reject for visibility.
+    async getCockpitLogs(bId) {
+        return requestCockpitReadJson(fetch, '/api/logs/' + bId);
+    },
+
     /**
      * Saves a daily record log entry (feed intake, eggs collected, mortality) for a batch.
      * @param {string} bId - Unique ID of the batch.
@@ -301,6 +340,10 @@ export const api = {
         }
     },
 
+    async getCockpitTransactions(bId) {
+        return requestCockpitReadJson(fetch, '/api/transactions/' + bId);
+    },
+
     /**
      * Saves a transaction log (revenue or cost) for a batch.
      * @param {string} bId - Unique ID of the batch.
@@ -324,6 +367,10 @@ export const api = {
             const r = await fetch('/api/ledger/accounts');
             return r.ok ? await r.json() : [];
         } catch (e) { return []; }
+    },
+
+    async getCockpitLedgerAccounts() {
+        return requestCockpitReadJson(fetch, '/api/ledger/accounts');
     },
 
     /**
@@ -358,6 +405,13 @@ export const api = {
         await fetch('/api/transactions/' + bId, {
             method: 'DELETE'
         });
+    },
+
+    /** Runs the server-owned disposable lifecycle fixture, when explicitly enabled. */
+    async runLifecycleSimulation(bId) {
+        const response = await fetch('/api/simulator/lifecycle/' + encodeURIComponent(bId), { method: 'POST' });
+        if (!response.ok) throw new Error('Lifecycle simulation is unavailable');
+        return response.json();
     },
 
     /**
@@ -422,6 +476,10 @@ export const api = {
         } catch (e) {
             return [];
         }
+    },
+
+    async getCockpitHealthLogs(bId) {
+        return requestCockpitReadJson(fetch, '/api/health/' + bId);
     },
 
     /**
@@ -573,6 +631,10 @@ export const api = {
             const r = await fetch(`/api/staging/${batchId}/today`);
             return r.ok ? await r.json() : null;
         } catch (e) { return null; }
+    },
+
+    async getCockpitTodayStaging(batchId) {
+        return requestCockpitReadJson(fetch, `/api/staging/${batchId}/today`);
     },
 
 
@@ -806,7 +868,9 @@ export const api = {
             if (window.currentBatchId && typeof window.refreshCockpitData === 'function') {
                 const batches = typeof window.getBatches === 'function' ? window.getBatches() : [];
                 const batch = batches.find(b => String(b.id) === String(window.currentBatchId));
-                if (batch) window.refreshCockpitData(batch);
+                if (batch && typeof window.refreshCockpitSafely === 'function') {
+                    void window.refreshCockpitSafely(batch, 'offline queue replay');
+                }
             }
         } catch (e) {
             console.error('[api] Error replaying offline queue:', e.message);

@@ -68,14 +68,15 @@ See [`docs/`](./docs/) for full technical specifications.
 ### Option 1 — Docker (Recommended for production)
 
 ```bash
-# Pull the pre-built image and start the stack
+# 1. Copy .env.example to .env and set a strong, non-empty SESSION_SECRET.
+# 2. Pull the CI-built image and start the stack.
+docker compose pull
 docker compose up -d
 ```
 
 Access the app at **http://localhost:8089**
 
-> The `docker-compose.yml` references the pre-built `ghcr.io/kelvitz716/poultryproject:latest` image.
-> For local development with live code changes, comment the `image:` line and uncomment `build:`.
+> The production compose file references the pre-built `ghcr.io/kelvitz716/poultryproject:latest` image. For a local source build, use `docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d`.
 
 ### Option 2 — Node.js (Local development)
 
@@ -96,8 +97,11 @@ Access the app at **http://localhost:80** (or set `PORT=8089` in your `.env`).
 Create a `.env` file in the project root (never commit this file):
 
 ```ini
-# Server
+# Server (use port 80 inside the container; Compose exposes it on host port 8089)
 PORT=80
+
+# Required: generate a strong value, for example with Node's crypto.randomBytes.
+SESSION_SECRET=replace-with-a-strong-secret
 
 # Tuya IoT Sensor Integration (optional — app works without it)
 TUYA_CLIENT_ID=your_client_id_here
@@ -222,6 +226,37 @@ It rejects supplied target origins, copies the app to a temporary directory, and
 uses a generated loopback-only test server. See
 [the coverage matrix](docs/PLAYWRIGHT-COVERAGE-MATRIX.md) for the current
 auth/navigation scope and later workflow coverage.
+
+Run `npm run test:playwright:batch18b2` for the isolated operational evidence
+suite. It exercises batch setup, one inventory adjustment, one feed purchase,
+and one walk-in manure sale as separate writable workflows. Each writable workflow
+records the exact pre-submit API state, expected POST status, and durable API
+readback before and after reload. The closure guard is a non-writable safety
+case only; it proves no API request, no modal, and the fail-closed return
+contract. Evidence is written outside the worktree under
+`../evidence/playwright/batch18b2/<run-id>/`.
+
+Run `npm run test:playwright:batch18c1` for isolated finance evidence. It uses
+the same copied-app, generated-credential, loopback-only boundary and refuses
+targets. The suite creates a disposable named customer through Settings, pastes
+a synthetic clean M-Pesa message through Payment Inbox, then explicitly
+approves that import for the customer. Each workflow records default, filled,
+and submitted UI evidence; a pre-submit GET; the expected POST status; and
+immediate and reload readbacks. Approval additionally proves one unallocated
+M-Pesa payment credit in an exact settlement snapshot—never an invoice,
+allocation, sale, credit note, refund, or rejection. Before its copied server
+starts, it records that copied source tree's deterministic SHA-256 in both
+`results.json` and the evidence manifest under
+`../evidence/playwright/batch18c1/<run-id>/`.
+
+Run `npm run test:playwright:batch18c2` for isolated Payment Inbox rejection
+evidence. It pastes a synthetic clean M-Pesa message through the visible UI,
+then rejects it through the visible admin form with a short safe review note.
+Both workflows capture the three UI states, expected POST, immediate durable
+readback, and reload equality. Rejection must preserve reviewer attribution
+while creating neither a customer-account event nor ledger accounting. Its
+copied source tree is SHA-256-attested before the disposable loopback server
+starts; evidence is written under `../evidence/playwright/batch18c2/<run-id>/`.
 
 ---
 

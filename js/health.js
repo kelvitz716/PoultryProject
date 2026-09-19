@@ -210,7 +210,7 @@ window.openHealthModal = function(type) {
             await window.renderHealthTable(bid);
             
             const batch = store.allBatches.find(b => String(b.id) === String(bid));
-            if (batch && window.refreshCockpitData) window.refreshCockpitData(batch);
+            if (batch && window.refreshCockpitSafely) void window.refreshCockpitSafely(batch, 'health log save');
         } catch (err) {
             console.error('Error saving health log:', err);
             window.showToast('Failed to save health log.', 'danger');

@@ -249,7 +249,7 @@ function appendDecisionControls(container, paymentImport, options, documentRef) 
         submit.style.marginTop = '10px';
         submit.textContent = 'Reject evidence';
         submit.disabled = true;
-        const updateReady = () => { submit.disabled = confirmation.checked === true; };
+        const updateReady = () => { submit.disabled = confirmation.checked !== true; };
         confirmation.addEventListener('change', updateReady);
         form.addEventListener('submit', event => {
             event.preventDefault();

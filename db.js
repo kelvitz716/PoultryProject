@@ -15,6 +15,7 @@ const { migrateManualCustomerReceipts } = require('./migrations/manual-customer-
 const { migrateCustomerCreditNotes } = require('./migrations/customer-credit-notes');
 const { migrateCustomerRefunds } = require('./migrations/customer-refunds');
 const { createDedicatedTransactionBoundary } = require('./services/sqlite-transaction');
+const { purgeLegacyDarajaCredentials } = require('./services/legacy-daraja-credentials');
 
 // Ensure that the 'data' directory exists inside the project root directory
 const dataDir = path.join(__dirname, 'data');
@@ -23,7 +24,11 @@ if (!fs.existsSync(dataDir)) {
 }
 
 // Establish connection to the persistent SQLite database
-const dbPath = path.join(dataDir, 'poultry.db');
+// A test harness may provide an isolated absolute database file. Production
+// keeps the project-local default; callers never select a database by request.
+const dbPath = process.env.DATABASE_PATH && path.isAbsolute(process.env.DATABASE_PATH)
+    ? path.resolve(process.env.DATABASE_PATH)
+    : path.join(dataDir, 'poultry.db');
 
 /**
  * Module-level db reference. Set synchronously when the connection opens.
@@ -272,6 +277,7 @@ function initializeDatabase(db, resolve, reject) {
                 migrateTableColumn(db, 'staging', 'logged_by', 'TEXT')
                     .then(() => migrateTableColumn(db, 'health_logs', 'logged_by', 'TEXT'))
                     .then(() => migrateTableColumn(db, 'logs', 'logged_by', 'TEXT'))
+                    .then(() => purgeLegacyDarajaCredentials(db))
                     .then(() => migrateCustomerSettlement(db))
                     .then(() => migratePaymentImports(db))
                     .then(() => migrateLedgerMinorUnits(db))
@@ -365,6 +371,7 @@ module.exports = {
     runQuery,
     allQuery,
     getQuery,
+    databasePath: dbPath,
     withDedicatedTransaction,
     withDedicatedReadTransaction
 };

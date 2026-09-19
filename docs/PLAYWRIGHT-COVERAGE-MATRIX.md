@@ -11,10 +11,12 @@ records.
 | Settings user management and role visibility | 18A | Creates disposable farmer/viewer/admin users through Settings |
 | Batch/proposal setup, including Watering Strategy | 18B1 core operations | Three-state evidence: default, filled-not-submitted, and persisted batch after submission/reload |
 | Today's Log: eggs, feed, mortality, temperature/humidity, gases, notes | 18B1 core operations | Separate egg-collection and daily-log workflows; both prove no pre-submit write and durable reload readback |
-| Inventory, purchases, and sales | Later 18B core operations | Navigation only; no operational action executed |
+| Inventory adjustment, feed purchase, and walk-in manure sale | 18B2 operational evidence | Separate writable workflows: exact pre-submit GET state, expected POST status, three distinct primary screenshots, durable API readback, reload, and matching durable readback |
+| Batch closure | 18B2 safety guard | Non-writable only: fail-closed return contract, zero API requests, no closure modal; not a three-state or persistence claim |
 | Documentation and analytics | 18B core operations | Navigation only |
-| Customer registry/bootstrap | 18B core operations | No registry mutation |
-| Payment Inbox list, manual paste, approve/reject | 18C finance | Role/navigation and protected-route checks only |
+| Customer registry/bootstrap | 18C.1 finance | Disposable named customer creation through Settings, exact pre-submit GET, POST status, and reload readback |
+| Payment Inbox manual paste and explicit approval | 18C.1 finance | Disposable clean manual M-Pesa import, then explicit named-customer approval as one unallocated M-Pesa credit; no invoice payment or allocation |
+| Payment Inbox manual paste and explicit rejection | 18C.2 finance | Disposable clean manual M-Pesa import, then explicit admin rejection with bounded review note, reviewer attribution, and no customer-account or ledger accounting side effects |
 | Customer settlement timeline, receipt, allocation/reversal, credit note, refund | 18C finance | Role/navigation and protected-route checks only |
 | Android SMS forwarder webhook and external notification/integration services | Out of scope external integration | Not exercised in browser harness |
 
@@ -46,3 +48,52 @@ Each writable workflow produces exactly three primary screenshots named
 reload and persistence readback, and its trace records the full interaction.
 Evidence is written outside the worktree in
 `../evidence/playwright/batch18b1/<run-id>/`.
+
+## Running Batch 18B2
+
+Run `npm run test:playwright:batch18b2`. It retains the same disposable-copy,
+generated-credential, loopback-only boundary as Batch 18A and rejects target
+origins. Its evidence root is `../evidence/playwright/batch18b2/<run-id>/`.
+
+The four writable workflows are deliberately separate: batch setup, inventory
+adjustment, feed purchase, and walk-in manure sale. Each captures default, filled, and
+submitted states, verifies its own pre-submit GET, POST status, immediate API
+readback, reload, and matching readback. The closure guard is intentionally
+non-writable and only records truthful safety evidence; it is excluded from
+those writable workflow claims.
+
+## Running Batch 18C.1
+
+Run `npm run test:playwright:batch18c1`. It copies the app to a unique temporary
+directory, generates the initial credentials, listens only on loopback, and
+refuses any command-line or configured target. It creates one disposable named
+customer only through the Settings UI, captures one synthetic clean manual
+M-Pesa receipt through the Payment Inbox UI, then uses the visible approval
+form to assign it to that customer.
+
+Each of those three writable workflows captures default, filled, and submitted
+states; its pre-submit GET; expected POST status; immediate durable readback;
+and exact readback after reload. The final settlement assertion requires a
+single open `payment` credit with `method: mpesa`, zero allocation, zero debit,
+and the receipt amount as remaining credit. It therefore makes no invoice,
+receipt allocation, credit-note, refund, rejection, or sale claim. Before the
+copied server starts, the harness records a deterministic SHA-256 digest of its
+copied source tree in `copied-app-source-tree.json`, `results.json`, and
+`evidence-manifest.json`. Evidence is written outside the worktree in
+`../evidence/playwright/batch18c1/<run-id>/`.
+
+## Running Batch 18C.2
+
+Run `npm run test:playwright:batch18c2`. It has the same copied-app,
+generated-credential, loopback-only boundary and refuses a target URL. It uses
+the Payment Inbox UI to paste one synthetic clean M-Pesa receipt, then opens
+the visible rejection form, enters a short safe review note, confirms the
+decision, and submits it as the generated admin.
+
+Both writable workflows capture default, filled, and submitted states; exact
+pre-submit GETs; expected POST status; immediate durable readback; and reload
+equality. The rejection readback requires terminal `rejected` status and the
+admin reviewer ID, while proving there is still no customer account and no
+change to ledger accounts. Evidence is written outside the worktree in
+`../evidence/playwright/batch18c2/<run-id>/`, with a copied-source SHA-256
+captured before the temporary server starts.

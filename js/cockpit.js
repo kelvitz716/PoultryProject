@@ -6,7 +6,7 @@
  * Note: Analytics rendering is managed by the main app shell (js/app.js) via the global window.renderAnalytics function.
  */
 
-import { api } from './api.js';
+import { api, CockpitReadError } from './api.js';
 import { store } from './store.js';
 import {
     ISA_BROWN_CONSTANTS,
@@ -41,7 +41,7 @@ window.markLitterChanged = function() {
     store.farmProfile.litterLastChanged = new Date().toISOString();
     store.saveFarmProfile(store.farmProfile);
     const batch = window.getBatches().find(b => String(b.id) === String(store.currentBatchId));
-    if (batch) window.refreshCockpitData(batch);
+    if (batch) void window.refreshCockpitSafely(batch, 'litter update');
 };
 
 window.openBatchCockpit = async function(id) {
@@ -54,7 +54,14 @@ window.openBatchCockpit = async function(id) {
     const isFarmer = window.USER_ROLE === 'farmer';
     const isViewer = window.USER_ROLE === 'viewer';
     
-    const logs = await api.getLogs(id);
+    let logs;
+    try {
+        logs = await api.getCockpitLogs(id);
+    } catch (error) {
+        console.error('[openBatchCockpit] Header read failed:', error);
+        showToast('Cockpit could not open. Retry when the batch data service is available.', 'error');
+        throw error;
+    }
     const dayCount = logs.length;
     const targetDays = batch.type === 'layer' ? 504 : 42;
     const progressPercent = Math.min(100, (dayCount / targetDays) * 100);
@@ -150,8 +157,8 @@ window.openBatchCockpit = async function(id) {
                 <i data-lucide="edit-2" style="width:10px;height:10px;margin-left:4px;opacity:0.6;"></i>
             </div>
             <div class="info-chip"><i data-lucide="package" style="width:14px;height:14px;"></i> Feed: <strong id="info-feed">0 kg</strong></div>
-            <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash: <strong id="info-cash">${isFarmer ? 'KES —' : 'KES 0'}</strong></div>
-            <div class="info-chip"><i data-lucide="wallet" style="width:14px;height:14px;"></i> Credit: <strong id="info-credit">KES 0</strong></div>
+            <div class="info-chip" title="Farm ledger cash plus this batch's opening capital only when the farm ledger has no entries."><i data-lucide="wallet" style="width:14px;height:14px;"></i> Cash (farm ledger + this batch opening capital when ledger empty): <strong id="info-cash">${isFarmer || isViewer ? 'KES —' : 'KES 0'}</strong></div>
+            <div class="info-chip" title="Farm-wide receivables balance; it is not limited to this batch."><i data-lucide="wallet" style="width:14px;height:14px;"></i> Farm credit: <strong id="info-credit">${isViewer ? 'KES —' : 'KES 0'}</strong></div>
             <div class="info-chip"><i data-lucide="egg" style="width:14px;height:14px;"></i> Total: <strong id="info-totaleggs">0</strong> <span id="info-unsoldeggs" style="font-size:11px; margin-left:4px;">(0 in stock)</span></div>
             <div class="info-chip" style="cursor:pointer;" onclick="window.showEggLossModal()" title="Click to view Egg Loss & Reconciliation details">
                 <i data-lucide="alert-triangle" style="width:14px;height:14px;color:var(--danger, #ef4444);"></i> 
@@ -376,7 +383,7 @@ window.openBatchCockpit = async function(id) {
     })();
 
     window.switchView('batch-cockpit');
-    window.refreshCockpitData(batch);
+    void window.refreshCockpitSafely(batch, 'initial cockpit load');
 };
 
 window.simulateLifecycle = async function(batchId) {
@@ -406,7 +413,7 @@ window.simulateLifecycle = async function(batchId) {
             <ul style="font-size:13px; color:var(--text-muted); margin:0 0 20px 0; padding-left:20px; line-height:1.8;">
                 <li>Days 1–30: Rearing phase (no egg production)</li>
                 <li>Days 31–60: Laying phase (~85–95% lay rate)</li>
-                <li>Random mortality simulation (~5% daily chance)</li>
+                <li>Scheduled fixture mortality on days 17, 34, and 51</li>
                 <li>Feed sack consumption every 5 days</li>
             </ul>
             <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:10px 12px; margin-bottom:20px; font-size:12px; color:#f87171; display:flex; gap:8px; align-items:flex-start;">
@@ -431,58 +438,12 @@ window.simulateLifecycle = async function(batchId) {
     document.getElementById('sim-confirm-btn').addEventListener('click', async () => {
         document.body.removeChild(confirmModal);
 
-        let logs = [];
-
-        await api.clearLogs(batchId);
-        await api.clearTransactions(batchId);
-
-        await api.saveTransaction(batchId, {
-            id: Date.now(), date: new Date(Date.now() - 65 * 86400000).toISOString(),
-            type: 'purchase', category: 'feed', qty: 1000, unitPrice: 70,
-            amount: 70000, notes: 'Initial Simulation Feed Stock'
-        });
-
-        const now = new Date();
-        let birdCount = batch.size;
-        const saleTxsToSave = [];
-
-        for (let i = 60; i >= 1; i--) {
-            const date = new Date(now.getTime() - i * 86400000);
-            const isLayingPhase = i < 30;
-            
-            if (Math.random() < 0.05) birdCount = Math.max(0, birdCount - 1);
-
-            const eggs = isLayingPhase ? Math.round(birdCount * (0.85 + Math.random() * 0.1)) : 0;
-            const morning = Math.floor(eggs * 0.6);
-            const evening = Math.floor(eggs * 0.3);
-            const other = eggs - morning - evening;
-            const sacks = (i % 5 === 0) ? 2 : 0;
-
-            logs.push({
-                date: date.toISOString().split('T')[0],
-                birds: birdCount, morning, evening, other,
-                eggs, sacks, feedGiven: 0,
-                notes: isLayingPhase ? 'Peak production activity' : 'Rearing phase'
-            });
-            
-            if (isLayingPhase && eggs > 0) {
-                saleTxsToSave.push({
-                    id: Date.now() + i + Math.random(),
-                    date: date.toISOString(),
-                    type: 'sale', category: 'eggs',
-                    qty: eggs, rawQty: Math.floor(eggs / 30), rawUnit: 'trays',
-                    amount: eggs * 15,
-                    notes: 'Simulated Daily Sale'
-                });
-            }
+        try {
+            await api.runLifecycleSimulation(batchId);
+            window.openBatchCockpit(batchId);
+        } catch (error) {
+            alert('Lifecycle simulation is available only in an explicitly configured disposable test environment.');
         }
-
-        for (const l of logs) await api.saveLog(batchId, l);
-        for (const t of saleTxsToSave) await api.saveTransaction(batchId, t);
-
-        batch.stats.birdsAlive = birdCount;
-        await window.updateBatch(batch);
-        window.openBatchCockpit(batchId);
     });
 };
 
@@ -574,7 +535,7 @@ window.deleteStagingItem = async function(id, type) {
     if (res.success) {
         window.showToast('Staged item deleted.', 'success');
         const batch = window.getBatches().find(b => String(b.id) === String(bid));
-        if (batch) window.refreshCockpitData(batch);
+        if (batch) void window.refreshCockpitSafely(batch, 'staged-item deletion');
     } else {
         window.showToast(res.error || 'Failed to delete staged item.', 'danger');
     }
@@ -779,7 +740,7 @@ window.submitDailyLog = async function(event) {
     const btn = document.querySelector('.btn-save-log');
     if (btn) { btn.textContent = '✓ Saved!'; btn.disabled = true; setTimeout(() => { btn.innerHTML = '<i data-lucide="save"></i> Save Log'; btn.disabled = false; lucide.createIcons(); }, 1800); }
 
-    window.refreshCockpitData(batch);
+    void window.refreshCockpitSafely(batch, 'log save');
     window.showToast(isBackfill ? `Backfill for ${date} submitted.` : 'Log saved!', 'success');
 };
 
@@ -813,10 +774,17 @@ window.refreshCockpitData = async function(batch) {
     try {
     if (!batch) return;
     const [logs, txs, healthLogs, stagingToday] = await Promise.all([
-        api.getLogs(batch.id),
-        api.getTransactions(batch.id),
-        api.getHealthLogs(batch.id),
-        api.getTodayStaging(batch.id).catch(() => null)
+        api.getCockpitLogs(batch.id),
+        api.getCockpitTransactions(batch.id),
+        api.getCockpitHealthLogs(batch.id),
+        api.getCockpitTodayStaging(batch.id).catch(error => {
+            // A missing draft is optional. Auth, network, and server failures remain visible.
+            if (error instanceof CockpitReadError && error.status === 404) {
+                console.warn('[refreshCockpitData] Optional staging overlay is absent; continuing without it.', error);
+                return null;
+            }
+            throw error;
+        })
     ]);
     
     const kpis = computeKPIs(logs, txs, batch, store.farmProfile, stagingToday);
@@ -900,12 +868,13 @@ window.refreshCockpitData = async function(batch) {
     if($('info-totaleggs')) $('info-totaleggs').innerText = kpis.totalEggs.toLocaleString();
 
     const initialCash = batch.assumptions?.workingCapital || 0;
-    const accounts = await api.getLedgerAccounts();
-    const ledgerDisplay = deriveCockpitLedgerDisplay({
-        accounts,
-        initialCash,
-        isFarmer: window.USER_ROLE === 'farmer'
-    });
+    const ledgerDisplay = window.USER_ROLE === 'viewer'
+        ? { liquid_cash: null, outstanding_credit: null, cash_text: 'KES —', credit_text: 'KES —' }
+        : deriveCockpitLedgerDisplay({
+            accounts: await api.getCockpitLedgerAccounts(),
+            initialCash,
+            isFarmer: window.USER_ROLE === 'farmer'
+        });
     const liquidCash = ledgerDisplay.liquid_cash;
 
     if($('info-cash')) {
@@ -1110,7 +1079,25 @@ window.refreshCockpitData = async function(batch) {
     if (window.renderHealthTable) await window.renderHealthTable(batch.id);
     await window.updateLiveSensorWidget();
     } catch (err) {
-        console.error('[refreshCockpitData] Render error (non-fatal):', err);
+        console.error('[refreshCockpitData] Refresh failed:', err);
+        showToast('Cockpit refresh failed. Displayed figures may be stale; retry the refresh.', 'error');
+        throw err;
+    }
+};
+
+// Event handlers may refresh opportunistically. Preserve the raw rejection above
+// for awaiters, while recording a handled result for fire-and-forget UI paths.
+window.refreshCockpitSafely = async function(batch, source = 'unspecified') {
+    try {
+        await window.refreshCockpitData(batch);
+        const result = { ok: true, source };
+        window.lastCockpitRefreshResult = result;
+        return result;
+    } catch (error) {
+        console.error(`[refreshCockpitSafely] ${source} failed:`, error);
+        const result = { ok: false, source, error };
+        window.lastCockpitRefreshResult = result;
+        return result;
     }
 };
 
@@ -1842,7 +1829,7 @@ function renderHistoryTable(logs, txs = []) {
     
     if (events.length > window.currentHistoryLimit) {
         const remaining = events.length - window.currentHistoryLimit;
-        container.innerHTML += `<div style="padding:12px; text-align:center;"><button class="btn btn-secondary btn-sm" onclick="window.currentHistoryLimit += 10; const b = getBatches().find(x => x.id === currentBatchId); if(b) refreshCockpitData(b);">Load More (${remaining} remaining)</button></div>`;
+        container.innerHTML += `<div style="padding:12px; text-align:center;"><button class="btn btn-secondary btn-sm" onclick="window.currentHistoryLimit += 10; const b = getBatches().find(x => x.id === currentBatchId); if(b) void window.refreshCockpitSafely(b, 'history pagination');">Load More (${remaining} remaining)</button></div>`;
     }
 }
 
@@ -1955,7 +1942,7 @@ window.openCSVImportModal = async function(batchId) {
                 }
                 document.body.removeChild(modal);
                 const batch = window.getBatches().find(b => b.id === batchId);
-                window.refreshCockpitData(batch);
+                void window.refreshCockpitSafely(batch, 'CSV import');
             };
         };
         reader.readAsText(file);
@@ -2006,7 +1993,7 @@ window.openBackfillModal = async function(batchId) {
         }
         try { document.body.removeChild(modal); } catch(e){}
         const batch = window.getBatches().find(b => String(b.id) === String(batchId));
-        if (batch) window.refreshCockpitData(batch);
+        if (batch) void window.refreshCockpitSafely(batch, 'bulk log save');
     };
 };
 
@@ -2055,7 +2042,7 @@ window.showAdjustFlockModal = async function() {
         
         await window.updateBatch(batch);
         document.body.removeChild(modal);
-        window.refreshCockpitData(batch);
+        void window.refreshCockpitSafely(batch, 'flock baseline update');
         window.showToast('Flock baseline updated!', 'success');
     });
 };

@@ -342,7 +342,7 @@ window.openTxModal = async function(type, prefilledCategory = null, prefilledQty
         }
         
         document.body.removeChild(modal);
-        if (batch && window.refreshCockpitData) window.refreshCockpitData(batch);
+        if (batch && window.refreshCockpitSafely) void window.refreshCockpitSafely(batch, 'sale save');
     });
 };
 

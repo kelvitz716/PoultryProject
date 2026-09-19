@@ -9,9 +9,10 @@ WORKDIR /app
 
 # ── Install production dependencies ─────────────────────────────────────────
 # Copy manifests first to exploit Docker's layer cache:
-# if package.json hasn't changed, npm install is skipped on the next build.
+# if the manifest lock has not changed, npm ci is skipped on the next build.
 COPY package*.json ./
-RUN npm install --production
+# Install exactly the reviewed dependency graph captured in package-lock.json.
+RUN npm ci --omit=dev
 
 # ── Copy application source ──────────────────────────────────────────────────
 # Copies everything not excluded by .dockerignore (node_modules, data/, .env,

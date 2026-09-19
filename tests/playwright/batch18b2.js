@@ -17,7 +17,7 @@ const {
 } = require('./batch18a');
 
 const APP_ROOT = path.resolve(__dirname, '..', '..');
-const EVIDENCE_ROOT = path.resolve(APP_ROOT, '..', '..', 'evidence', 'playwright', 'batch18b1');
+const EVIDENCE_ROOT = path.resolve(APP_ROOT, '..', '..', 'evidence', 'playwright', 'batch18b2');
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 const WORKFLOW_STATES = Object.freeze([
   Object.freeze({ key: 'default', filename: '01-loaded.png' }),
@@ -113,8 +113,8 @@ async function waitForHealth(origin, child) {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) fail('Disposable app exited before its health check');
     try {
-      const response = await fetch(`${origin}/api/health`);
-      if (response.ok) return;
+      const response = await fetch(`${origin}/api/healthz`);
+      if (response.ok && (await response.json()).status === 'ok') return;
     } catch { /* listener is still starting */ }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
@@ -164,6 +164,26 @@ function attachGuards(page, origin) {
   return state;
 }
 
+async function collectApiRequestsDuring(page, origin, action) {
+  const requests = [];
+  const record = request => {
+    let url;
+    try { url = new URL(request.url()); } catch { return; }
+    if (url.origin === origin && url.pathname.startsWith('/api/')) {
+      requests.push(`${request.method()} ${url.pathname}`);
+    }
+  };
+
+  page.on('request', record);
+  try {
+    const result = await action();
+    await page.waitForLoadState('networkidle');
+    return { result, requests };
+  } finally {
+    page.off('request', record);
+  }
+}
+
 async function setupFirstRun(page, origin, username, password) {
   await page.goto(origin, { waitUntil: 'domcontentloaded' });
   await page.locator('#setup-username').waitFor({ state: 'visible' });
@@ -210,6 +230,10 @@ function expectedScreenshotRelativePaths(workflowName) {
   return WORKFLOW_STATES.map(state => path.join('screenshots', slug, state.filename));
 }
 
+function expectedSafetyScreenshotRelativePath(workflowName) {
+  return path.join('screenshots', workflowSlug(workflowName), '01-safety-guard.png');
+}
+
 function validateThreeStateScreenshots(runDir, workflowName, captured = null) {
   const expectedPaths = expectedScreenshotRelativePaths(workflowName);
   const screenshotDir = path.join(runDir, 'screenshots', workflowSlug(workflowName));
@@ -230,7 +254,32 @@ function validateThreeStateScreenshots(runDir, workflowName, captured = null) {
     const problem = requiredArtifactProblem('screenshot', path.join(runDir, relative));
     if (problem) return problem;
   }
+  const hashes = expectedPaths.map(relative => sha256(path.join(runDir, relative)));
+  if (new Set(hashes).size !== hashes.length) {
+    return 'writable workflow primary screenshots must not share a SHA-256 hash';
+  }
   return null;
+}
+
+function validateWorkflowEvidence({ runDir, workflowName, captured, readback, writable }) {
+  if (!writable) {
+    if (readback === null || readback === undefined) {
+      return 'non-writable safety case must return its safety observation';
+    }
+    const expected = expectedSafetyScreenshotRelativePath(workflowName);
+    if (JSON.stringify(captured) !== JSON.stringify([expected])) {
+      return `non-writable safety case must capture exactly one truthful safety screenshot: ${JSON.stringify(captured)}`;
+    }
+    return requiredArtifactProblem('screenshot', path.join(runDir, expected));
+  }
+  if (readback === null || readback === undefined) {
+    return 'writable workflow must return durable API readback evidence';
+  }
+  return validateThreeStateScreenshots(runDir, workflowName, captured);
+}
+
+function capturedEvidenceForWorkflow({ writable, captured, safetyScreenshots }) {
+  return writable ? captured : safetyScreenshots;
 }
 
 function stagingModuleCounts(summary) {
@@ -253,7 +302,7 @@ async function captureScreenshot(page, file, target) {
   }
 }
 
-async function runWorkflow(browser, runDir, origin, workflowName, body, results) {
+async function runWorkflow(browser, runDir, origin, workflowName, body, results, { writable = true } = {}) {
   const slug = workflowSlug(workflowName);
   const mediaDir = path.join(runDir, 'media', slug);
   fs.mkdirSync(mediaDir, { recursive: true });
@@ -267,6 +316,7 @@ async function runWorkflow(browser, runDir, origin, workflowName, body, results)
   const guard = attachGuards(page, origin);
   const expectedPaths = expectedScreenshotRelativePaths(workflowName);
   const captured = [];
+  const safetyScreenshots = [];
   const started = Date.now();
   let status = 'passed';
   let error = null;
@@ -274,6 +324,7 @@ async function runWorkflow(browser, runDir, origin, workflowName, body, results)
   const evidenceErrors = [];
 
   const capture = async (stateKey, target = null) => {
+    expect(writable, 'Non-writable safety cases cannot capture writable workflow screenshot states');
     const expectedState = WORKFLOW_STATES[captured.length];
     expect(expectedState && expectedState.key === stateKey,
       `Expected screenshot state ${expectedState?.key || 'none'}, received ${stateKey}`);
@@ -282,10 +333,21 @@ async function runWorkflow(browser, runDir, origin, workflowName, body, results)
     captured.push(relative);
   };
 
+  const captureSafety = async (target = null) => {
+    expect(!writable, 'Writable workflows must use the three-state screenshot contract');
+    expect(safetyScreenshots.length === 0, 'Safety case may capture only one truthful safety screenshot');
+    const relative = expectedSafetyScreenshotRelativePath(workflowName);
+    await captureScreenshot(page, path.join(runDir, relative), target);
+    const problem = requiredArtifactProblem('screenshot', path.join(runDir, relative));
+    expect(!problem, problem);
+    safetyScreenshots.push(relative);
+  };
+
   try {
     readback = await body({
       page,
       capture,
+      captureSafety,
       callApi: (pathname, options) => api(page, pathname, options)
     });
     expect(guard.pageErrors.length === 0, `Uncaught page errors: ${guard.pageErrors.join(' | ')}`);
@@ -299,7 +361,13 @@ async function runWorkflow(browser, runDir, origin, workflowName, body, results)
     error = caught?.message || String(caught);
   }
 
-  const screenshotProblem = validateThreeStateScreenshots(runDir, workflowName, captured);
+  const screenshotProblem = validateWorkflowEvidence({
+    runDir,
+    workflowName,
+    captured: capturedEvidenceForWorkflow({ writable, captured, safetyScreenshots }),
+    readback,
+    writable
+  });
   if (screenshotProblem) evidenceErrors.push(screenshotProblem);
 
   const trace = path.join(runDir, 'traces', `${slug}.zip`);
@@ -343,7 +411,9 @@ async function runWorkflow(browser, runDir, origin, workflowName, body, results)
     status,
     duration_ms: Date.now() - started,
     error,
-    screenshots: screenshotProblem ? [] : expectedPaths,
+    screenshots: writable && !screenshotProblem ? expectedPaths : [],
+    safety_screenshots: safetyScreenshots,
+    writable,
     trace: requiredArtifactProblem('trace', trace) ? null : path.relative(runDir, trace),
     video: requiredArtifactProblem('video', videoPath) ? null : path.relative(runDir, videoPath),
     readback,
@@ -359,7 +429,7 @@ function writeEvidence(runDir, results, startedAt, origin) {
   const completedAt = new Date().toISOString();
   const payload = {
     batch: '18B2',
-    scope: 'batch setup and daily farm records only',
+    scope: 'disposable operational evidence: batch setup, inventory adjustment, purchase, sale, and non-writable closure guard',
     started_at: startedAt,
     completed_at: completedAt,
     origin,
@@ -376,17 +446,20 @@ function writeEvidence(runDir, results, startedAt, origin) {
   const rows = results.map(result => {
     const screenshots = result.screenshots.map((file, index) =>
       `<a href="${escapeHtml(file)}">${escapeHtml(WORKFLOW_STATES[index].key)}</a>`).join(' · ');
+    const safety = result.safety_screenshots.map(file =>
+      `<a href="${escapeHtml(file)}">safety guard</a>`).join(' · ');
     const trace = result.trace ? `<a href="${escapeHtml(result.trace)}">trace</a>` : 'trace: missing';
     const video = result.video ? `<a href="${escapeHtml(result.video)}">video</a>` : 'video: missing';
     return `<tr><td>${escapeHtml(result.name)}</td><td>${escapeHtml(result.status)}</td>`
       + `<td>${result.duration_ms}</td><td>${result.error ? escapeHtml(result.error) : ''}</td>`
-      + `<td>${screenshots} · ${trace} · ${video}</td></tr>`;
+      + `<td>${screenshots || safety} · ${trace} · ${video}</td></tr>`;
   }).join('');
   fs.writeFileSync(path.join(runDir, 'report.html'), '<!doctype html><meta charset="utf-8">'
     + '<title>Batch 18B2</title><h1>Batch 18B2 isolated browser evidence</h1>'
     + `<p>Disposable loopback app: ${escapeHtml(origin)}</p>`
-    + '<p>Each writable workflow has default, filled-not-submitted, and submitted-confirmed screenshots. '
-    + 'Its video continues through reload and durable persistence readback.</p>'
+    + '<p>Each writable workflow has default, filled-not-submitted, and submitted-confirmed screenshots, '
+    + 'an exact pre-submit API state, expected POST status, and durable API readback before and after reload. '
+    + 'The closure guard is non-writable safety evidence and makes none of those writable claims.</p>'
     + '<table border="1"><thead><tr><th>Workflow</th><th>Status</th><th>ms</th><th>Error</th><th>Evidence</th></tr></thead>'
     + `<tbody>${rows}</tbody></table>`);
 
@@ -413,7 +486,7 @@ async function main() {
   assertSafeConfiguredOrigins();
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${safeId('run')}`;
   const runDir = path.join(EVIDENCE_ROOT, runId);
-  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-b18b1-'));
+  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-b18b2-'));
   const port = await allocatePort();
   const origin = `http://127.0.0.1:${port}`;
   const owner = { username: safeId('owner'), password: `${safeId('Pw')}Aa9!` };
@@ -539,20 +612,38 @@ async function main() {
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.locator('#auth-overlay').waitFor({ state: 'detached' });
       await openBatchThroughUi(page, `Batch: ${batchData.name}`);
-      const afterReload = (await callApi('/api/batches')).body;
-      expect(afterReload.length === 1 && String(afterReload[0].id) === batchId,
+      const afterReload = {
+        proposals: (await callApi('/api/proposals')).body,
+        batches: (await callApi('/api/batches')).body
+      };
+      expect(afterReload.batches.length === 1 && String(afterReload.batches[0].id) === batchId,
         'Created batch did not persist through reload');
+      assert.deepEqual(afterReload.proposals[0], afterSubmit.proposals[0],
+        'Created proposal must survive reload unchanged');
+      assert.deepEqual(afterReload.batches[0], afterSubmit.batches[0],
+        'Created batch must survive reload unchanged');
       return {
-        pre_submit: { proposals: beforeSubmit.proposals.length, batches: beforeSubmit.batches.length },
-        persisted_after_reload: { proposals: afterSubmit.proposals.length, batches: afterReload.length, batch_id: batchId },
-        watering_strategy: afterSubmit.proposals[0].inputs['prop-water-strategy']
+        pre_submit_get: beforeSubmit,
+        expected_posts: {
+          proposal: { path: '/api/proposals', status: proposalResponse.status() },
+          batch: { path: '/api/batches', status: batchResponse.status() }
+        },
+        durable_after_submit: {
+          proposal: afterSubmit.proposals[0],
+          batch: afterSubmit.batches[0]
+        },
+        durable_after_reload: {
+          proposal: afterReload.proposals[0],
+          batch: afterReload.batches[0]
+        }
       };
     }, results);
 
-    await runWorkflow(browser, runDir, origin, '02 inventory movements', async ({ page, capture }) => {
+    await runWorkflow(browser, runDir, origin, '02 inventory adjustment', async ({ page, capture, callApi }) => {
       await login(page, origin, owner.username, owner.password);
       await openBatchThroughUi(page, `Batch: ${batchData.name}`);
-      // Click the actual 'Log Write-off' button in the cockpit to ensure store.currentBatchId is set
+      const before = await callApi(`/api/transactions/${batchId}`);
+      expect(before.status === 200 && Array.isArray(before.body), 'Inventory pre-submit GET must succeed');
       await page.locator('button', { hasText: 'Log Write-off' }).click();
       await page.locator('#tx-modal').waitFor({ state: 'visible' });
       await capture('default', page.locator('#tx-modal .modal-content'));
@@ -561,60 +652,133 @@ async function main() {
       await page.locator('#tx-reason').selectOption('cracked');
       await capture('filled', page.locator('#tx-modal .modal-content'));
 
+      const write = page.waitForResponse(response =>
+        new URL(response.url()).pathname === `/api/transactions/${batchId}` && response.request().method() === 'POST');
       await page.locator('#tx-form button[type="submit"]').click();
+      const writeResponse = await write;
+      expect(writeResponse.status() === 200, `Inventory adjustment POST returned ${writeResponse.status()}`);
       await page.locator('#tx-modal').waitFor({ state: 'detached' });
       await capture('submitted', page.locator('#view-batch-cockpit'));
+      const afterSubmit = await callApi(`/api/transactions/${batchId}`);
+      expect(afterSubmit.status === 200 && afterSubmit.body.length === before.body.length + 1,
+        'Inventory adjustment must produce one durable transaction');
+      const transaction = afterSubmit.body.find(item => !before.body.some(previous => previous.id === item.id));
+      expect(transaction?.type === 'write_off' && transaction.category === 'eggs'
+        && transaction.qty === 10 && transaction.amount === 150 && transaction.reason === 'cracked',
+      'Inventory adjustment durable transaction mismatch');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('#auth-overlay').waitFor({ state: 'detached' });
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      const afterReload = await callApi(`/api/transactions/${batchId}`);
+      const reloaded = afterReload.body.find(item => item.id === transaction.id);
+      assert.deepEqual(reloaded, transaction, 'Inventory adjustment must survive reload unchanged');
+      return {
+        pre_submit_get: before.body,
+        expected_post: { path: `/api/transactions/${batchId}`, status: 200 },
+        durable_after_submit: transaction,
+        durable_after_reload: reloaded
+      };
     }, results);
 
-    await runWorkflow(browser, runDir, origin, '03 purchases and sales', async ({ page, capture }) => {
+    await runWorkflow(browser, runDir, origin, '03 feed purchase', async ({ page, capture, callApi }) => {
       await login(page, origin, owner.username, owner.password);
       await openBatchThroughUi(page, `Batch: ${batchData.name}`);
-      // Click 'Buy Feed' button in cockpit to open purchase modal
+      const before = await callApi(`/api/transactions/${batchId}`);
+      expect(before.status === 200 && Array.isArray(before.body), 'Purchase pre-submit GET must succeed');
       await page.locator('button', { hasText: 'Buy Feed' }).click();
       await page.locator('#tx-modal').waitFor({ state: 'visible' });
       await capture('default', page.locator('#tx-modal .modal-content'));
       await page.locator('#tx-qty').fill('500');
       await page.locator('#tx-amount').fill('25000');
       await capture('filled', page.locator('#tx-modal .modal-content'));
+      const write = page.waitForResponse(response =>
+        new URL(response.url()).pathname === `/api/transactions/${batchId}` && response.request().method() === 'POST');
       await page.locator('#tx-form button[type="submit"]').click();
+      const writeResponse = await write;
+      expect(writeResponse.status() === 200, `Feed purchase POST returned ${writeResponse.status()}`);
       await page.locator('#tx-modal').waitFor({ state: 'detached' });
-      
-      // Click 'Record a Sale' button
+      await capture('submitted', page.locator('#view-batch-cockpit'));
+      const afterSubmit = await callApi(`/api/transactions/${batchId}`);
+      expect(afterSubmit.status === 200 && afterSubmit.body.length === before.body.length + 1,
+        'Feed purchase must produce one durable transaction');
+      const transaction = afterSubmit.body.find(item => !before.body.some(previous => previous.id === item.id));
+      expect(transaction?.type === 'purchase' && transaction.category === 'feed'
+        && transaction.qty === 500 && transaction.amount === 25000,
+      'Feed purchase durable transaction mismatch');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('#auth-overlay').waitFor({ state: 'detached' });
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      const afterReload = await callApi(`/api/transactions/${batchId}`);
+      const reloaded = afterReload.body.find(item => item.id === transaction.id);
+      assert.deepEqual(reloaded, transaction, 'Feed purchase must survive reload unchanged');
+      return {
+        pre_submit_get: before.body,
+        expected_post: { path: `/api/transactions/${batchId}`, status: 200 },
+        durable_after_submit: transaction,
+        durable_after_reload: reloaded
+      };
+    }, results);
+
+    await runWorkflow(browser, runDir, origin, '04 walk-in manure sale', async ({ page, capture, callApi }) => {
+      await login(page, origin, owner.username, owner.password);
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      const before = await callApi(`/api/transactions/${batchId}`);
+      expect(before.status === 200 && Array.isArray(before.body), 'Sale pre-submit GET must succeed');
       await page.locator('button', { hasText: 'Record a Sale' }).click();
       await page.locator('#tx-modal').waitFor({ state: 'visible' });
+      await capture('default', page.locator('#tx-modal .modal-content'));
+      await page.locator('#tx-category').selectOption('manure');
+      await page.locator('#tx-qty').waitFor({ state: 'visible' });
       await page.locator('#tx-qty').fill('1');
-      await page.locator('#tx-unit').selectOption('pcs');
+      await page.locator('#tx-unit').selectOption('bags');
       await page.locator('#tx-amount').fill('18');
+      await capture('filled', page.locator('#tx-modal .modal-content'));
+      const write = page.waitForResponse(response =>
+        new URL(response.url()).pathname === `/api/transactions/${batchId}` && response.request().method() === 'POST');
       await page.locator('#tx-form button[type="submit"]').click();
+      const writeResponse = await write;
+      expect(writeResponse.status() === 200, `Walk-in sale POST returned ${writeResponse.status()}`);
       await page.locator('#tx-modal').waitFor({ state: 'detached' });
-      
       await capture('submitted', page.locator('#view-batch-cockpit'));
+      const afterSubmit = await callApi(`/api/transactions/${batchId}`);
+      expect(afterSubmit.status === 200 && afterSubmit.body.length === before.body.length + 1,
+        'Walk-in sale must produce one durable transaction');
+      const transaction = afterSubmit.body.find(item => !before.body.some(previous => previous.id === item.id));
+      expect(transaction?.type === 'sale' && transaction.category === 'manure'
+        && transaction.qty === 1 && transaction.amount === 18 && transaction.buyerName === 'Walk-in Customer'
+        && transaction.buyerTerms === 'COD', 'Walk-in sale durable transaction mismatch');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('#auth-overlay').waitFor({ state: 'detached' });
+      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
+      const afterReload = await callApi(`/api/transactions/${batchId}`);
+      const reloaded = afterReload.body.find(item => item.id === transaction.id);
+      assert.deepEqual(reloaded, transaction, 'Walk-in sale must survive reload unchanged');
+      return {
+        pre_submit_get: before.body,
+        expected_post: { path: `/api/transactions/${batchId}`, status: 200 },
+        durable_after_submit: transaction,
+        durable_after_reload: reloaded
+      };
     }, results);
 
-    await runWorkflow(browser, runDir, origin, '04 batch closure', async ({ page, capture }) => {
+    await runWorkflow(browser, runDir, origin, '05 batch closure guard', async ({ page, captureSafety }) => {
       await login(page, origin, owner.username, owner.password);
       await openBatchThroughUi(page, `Batch: ${batchData.name}`);
-      await page.evaluate((bid) => window.finishBatch(bid), batchId);
-      await page.locator('.modal-content').waitFor({ state: 'visible' });
-      await capture('default', page.locator('.modal-content'));
-      await page.locator('#c-btn-next').click();
-      await page.locator('#c-btn-next').click();
-      await capture('filled', page.locator('.modal-content'));
-      await page.locator('#c-btn-next').click();
-      await page.locator('.modal-content').waitFor({ state: 'detached' });
-      await capture('submitted', page.locator('#view-batches'));
-    }, results);
-
-    await runWorkflow(browser, runDir, origin, '05 reload persistence', async ({ page, capture }) => {
-      await login(page, origin, owner.username, owner.password);
-      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
-      await capture('default', page.locator('#view-batch-cockpit'));
-      await page.reload();
-      await openBatchThroughUi(page, `Batch: ${batchData.name}`);
-      await page.locator('#view-batch-cockpit').waitFor({ state: 'visible' });
-      await capture('filled', page.locator('#view-batch-cockpit'));
-      await capture('submitted', page.locator('#view-batch-cockpit'));
-    }, results);
+      await page.waitForLoadState('networkidle');
+      const { result, requests } = await collectApiRequestsDuring(
+        page,
+        origin,
+        () => page.evaluate((bid) => window.finishBatch(bid), batchId)
+      );
+      expect(result?.ok === false, 'Batch closure must fail closed');
+      expect(result?.recordsChanged === false, 'Batch closure must not change records');
+      expect(requests.length === 0, `Batch closure must not request persistence APIs: ${requests.join(', ')}`);
+      const notice = page.locator('.toast', { hasText: 'Batch closure is unavailable' });
+      await notice.waitFor({ state: 'visible' });
+      expect(await page.locator('#closure-modal').count() === 0, 'Batch closure must not open a disposal wizard');
+      await captureSafety(notice);
+      return { return_contract: result, api_requests: requests };
+    }, results, { writable: false });
   } finally {
     if (browser) await browser.close();
     if (serverProc) {
@@ -637,9 +801,14 @@ module.exports = {
   assertSafeConfiguredOrigins,
   copyTreeIsolated,
   expectedScreenshotRelativePaths,
+  expectedSafetyScreenshotRelativePath,
   validateThreeStateScreenshots,
+  validateWorkflowEvidence,
+  capturedEvidenceForWorkflow,
+  writeEvidence,
   stagingModuleCounts,
-  WORKFLOW_STATES
+  WORKFLOW_STATES,
+  EVIDENCE_ROOT
 };
 
 if (require.main === module) {

@@ -9,7 +9,6 @@ Thumbs.db
 
 # Dependencies (Future-proofing)
 node_modules/
-package-lock.json
 
 # Editor/IDE
 .vscode/
