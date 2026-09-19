@@ -229,11 +229,10 @@ auth/navigation scope and later workflow coverage.
 
 Run `npm run test:playwright:batch18b2` for the isolated operational evidence
 suite. It exercises batch setup, one inventory adjustment, one feed purchase,
-and one walk-in manure sale as separate writable workflows. Each writable workflow
-records the exact pre-submit API state, expected POST status, and durable API
-readback before and after reload. The closure guard is a non-writable safety
-case only; it proves no API request, no modal, and the fail-closed return
-contract. Evidence is written outside the worktree under
+one walk-in manure sale, and reviewed batch closure as separate writable workflows.
+Each records the exact pre-submit API state, expected POST status, and durable API
+readback before and after reload. Closure also verifies the server-owned review
+record after reload. Evidence is written outside the worktree under
 `../evidence/playwright/batch18b2/<run-id>/`.
 
 Run `npm run test:playwright:batch18c1` for isolated finance evidence. It uses

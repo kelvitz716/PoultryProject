@@ -429,7 +429,7 @@ function writeEvidence(runDir, results, startedAt, origin) {
   const completedAt = new Date().toISOString();
   const payload = {
     batch: '18B2',
-    scope: 'disposable operational evidence: batch setup, inventory adjustment, purchase, sale, and non-writable closure guard',
+    scope: 'disposable operational evidence: batch setup, inventory adjustment, purchase, sale, and reviewed batch closure',
     started_at: startedAt,
     completed_at: completedAt,
     origin,
@@ -459,7 +459,7 @@ function writeEvidence(runDir, results, startedAt, origin) {
     + `<p>Disposable loopback app: ${escapeHtml(origin)}</p>`
     + '<p>Each writable workflow has default, filled-not-submitted, and submitted-confirmed screenshots, '
     + 'an exact pre-submit API state, expected POST status, and durable API readback before and after reload. '
-    + 'The closure guard is non-writable safety evidence and makes none of those writable claims.</p>'
+    + 'The reviewed closure flow is a writable workflow with server-owned reviewer provenance and durable batch readback.</p>'
     + '<table border="1"><thead><tr><th>Workflow</th><th>Status</th><th>ms</th><th>Error</th><th>Evidence</th></tr></thead>'
     + `<tbody>${rows}</tbody></table>`);
 
@@ -761,24 +761,41 @@ async function main() {
       };
     }, results);
 
-    await runWorkflow(browser, runDir, origin, '05 batch closure guard', async ({ page, captureSafety }) => {
+    await runWorkflow(browser, runDir, origin, '05 reviewed batch closure', async ({ page, capture, callApi }) => {
       await login(page, origin, owner.username, owner.password);
       await openBatchThroughUi(page, `Batch: ${batchData.name}`);
-      await page.waitForLoadState('networkidle');
-      const { result, requests } = await collectApiRequestsDuring(
-        page,
-        origin,
-        () => page.evaluate((bid) => window.finishBatch(bid), batchId)
-      );
-      expect(result?.ok === false, 'Batch closure must fail closed');
-      expect(result?.recordsChanged === false, 'Batch closure must not change records');
-      expect(requests.length === 0, `Batch closure must not request persistence APIs: ${requests.join(', ')}`);
-      const notice = page.locator('.toast', { hasText: 'Batch closure is unavailable' });
-      await notice.waitFor({ state: 'visible' });
-      expect(await page.locator('#closure-modal').count() === 0, 'Batch closure must not open a disposal wizard');
-      await captureSafety(notice);
-      return { return_contract: result, api_requests: requests };
-    }, results, { writable: false });
+      const before = await callApi('/api/batches');
+      expect(before.status === 200 && Array.isArray(before.body), 'Batch closure pre-submit GET must succeed');
+      await page.locator('button', { hasText: 'Close batch' }).click();
+      const modal = page.locator('.modal-overlay').filter({ hasText: 'Close batch' });
+      await modal.waitFor({ state: 'visible' });
+      await capture('default', modal.locator('.modal-content'));
+      await modal.locator('#batch-closure-confirm').check();
+      await capture('filled', modal.locator('.modal-content'));
+      const write = page.waitForResponse(response =>
+        new URL(response.url()).pathname === `/api/batches/${batchId}/close` && response.request().method() === 'POST');
+      await modal.locator('#batch-closure-submit').click();
+      const writeResponse = await write;
+      expect(writeResponse.status() === 201, `Batch closure POST returned ${writeResponse.status()}`);
+      await modal.waitFor({ state: 'detached' });
+      await capture('submitted', page.locator('#view-batch-cockpit'));
+      const afterSubmit = await callApi('/api/batches');
+      const closed = afterSubmit.body.find(item => String(item.id) === batchId);
+      expect(closed?.status === 'completed' && closed?.closure_review?.status === 'exact',
+        'Batch closure must persist an exact reviewed closure record');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('#auth-overlay').waitFor({ state: 'detached' });
+      await selectNav(page, 'batches', 'batches');
+      const afterReload = await callApi('/api/batches');
+      const reloaded = afterReload.body.find(item => String(item.id) === batchId);
+      assert.deepEqual(reloaded, closed, 'Reviewed batch closure must survive reload unchanged');
+      return {
+        pre_submit_get: before.body,
+        expected_post: { path: `/api/batches/${batchId}/close`, status: 201 },
+        durable_after_submit: closed,
+        durable_after_reload: reloaded
+      };
+    }, results);
   } finally {
     if (browser) await browser.close();
     if (serverProc) {

@@ -55,12 +55,11 @@ Run `npm run test:playwright:batch18b2`. It retains the same disposable-copy,
 generated-credential, loopback-only boundary as Batch 18A and rejects target
 origins. Its evidence root is `../evidence/playwright/batch18b2/<run-id>/`.
 
-The four writable workflows are deliberately separate: batch setup, inventory
-adjustment, feed purchase, and walk-in manure sale. Each captures default, filled, and
+The five writable workflows are deliberately separate: batch setup, inventory
+adjustment, feed purchase, walk-in manure sale, and reviewed batch closure. Each captures default, filled, and
 submitted states, verifies its own pre-submit GET, POST status, immediate API
-readback, reload, and matching readback. The closure guard is intentionally
-non-writable and only records truthful safety evidence; it is excluded from
-those writable workflow claims.
+readback, reload, and matching readback. Closure additionally verifies the durable
+server-owned closure review record.
 
 ## Running Batch 18C.1
 
