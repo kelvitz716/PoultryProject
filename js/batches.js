@@ -8,7 +8,22 @@ import { api } from './api.js';
 import { store } from './store.js';
 import { BATCH_STATUS } from './engine.js';
 import { $, showToast } from './ui.js';
-import { blockBatchClosure } from './batch-closure-guard.mjs';
+
+const BATCH_CLOSURE_EXCEPTION_CODES = Object.freeze([
+    ['inventory_variance', 'Inventory variance'],
+    ['ledger_ambiguity', 'Ledger ambiguity'],
+    ['documentation_gap', 'Documentation gap'],
+    ['external_system_delay', 'External system delay'],
+    ['other', 'Other reviewed issue']
+]);
+
+function mayCloseBatch() {
+    return ['super_admin', 'admin'].includes(window.USER_ROLE);
+}
+
+function removeBatchClosureModal(modal) {
+    if (modal?.parentNode) modal.parentNode.removeChild(modal);
+}
 
 export function initBatchesView() {
     $('btn-clear-all-batches')?.addEventListener('click', () => { window.clearAllBatchesUI(); });
@@ -291,8 +306,121 @@ window.clearAllBatchesUI = async function() {
     });
 };
 
-window.finishBatch = async function() {
-    return blockBatchClosure(showToast);
+window.finishBatch = async function(batchId) {
+    if (!mayCloseBatch()) {
+        showToast('Access denied: batch closure requires an administrator.', 'danger');
+        return { ok: false, reason: 'access_denied' };
+    }
+    const batch = store.allBatches.find(item => String(item.id) === String(batchId));
+    if (!batch || batch.status === BATCH_STATUS.COMPLETED || batch.closure_review) {
+        showToast('This batch is already closed or no longer available for closure.', 'warning');
+        return { ok: false, reason: 'batch_unavailable' };
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay active';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Close batch review');
+    modal.innerHTML = `
+        <div class="modal-content card" style="max-width:540px; padding:24px; position:relative;">
+            <button type="button" class="btn btn-secondary btn-sm" data-close-dialog style="position:absolute; top:16px; right:16px;">Close</button>
+            <h3>Close batch</h3>
+            <p style="font-size:13px; color:var(--text-muted); line-height:1.55; margin:8px 0 16px;">This records the final cohort and house identity, then locks the batch from further lifecycle changes. The closure reviewer is recorded from your signed-in account.</p>
+            <div style="padding:12px; border-radius:8px; background:var(--bg-main); border:1px solid var(--border-color); margin-bottom:16px; font-size:13px; line-height:1.5;">
+                <strong>Before closing:</strong> confirm the batch records are complete. If the ledger has an unresolved item, the system will require a permanent exception reason and review note before it can close.
+            </div>
+            <p id="batch-closure-error" role="alert" style="display:none; color:var(--danger); font-size:13px; margin:0 0 12px;"></p>
+            <form id="batch-closure-form" style="display:flex; flex-direction:column; gap:14px;">
+                <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; line-height:1.45; cursor:pointer;">
+                    <input id="batch-closure-confirm" type="checkbox" required style="margin-top:3px;">
+                    <span>I have reviewed this batch and understand that closing it creates a permanent review record.</span>
+                </label>
+                <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; line-height:1.45; cursor:pointer;">
+                    <input id="batch-closure-exception-toggle" type="checkbox" style="margin-top:3px;">
+                    <span>Record a reviewed reconciliation exception.</span>
+                </label>
+                <div id="batch-closure-exception-fields" hidden style="padding:12px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-main);">
+                    <div class="input-group" style="margin-bottom:12px;">
+                        <label for="batch-closure-exception-code">Exception reason</label>
+                        <select id="batch-closure-exception-code" class="input-md">
+                            ${BATCH_CLOSURE_EXCEPTION_CODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label for="batch-closure-exception-note">Review note</label>
+                        <textarea id="batch-closure-exception-note" class="input-md" maxlength="500" rows="3" placeholder="State what remains to be reviewed and why closure is permitted."></textarea>
+                    </div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:4px;">
+                    <button type="button" class="btn btn-secondary" data-close-dialog>Cancel</button>
+                    <button id="batch-closure-submit" type="submit" class="btn btn-primary">Close batch</button>
+                </div>
+            </form>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    lucide.createIcons();
+
+    const form = modal.querySelector('#batch-closure-form');
+    const error = modal.querySelector('#batch-closure-error');
+    const exceptionToggle = modal.querySelector('#batch-closure-exception-toggle');
+    const exceptionFields = modal.querySelector('#batch-closure-exception-fields');
+    const exceptionCode = modal.querySelector('#batch-closure-exception-code');
+    const exceptionNote = modal.querySelector('#batch-closure-exception-note');
+    const submit = modal.querySelector('#batch-closure-submit');
+    modal.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => removeBatchClosureModal(modal)));
+    exceptionToggle.addEventListener('change', () => {
+        exceptionFields.hidden = !exceptionToggle.checked;
+        exceptionNote.required = exceptionToggle.checked;
+        if (exceptionToggle.checked) exceptionNote.focus();
+    });
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const reconciliationException = exceptionToggle.checked ? {
+            code: exceptionCode.value,
+            note: exceptionNote.value.trim()
+        } : null;
+        error.style.display = 'none';
+        submit.disabled = true;
+        submit.textContent = 'Closing…';
+        const result = await api.closeBatch(batchId, reconciliationException);
+        if (result.ok) {
+            removeBatchClosureModal(modal);
+            try {
+                await window.syncBatches();
+                await window.refreshBatches();
+                if (window.refreshDashboard) await window.refreshDashboard();
+                if (window.openBatchCockpit) await window.openBatchCockpit(batchId);
+            } catch (refreshError) {
+                console.error('Batch was closed but the local view could not refresh:', refreshError);
+            }
+            showToast(result.body?.unresolved_count > 0
+                ? 'Batch closed with a permanent reconciliation exception review.'
+                : 'Batch closed and its review record was saved.', 'success');
+            return;
+        }
+        if (result.status === 409 && !exceptionToggle.checked) {
+            exceptionToggle.checked = true;
+            exceptionFields.hidden = false;
+            exceptionNote.required = true;
+            exceptionNote.focus();
+            error.textContent = 'An unresolved reconciliation item needs a reviewed exception reason and note before this batch can close.';
+        } else if (result.status === 403) {
+            error.textContent = 'Your account is not authorised to close batches.';
+        } else if (result.status === 409) {
+            error.textContent = 'The batch could not be closed. It may already be closed or require a refreshed review.';
+        } else {
+            error.textContent = 'Batch closure was not completed. Check the batch identity and try again.';
+        }
+        error.style.display = 'block';
+        submit.disabled = false;
+        submit.textContent = exceptionToggle.checked ? 'Close with reviewed exception' : 'Close batch';
+    });
+    modal.querySelector('#batch-closure-confirm').focus();
+    return { ok: true, reason: 'review_opened' };
 };
 export async function renderBatchLearning(snapshots) {
     const container = $('batch-learning-content');

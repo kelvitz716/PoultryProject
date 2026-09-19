@@ -113,7 +113,7 @@ window.openBatchCockpit = async function(id) {
                         <i data-lucide="leaf" style="width:14px; height:14px;"></i> Litter Done
                     </button>
                     <button class="btn btn-primary btn-sm" onclick="window.finishBatch(${batch.id})" style="margin-left:8px;">
-                        <i data-lucide="flag" style="width:14px; height:14px;"></i> Snapshot
+                        <i data-lucide="flag" style="width:14px; height:14px;"></i> Close batch
                     </button>
                     ` : ''}
                 </div>

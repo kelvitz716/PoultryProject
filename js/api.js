@@ -268,6 +268,41 @@ export const api = {
     },
 
     /**
+     * Requests the server-owned reviewed batch closure flow.  Actor identity
+     * is intentionally never sent by the browser; the server derives it from
+     * the authenticated session.  This low-level helper never throws so a
+     * bounded review UI can display a safe result deterministically.
+     */
+    async closeBatch(batchId, reconciliationException = null) {
+        if (typeof batchId !== 'string' && typeof batchId !== 'number') {
+            return { ok: false, status: null, error: 'Invalid batch closure request' };
+        }
+        const id = String(batchId).trim();
+        if (!id) return { ok: false, status: null, error: 'Invalid batch closure request' };
+        const payload = reconciliationException === null || reconciliationException === undefined
+            ? {}
+            : { reconciliation_exception: reconciliationException };
+        let response;
+        try {
+            response = await fetch(`/api/batches/${encodeURIComponent(id)}/close`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } catch (_) {
+            return { ok: false, status: null, error: 'Batch closure is unavailable' };
+        }
+        let body = null;
+        try { body = await response.json(); } catch (_) { /* Safe fallback below. */ }
+        if (response.ok) return { ok: true, status: response.status, body };
+        return {
+            ok: false,
+            status: Number.isInteger(response.status) ? response.status : null,
+            error: typeof body?.error === 'string' ? body.error : 'Batch closure was not completed'
+        };
+    },
+
+    /**
      * Deletes a specific batch.
      * Requires the `x-confirm-delete` confirmation header.
      * @param {string} id - The unique ID of the batch.
