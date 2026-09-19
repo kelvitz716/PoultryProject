@@ -34,8 +34,8 @@ if (fs.existsSync(dotenvPath)) {
 
 const bcrypt = require('bcrypt');
 const session = require('express-session');
-const ConnectSQLite3 = require('connect-sqlite3')(session);
-const { runQuery, allQuery, getQuery, dbReady } = require('./db');
+const { runQuery, allQuery, getQuery, dbReady, databasePath } = require('./db');
+const { SqliteSessionStore } = require('./services/sqlite-session-store');
 const paymentImportService = require('./services/payment-imports');
 const paymentImportReviewService = require('./services/payment-import-review');
 const paymentImportApprovalService = require('./services/payment-import-approval');
@@ -155,15 +155,12 @@ app.use(helmet({
 }));
 
 /**
- * Session middleware — sessions persisted in the same SQLite database via connect-sqlite3.
+ * Session middleware — sessions persisted in the same SQLite database through
+ * the project-owned store, with no nested legacy SQLite native dependency.
  * Secure cookie and rolling expiry; sameSite=lax is appropriate for same-origin LAN/Tailscale usage.
  */
 app.use(session({
-    store: new ConnectSQLite3({
-        db: 'poultry.db',
-        dir: path.join(__dirname, 'data'),
-        table: 'sessions'
-    }),
+    store: new SqliteSessionStore({ databasePath }),
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,

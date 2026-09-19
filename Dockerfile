@@ -12,7 +12,11 @@ WORKDIR /app
 # if the manifest lock has not changed, npm ci is skipped on the next build.
 COPY package*.json ./
 # Install exactly the reviewed dependency graph captured in package-lock.json.
-RUN npm ci --omit=dev
+# sqlite3 v6 compiles when an Alpine prebuild is unavailable; retain only the
+# resulting native binding, not its compiler toolchain, in the runtime image.
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+    && npm ci --omit=dev \
+    && apk del .build-deps
 
 # ── Copy application source ──────────────────────────────────────────────────
 # Copies everything not excluded by .dockerignore (node_modules, data/, .env,
