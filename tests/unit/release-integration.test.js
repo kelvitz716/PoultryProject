@@ -96,7 +96,8 @@ test('production server and browser wire every bounded payment and settlement su
         'registerCustomerRegistryApi(app',
         'registerLegacyCustomerBootstrapApi(app',
         'registerTransactionPersistenceApi(app',
-        'registerBatchClosureApi(app'
+        'registerBatchClosureApi(app',
+        'registerBatchTransferApi(app'
     ]) assert.ok(server.includes(registration), `${registration} must be registered`);
     assert.match(app, /initPaymentInboxView\(\);/);
     assert.match(app, /initCustomerSettlementTimelineView\(\);/);
@@ -159,6 +160,16 @@ test('disposable real-server smoke starts without E2E credentials and reaches au
     assert.equal(closure.status, 201);
     assert.equal(closure.json?.batch?.closure_review?.status, 'exact');
     assert.equal(closure.json?.batch?.closure_review?.reviewed_by_user_id, setup.json?.user?.id);
+    assert.equal((await request(baseUrl, '/api/batches', {
+        method: 'POST', cookie,
+        body: { id: 'smoke-transfer', status: 'active', cohort_id: 'cohort:transfer', location_id: 'house:a', size: 20, stats: { birdsAlive: 20 } }
+    })).status, 200);
+    const transfer = await request(baseUrl, '/api/batches/smoke-transfer/transfers', {
+        method: 'POST', cookie,
+        body: { source_location_id: 'house:a', destination_location_id: 'house:b', transfer_date: '2026-09-19', quantity: 5, reason: 'Separate flock groups.', idempotency_key: 'smoke-transfer-001' }
+    });
+    assert.equal(transfer.status, 201);
+    assert.equal(transfer.json?.transfer?.created_by_user_id, setup.json?.user?.id);
 
     const customer = await request(baseUrl, '/api/customers', {
         method: 'POST', cookie,

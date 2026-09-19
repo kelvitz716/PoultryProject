@@ -941,17 +941,24 @@ async function _initApp() {
             window.showToast('Cannot find proposal!', 'danger');
             return;
         }
+        if (!proposal.location || !proposal.location.trim()) {
+            window.showToast('Enter the physical house/location in the analysis before starting a cohort.', 'warning');
+            return;
+        }
 
         const batches = getBatches();
-        
+        const batchId = Date.now();
         const batch = {
-            id: Date.now(),
+            id: batchId,
             proposalId: proposal.id,
             name: 'Batch: ' + proposal.name,
             type: proposal.type,
             size: parseInt(proposal.size) || 0,
             startDate: new Date().toISOString(),
             status: BATCH_STATUS.ACTIVE,
+            cohort_id: `cohort:${batchId}`,
+            location_id: `location:${proposal.id}`,
+            location_name: proposal.location.trim(),
             stats: { birdsAlive: parseInt(proposal.size) || 0, totalEggs: 0, mortality: 0 },
             assumptions: {
                 eggPrice: proposal.inputs && proposal.inputs['prop-egg-price'] ? parseFloat(proposal.inputs['prop-egg-price']) : 15,

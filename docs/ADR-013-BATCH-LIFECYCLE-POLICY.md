@@ -5,9 +5,9 @@
 - A batch represents a biological cohort; its physical location is a separate
   recorded identity.
 - Bird movement requires an auditable transfer with source, destination, date,
-  quantity, reason, and operator. Transfer UI and persistence are a follow-up
-  implementation gate; generic batch updates cannot silently change a recorded
-  cohort or location.
+  quantity, reason, and operator. Transfers are immutable, idempotent API
+  records; generic batch updates cannot silently change a recorded cohort or
+  location.
 - Feed is inventory when purchased and is expensed to a batch on consumption.
 - Eggs are inventory when collected; revenue and cost of goods sold occur only
   when eggs are sold.

@@ -70,7 +70,12 @@ function createBatchDeletionService(overrides = {}) {
                 'SELECT id FROM staging WHERE batch_id IN (?, ?)',
                 candidates
             );
-            if (evidence || paymentImport || staging) {
+            const transfer = await first(
+                adapter,
+                'SELECT id FROM batch_transfers WHERE batch_id IN (?, ?)',
+                candidates
+            );
+            if (evidence || paymentImport || staging || transfer) {
                 throw new BatchDeletionConflictError('batch has retained evidence');
             }
 
@@ -87,7 +92,8 @@ function createBatchDeletionService(overrides = {}) {
             const evidence = await protectedEvidenceForTransactions(adapter, '1 = 1', []);
             const paymentImport = await first(adapter, 'SELECT id FROM payment_imports WHERE batch_id IS NOT NULL');
             const staging = await first(adapter, 'SELECT id FROM staging');
-            if (evidence || paymentImport || staging) {
+            const transfer = await first(adapter, 'SELECT id FROM batch_transfers');
+            if (evidence || paymentImport || staging || transfer) {
                 throw new BatchDeletionConflictError('one or more batches have retained evidence');
             }
 

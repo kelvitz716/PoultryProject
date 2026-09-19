@@ -14,6 +14,7 @@ const { migrateLedgerMinorUnits } = require('./migrations/ledger-minor-units');
 const { migrateManualCustomerReceipts } = require('./migrations/manual-customer-receipts');
 const { migrateCustomerCreditNotes } = require('./migrations/customer-credit-notes');
 const { migrateCustomerRefunds } = require('./migrations/customer-refunds');
+const { migrateBatchTransfers } = require('./migrations/batch-transfers');
 const { createDedicatedTransactionBoundary } = require('./services/sqlite-transaction');
 const { purgeLegacyDarajaCredentials } = require('./services/legacy-daraja-credentials');
 
@@ -284,6 +285,7 @@ function initializeDatabase(db, resolve, reject) {
                     .then(() => migrateManualCustomerReceipts(db))
                     .then(() => migrateCustomerCreditNotes(db))
                     .then(() => migrateCustomerRefunds(db))
+                    .then(() => migrateBatchTransfers(db))
                     .then(() => {
                         console.log('Database schema initialized.');
                         resolve();

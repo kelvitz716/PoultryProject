@@ -79,7 +79,8 @@ async function initializeDatabase(filename) {
                 id TEXT PRIMARY KEY,
                 batch_id TEXT,
                 created_transaction_id TEXT
-            )`
+            )`,
+            'CREATE TABLE batch_transfers (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL)'
         ]) await run(database, sql);
 
         for (const id of [
@@ -88,6 +89,7 @@ async function initializeDatabase(filename) {
             'protected-import-transaction',
             'protected-import-batch',
             'protected-staging',
+            'protected-transfer',
             'safe-mixed',
             'legacy-safe.0'
         ]) {
@@ -115,6 +117,7 @@ async function initializeDatabase(filename) {
         await run(database, "INSERT INTO payment_imports (id, created_transaction_id) VALUES ('payment-import-transaction-1', 'import-transaction-1')");
         await run(database, "INSERT INTO payment_imports (id, batch_id) VALUES ('payment-import-batch-1', 'protected-import-batch')");
         await run(database, "INSERT INTO staging (id, batch_id) VALUES ('staging-1', 'protected-staging')");
+        await run(database, "INSERT INTO batch_transfers (id, batch_id) VALUES ('transfer-1', 'protected-transfer')");
         for (const [id, batchId] of [
             ['safe-mixed-log', 'safe-mixed'],
             ['legacy-safe-log', 'legacy-safe.0']
@@ -198,7 +201,7 @@ test('batch deletion routes atomically protect customer and ledger evidence whil
     assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM ledger_transactions WHERE id = 'ledger-purchase-1'"), 1);
     assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM ledger_entries WHERE transaction_id = 'ledger-purchase-1'"), 2);
 
-    for (const id of ['protected-import-transaction', 'protected-import-batch', 'protected-staging']) {
+    for (const id of ['protected-import-transaction', 'protected-import-batch', 'protected-staging', 'protected-transfer']) {
         assert.equal((await request(server, 'DELETE', `/api/batches/${id}`, { role: 'admin' })).status, 409);
         assert.equal(await scalar(filename, 'SELECT COUNT(*) AS value FROM batches WHERE id = ?', [id]), 1);
     }
@@ -209,7 +212,7 @@ test('batch deletion routes atomically protect customer and ledger evidence whil
     assert.equal((await request(server, 'DELETE', '/api/batches', { role: 'admin' })).status, 403);
     const mixedBulk = await request(server, 'DELETE', '/api/batches', { role: 'admin', confirm: true });
     assert.equal(mixedBulk.status, 409);
-    assert.equal(await scalar(filename, 'SELECT COUNT(*) AS value FROM batches'), 7);
+    assert.equal(await scalar(filename, 'SELECT COUNT(*) AS value FROM batches'), 8);
     assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM transactions WHERE id = 'safe-mixed-tx'"), 1);
     assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM logs WHERE id = 'safe-mixed-log'"), 1);
 
