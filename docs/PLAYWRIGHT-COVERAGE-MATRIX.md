@@ -12,7 +12,7 @@ records.
 | Batch/proposal setup, including Watering Strategy | 18B1 core operations | Three-state evidence: default, filled-not-submitted, and persisted batch after submission/reload |
 | Today's Log: eggs, feed, mortality, temperature/humidity, gases, notes | 18B1 core operations | Separate egg-collection and daily-log workflows; both prove no pre-submit write and durable reload readback |
 | Inventory adjustment, feed purchase, and walk-in manure sale | 18B2 operational evidence | Separate writable workflows: exact pre-submit GET state, expected POST status, three distinct primary screenshots, durable API readback, reload, and matching durable readback |
-| Batch closure | 18B2 safety guard | Non-writable only: fail-closed return contract, zero API requests, no closure modal; not a three-state or persistence claim |
+| Batch closure | 18B2 reviewed closure | Writable reviewed closure: default, filled, and submitted states; exact pre-submit GET, expected POST status, durable API readback after reload, and server-owned reviewer provenance |
 | Documentation and analytics | 18B core operations | Navigation only |
 | Customer registry/bootstrap | 18C.1 finance | Disposable named customer creation through Settings, exact pre-submit GET, POST status, and reload readback |
 | Payment Inbox manual paste and explicit approval | 18C.1 finance | Disposable clean manual M-Pesa import, then explicit named-customer approval as one unallocated M-Pesa credit; no invoice payment or allocation |
