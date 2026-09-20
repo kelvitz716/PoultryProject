@@ -25,6 +25,7 @@ import { initDashboardView } from './dashboard.js';
 import { initCockpitView } from './cockpit.js';
 import { initPaymentInboxView, loadPaymentInbox } from './payment-inbox.js';
 import { initCustomerSettlementTimelineView, loadCustomerSettlementTimeline } from './customer-settlement-timeline.js';
+import { appendSnapshotChoices, renderSnapshotNote } from './snapshot-ui.mjs';
 
 window.addEventListener('unhandledrejection', e => {
     console.error('[unhandled rejection]', e.reason);
@@ -660,28 +661,17 @@ async function _initApp() {
                     <h3>Load Success Snapshot</h3>
                     <button class="btn-icon" onclick="document.body.removeChild(this.closest('.modal-overlay'))"><i data-lucide="x"></i></button>
                 </div>
-                <div class="snapshot-list">
-                    ${snapshots.map(s => `
-                        <div class="snapshot-item" onclick="window.applySnapshot(${s.id})">
-                            <div class="snapshot-info">
-                                <h5>${s.batchName}</h5>
-                                <p>${s.birds} birds • ${s.type} • Profit: KES ${s.totalProfit.toLocaleString()}</p>
-                            </div>
-                            <span class="pill">Load Data</span>
-                        </div>
-                    `).join('')}
-                </div>
+                <div class="snapshot-list"></div>
             </div>
         `;
         document.body.appendChild(modal);
-        lucide.createIcons();
 
-        window.applySnapshot = (id) => {
-            const s = snapshots.find(sn => sn.id === id);
-            if (!s) return;
+        const applySnapshot = s => {
+            if (!s || typeof s !== 'object') return;
             
-            $('prop-name').value = `New ${s.batchName.replace('Batch: ', '')} (Optimised)`;
-            $('prop-type').value = s.type;
+            const batchName = String(s.batchName ?? '');
+            $('prop-name').value = `New ${batchName.replace('Batch: ', '')} (Optimised)`;
+            $('prop-type').value = String(s.type ?? '');
             $('prop-size').value = s.birds;
             $('prop-time-horizon').value = s.type === 'layer' ? '72' : '6';
             $('prop-egg-price').value = Math.round(s.avgEggPrice);
@@ -690,7 +680,7 @@ async function _initApp() {
             const noteEl = $('snapshot-note');
             if (noteEl) {
                 noteEl.style.display = 'block';
-                noteEl.innerHTML = `<i data-lucide="info" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px;"></i> Based on your batch <strong>'${s.batchName}'</strong>, expected lay rate at peak is <strong>${(s.avgLayRate * 100).toFixed(1)}%</strong>.`;
+                renderSnapshotNote(noteEl, s);
                 lucide.createIcons();
             }
 
@@ -699,6 +689,8 @@ async function _initApp() {
             calculateFinancials();
             window.showToast('Model pre-filled with real farm performance data!', 'primary');
         };
+        appendSnapshotChoices(modal.querySelector('.snapshot-list'), snapshots, applySnapshot);
+        lucide.createIcons();
     });
 
     // ===================== PROPOSAL PREVIEW =====================
