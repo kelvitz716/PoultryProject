@@ -11,7 +11,8 @@
     "test:playwright:batch18b1": "node tests/playwright/batch18b1.js",
     "test:playwright:batch18b2": "node tests/playwright/batch18b2.js",
     "test:playwright:batch18c1": "node tests/playwright/batch18c1.js",
-    "test:playwright:batch18c2": "node tests/playwright/batch18c2.js"
+    "test:playwright:batch18c2": "node tests/playwright/batch18c2.js",
+    "test:playwright:release": "npm run test:playwright:batch18a:twice && npm run test:playwright:batch18b1 && npm run test:playwright:batch18b2 && npm run test:playwright:batch18c1 && npm run test:playwright:batch18c2"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

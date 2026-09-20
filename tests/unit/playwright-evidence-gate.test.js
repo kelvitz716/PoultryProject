@@ -6,6 +6,12 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
+test('release browser evidence command runs every isolated workflow suite', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'));
+  assert.equal(packageJson.scripts['test:playwright:release'],
+    'npm run test:playwright:batch18a:twice && npm run test:playwright:batch18b1 && npm run test:playwright:batch18b2 && npm run test:playwright:batch18c1 && npm run test:playwright:batch18c2');
+});
+
 const {
   classifyConsoleErrors,
   requiredArtifactProblem,

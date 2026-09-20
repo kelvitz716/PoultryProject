@@ -221,6 +221,16 @@ git push master
 
 ## 🧪 Testing
 
+For release-candidate browser evidence, run the complete disposable suite:
+
+```bash
+npm run test:playwright:release
+```
+
+It runs Batch 18A twice plus the operational, closure, approval, and rejection
+workflows (Batch 18B1, 18B2, 18C1, and 18C2). Each run creates screenshots,
+video, trace, durable read-back, and a SHA-256 manifest outside the worktree.
+
 Run the isolated Batch 18A browser evidence harness:
 
 ```bash
