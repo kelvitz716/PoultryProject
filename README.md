@@ -69,9 +69,11 @@ See [`docs/`](./docs/) for full technical specifications.
 
 ```bash
 # 1. Copy .env.example to .env and set a strong, non-empty SESSION_SECRET.
-# 2. Pull the CI-built image and start the stack.
-docker compose pull
-docker compose up -d
+# 2. Copy the immutable image digest from a successful CI build.
+export IMAGE_REF='ghcr.io/kelvitz716/poultryproject@sha256:<digest>'
+# 3. Pull and run exactly that image; Compose rejects a missing reference.
+docker pull "$IMAGE_REF"
+docker compose up -d --pull never --no-build --force-recreate poultry-dss
 ```
 
 Production access is private: use the host's **Tailscale HTTPS Serve URL**
@@ -79,7 +81,7 @@ from an authorised tailnet device. The Docker port is deliberately bound only
 to `127.0.0.1`; do not expose port 8089 through an OCI security list, reverse
 proxy, or Tailscale Funnel.
 
-> The production compose file references the pre-built `ghcr.io/kelvitz716/poultryproject:latest` image. For a local source build, use `docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d`.
+> The production compose file requires an immutable `IMAGE_REF` digest, so it cannot silently deploy a moved tag. For a local source build, use `IMAGE_REF=poultry-dss:local docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d`.
 
 ### Option 2 — Node.js (Local development)
 
@@ -194,16 +196,16 @@ git push master
   ├─ Set up Docker Buildx
   ├─ Log in to ghcr.io
   └─ Build & push linux/amd64 + linux/arm64 image
-         → ghcr.io/kelvitz716/poultryproject:latest
          → ghcr.io/kelvitz716/poultryproject:<sha>
+         → immutable manifest digest
     │
     ▼
 [deploy job]
   ├─ Connect to Tailscale VPN
   ├─ SCP docker-compose.yml → OCI
   └─ SSH into OCI:
-       docker pull ghcr.io/kelvitz716/poultryproject:latest
-       docker compose up -d --force-recreate poultry-dss
+       docker pull ghcr.io/kelvitz716/poultryproject@sha256:<digest>
+       IMAGE_REF=...@sha256:<digest> docker compose up -d --pull never --no-build --force-recreate poultry-dss
        docker image prune -f
 ```
 

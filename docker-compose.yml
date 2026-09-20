@@ -1,8 +1,8 @@
 # docker-compose.yml — PoultryDSS Stack Definition
 #
 # Usage:
-#   Production (OCI):  docker compose up -d --pull always --force-recreate poultry-dss
-#   Local source build: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+#   Production (OCI):  IMAGE_REF=ghcr.io/kelvitz716/poultryproject@sha256:<digest> docker compose up -d --pull never --no-build --force-recreate poultry-dss
+#   Local source build: IMAGE_REF=poultry-dss:local docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 
 services:
   poultry-dss:
@@ -14,7 +14,9 @@ services:
     #
     # Local source builds belong in docker-compose.dev.yml. Keeping production
     # image-only ensures the CI deployment actually runs the image it pulled.
-    image: ghcr.io/kelvitz716/poultryproject:latest
+    # IMAGE_REF is deliberately required: production deploys must name the
+    # immutable manifest digest produced by the successful CI build.
+    image: ${IMAGE_REF:?IMAGE_REF must be an immutable ghcr.io/kelvitz716/poultryproject@sha256 digest}
 
     container_name: poultry-dss
 

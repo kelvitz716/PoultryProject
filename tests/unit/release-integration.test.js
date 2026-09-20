@@ -124,6 +124,26 @@ test('production deployment is private-by-default and accepts sessions only thro
     assert.doesNotMatch(deploy, /tailscale funnel --bg on/);
 });
 
+test('production releases pin the exact CI-built image digest and serialize deployment', () => {
+    const compose = read('docker-compose.yml');
+    const deploy = read('deploy.sh');
+    const workflow = read('.github/workflows/deploy.yml');
+    assert.match(compose, /image:\s*\$\{IMAGE_REF:\?IMAGE_REF must be an immutable/);
+    assert.doesNotMatch(compose, /:latest/);
+    assert.match(workflow, /concurrency:\s*[\s\S]*group: poultry-dss-production/);
+    assert.match(workflow, /image_digest: \$\{\{ steps\.build_image\.outputs\.digest \}\}/);
+    assert.match(workflow, /IMAGE_REF: \$\{\{ format\('\{0\}@\{1\}', env\.IMAGE, needs\.build\.outputs\.image_digest\) \}\}/);
+    assert.match(workflow, /envs: IMAGE_REF/);
+    assert.match(workflow, /docker pull "\$IMAGE_REF"/);
+    assert.match(workflow, /docker compose up -d --pull never --no-build --force-recreate poultry-dss/);
+    assert.doesNotMatch(workflow, /:latest/);
+    assert.match(deploy, /IMAGE_REF is required and must be an immutable image digest/);
+    assert.match(deploy, /ghcr\.io\/kelvitz716\/poultryproject@sha256/);
+    assert.match(deploy, /docker pull "\$IMAGE_REF"/);
+    assert.match(deploy, /docker compose up --no-build --pull never -d --force-recreate poultry-dss/);
+    assert.doesNotMatch(deploy, /up --build/);
+});
+
 test('disposable real-server smoke starts without E2E credentials and reaches authenticated release routes safely', async t => {
     const disposableRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-release-smoke-'));
     const appDir = path.join(disposableRoot, 'app');
