@@ -22,6 +22,7 @@ async function setup(filename) {
         await run(db, 'CREATE TABLE batch_transfers (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, source_location_id TEXT NOT NULL, destination_location_id TEXT NOT NULL, transfer_date TEXT NOT NULL, quantity INTEGER NOT NULL, created_at TEXT)');
         await run(db, 'CREATE TABLE logs (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, data TEXT NOT NULL, date TEXT NOT NULL)');
         await run(db, 'CREATE TABLE staging (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, module TEXT NOT NULL, date TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL)');
+        await run(db, 'CREATE TABLE transactions (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL)');
         await run(db, 'CREATE TABLE ledger_transactions (id TEXT PRIMARY KEY, ref_id TEXT)');
         await run(db, 'CREATE TABLE ledger_entries (id TEXT PRIMARY KEY, transaction_id TEXT, reconciliation_status TEXT)');
         for (const [id, data] of [
@@ -31,11 +32,22 @@ async function setup(filename) {
             ['missing-entry', { id: 'missing-entry', status: 'post_batch', cohort_id: 'cohort:four', location_id: 'house:d' }],
             ['missing', { id: 'missing', status: 'post_batch' }]
         ]) await run(db, 'INSERT INTO batches (id, data) VALUES (?, ?)', [id, JSON.stringify(data)]);
-        await run(db, "INSERT INTO ledger_transactions (id, ref_id) VALUES ('ledger-review', 'review')");
-        await run(db, "INSERT INTO ledger_entries (id, transaction_id, reconciliation_status) VALUES ('entry-review', 'ledger-review', 'reconciliation_required')");
-        await run(db, "INSERT INTO ledger_transactions (id, ref_id) VALUES ('ledger-unknown', 'unknown-status')");
-        await run(db, "INSERT INTO ledger_entries (id, transaction_id, reconciliation_status) VALUES ('entry-unknown', 'ledger-unknown', NULL)");
-        await run(db, "INSERT INTO ledger_transactions (id, ref_id) VALUES ('ledger-empty', 'missing-entry')");
+        for (const [id, batchId] of [
+            ['tx-exact', 'exact'],
+            ['tx-review', 'review'],
+            ['tx-unknown', 'unknown-status'],
+            ['tx-empty', 'missing-entry']
+        ]) await run(db, 'INSERT INTO transactions (id, batch_id) VALUES (?, ?)', [id, batchId]);
+        // Production ledger rows use the internal transaction ID as their ID;
+        // ref_id may instead be an external M-Pesa receipt code.
+        await run(db, "INSERT INTO ledger_transactions (id, ref_id) VALUES ('tx-exact', 'MPEXACT001')");
+        await run(db, "INSERT INTO ledger_entries (id, transaction_id, reconciliation_status) VALUES ('entry-exact-dr', 'tx-exact', 'exact')");
+        await run(db, "INSERT INTO ledger_entries (id, transaction_id, reconciliation_status) VALUES ('entry-exact-cr', 'tx-exact', 'exact')");
+        await run(db, "INSERT INTO ledger_transactions (id, ref_id) VALUES ('tx-review', 'MPREVIEW001')");
+        await run(db, "INSERT INTO ledger_entries (id, transaction_id, reconciliation_status) VALUES ('entry-review', 'tx-review', 'reconciliation_required')");
+        await run(db, "INSERT INTO ledger_transactions (id, ref_id) VALUES ('tx-unknown', 'MPUNKNOWN001')");
+        await run(db, "INSERT INTO ledger_entries (id, transaction_id, reconciliation_status) VALUES ('entry-unknown', 'tx-unknown', NULL)");
+        await run(db, "INSERT INTO ledger_transactions (id, ref_id) VALUES ('tx-empty', 'MPEMPTY001')");
     } finally { await close(db); }
 }
 
@@ -64,7 +76,7 @@ test('batch closure requires cohort/location identity and records an immutable r
         reviewed.batch.closure_review.unresolved_ledger_transaction_ids,
         reviewed.batch.closure_review.reconciliation_exception.code,
         reviewed.batch.closure_review.reviewed_by_user_id
-    ], ['exception_accepted', ['ledger-review'], 'inventory_variance', 'admin-2']);
+    ], ['exception_accepted', ['tx-review'], 'inventory_variance', 'admin-2']);
     const db = await open(filename);
     try {
         const row = await get(db, "SELECT data FROM batches WHERE id = 'review'");

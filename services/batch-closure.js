@@ -66,11 +66,15 @@ function createBatchClosureService(overrides = {}) {
             if (allocation.conflict) throw new BatchClosureConflictError('house allocation records are inconsistent and require review');
             const finalLocations = allocation.balances.filter(item => item.live_birds > 0);
 
+            // Ledger transactions are keyed by the farm transaction ID.  Their
+            // ref_id is an external receipt code when one exists, so it cannot
+            // be matched directly to the batch ID.
             const unresolved = await adapter.allQuery(`
                 SELECT l.id AS ledger_transaction_id
-                  FROM ledger_transactions l
+                  FROM transactions t
+                  JOIN ledger_transactions l ON l.id = t.id
                   LEFT JOIN ledger_entries e ON e.transaction_id = l.id
-                 WHERE l.ref_id = ?
+                 WHERE t.batch_id = ?
                  GROUP BY l.id
                 HAVING COUNT(e.id) = 0
                     OR SUM(CASE WHEN e.reconciliation_status = 'exact' THEN 0 ELSE 1 END) > 0
