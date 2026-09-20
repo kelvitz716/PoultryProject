@@ -144,6 +144,32 @@ test('production releases pin the exact CI-built image digest and serialize depl
     assert.doesNotMatch(deploy, /up --build/);
 });
 
+test('production container and SQLite data mount run with least privilege', () => {
+    const dockerfile = read('Dockerfile');
+    const compose = read('docker-compose.yml');
+    const deploy = read('deploy.sh');
+    const workflow = read('.github/workflows/deploy.yml');
+    assert.match(dockerfile, /EXPOSE 8080/);
+    assert.match(dockerfile, /USER node/);
+    assert.match(dockerfile, /COPY --chown=node:node/);
+    assert.match(compose, /127\.0\.0\.1:8089:8080/);
+    assert.match(compose, /user: "\$\{PUID:-1000\}:\$\{PGID:-1000\}"/);
+    assert.match(compose, /read_only: true/);
+    assert.match(compose, /cap_drop:\s*\n\s*- ALL/);
+    assert.match(compose, /no-new-privileges:true/);
+    assert.match(compose, /tmpfs:\s*\n\s*- \/tmp:mode=1777,noexec,nosuid,nodev,size=64m/);
+    assert.match(compose, /\.\/data:\/app\/data:Z/);
+    assert.match(compose, /PORT: 8080/);
+    assert.match(deploy, /umask 077/);
+    assert.match(deploy, /export PUID="\$\(id -u\)"/);
+    assert.match(deploy, /docker stop poultry-dss/);
+    assert.match(deploy, /docker run --rm --network none --user 0:0/);
+    assert.doesNotMatch(deploy, /chmod 777/);
+    assert.match(workflow, /export PUID="\$\(id -u\)"/);
+    assert.match(workflow, /docker stop poultry-dss/);
+    assert.match(workflow, /docker run --rm --network none --user 0:0/);
+});
+
 test('disposable real-server smoke starts without E2E credentials and reaches authenticated release routes safely', async t => {
     const disposableRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-release-smoke-'));
     const appDir = path.join(disposableRoot, 'app');

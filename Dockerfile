@@ -22,16 +22,20 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ \
 # Copies everything not excluded by .dockerignore (node_modules, data/, .env,
 # .git, tests/, docs/, and scratch/ are excluded to keep the image lean and
 # to prevent secrets from being baked into the image).
-COPY . .
+COPY --chown=node:node . .
 
 # ── Persistent data directory ────────────────────────────────────────────────
 # Creates the SQLite storage directory inside the image. The docker-compose.yml
 # bind-mounts ./data:/app/data so the database survives container re-creations.
-RUN mkdir -p data
+# The runtime never needs root: its only writable location is that bind mount.
+RUN mkdir -p data \
+    && chown -R node:node /app
 
-# The Express server listens on port 80 inside the container.
-# docker-compose.yml maps this to host port 8089: "8089:80".
-EXPOSE 80
+# An unprivileged process cannot safely bind a privileged port. Compose maps
+# this internal port to the host's loopback-only 8089 endpoint.
+EXPOSE 8080
+
+USER node
 
 # Launch the Express backend directly via Node (no wrapper needed for Alpine).
 CMD ["node", "server.js"]

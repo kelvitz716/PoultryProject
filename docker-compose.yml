@@ -21,12 +21,27 @@ services:
     container_name: poultry-dss
 
     # ── Port mapping ───────────────────────────────────────────────────────
-    # The Express server binds to port 80 inside the container.
+    # The non-root Express process binds to port 8080 inside the container.
     # Host access is loopback-only. Tailscale Serve terminates HTTPS on the
     # host and proxies to this port; this container must never listen on the
     # public OCI interface.
     ports:
-      - "127.0.0.1:8089:80"
+      - "127.0.0.1:8089:8080"
+
+    # The application runs as the host deployment account, not root. The
+    # deployment paths set these explicitly; 1000:1000 keeps local builds
+    # usable with Node's standard unprivileged account.
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    # The source image is immutable at runtime. SQLite is allowed to write
+    # only to its dedicated bind mount and Node gets a small volatile /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,noexec,nosuid,nodev,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
     # ── Restart policy ─────────────────────────────────────────────────────
     # `always` ensures the container restarts automatically after an OCI
@@ -36,7 +51,7 @@ services:
     # A real JSON readiness endpoint, not the SPA fallback. The process only
     # binds after SQLite schema initialization has completed.
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:80/api/healthz').then(r => r.json()).then(b => { if (b.status !== 'ok') process.exit(1) }).catch(() => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/healthz').then(r => r.json()).then(b => { if (b.status !== 'ok') process.exit(1) }).catch(() => process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -45,9 +60,10 @@ services:
     # ── Volumes ────────────────────────────────────────────────────────────
     # Bind-mounts the host ./data directory to /app/data inside the container.
     # This keeps the SQLite database (poultry.db) on the host filesystem so
-    # it persists across container recreations and image upgrades.
+    # it persists across container recreations and image upgrades. `:Z` gives
+    # only this container's private SELinux label permission to read it.
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data:Z
 
     # ── Environment ────────────────────────────────────────────────────────
     # Loads environment variables from the .env file in the project root.
@@ -58,3 +74,4 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      PORT: 8080

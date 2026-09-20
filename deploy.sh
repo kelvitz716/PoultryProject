@@ -57,12 +57,14 @@ esac
 export IMAGE_REF
 
 # ── Step 2: Prepare the SQLite data directory ──────────────────────────────
-# The ./data directory is bind-mounted into the container as /app/data.
-# chmod 777 ensures the Node.js process (running as a non-root user inside
-# the container) can write to the SQLite database on the host filesystem.
+# The ./data directory is bind-mounted into /app/data. It is private to the
+# deployment account, and an ephemeral root helper repairs ownership for
+# legacy files created by earlier root-running images.
 echo "[2/4] Setting up data directory..."
+umask 077
 mkdir -p data
-chmod 777 data || true  # Ignore failure (already correct permissions)
+export PUID="$(id -u)"
+export PGID="$(id -g)"
 
 # ── Step 3: Pull and start the pinned Docker Compose stack ─────────────────
 # Never build from whatever source happens to exist on the host. The exact
@@ -70,6 +72,13 @@ chmod 777 data || true  # Ignore failure (already correct permissions)
 # Supports both the new `docker compose` (plugin) and legacy `docker-compose` (standalone).
 echo "[3/4] Pulling and starting pinned Docker Compose stack..."
 docker pull "$IMAGE_REF"
+# This one-shot migration has no network access and touches only ./data. The
+# long-running application container remains non-root and capability-free.
+if docker inspect --format '{{.State.Running}}' poultry-dss 2>/dev/null | grep -qx true; then
+    docker stop poultry-dss
+fi
+docker run --rm --network none --user 0:0 -v "$PWD/data:/app/data:Z" "$IMAGE_REF" \
+    sh -ec "chown -R $PUID:$PGID /app/data && chmod -R go-rwx /app/data"
 if docker compose version &> /dev/null; then
     docker compose up --no-build --pull never -d --force-recreate poultry-dss
 else

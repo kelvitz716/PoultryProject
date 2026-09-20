@@ -93,7 +93,7 @@ npm install
 npm start
 ```
 
-Access the app at **http://localhost:80** (or set `PORT=8089` in your `.env`).
+Access the app at **http://localhost:8080** (or set `PORT` in your `.env`).
 
 ---
 
@@ -102,8 +102,8 @@ Access the app at **http://localhost:80** (or set `PORT=8089` in your `.env`).
 Create a `.env` file in the project root (never commit this file):
 
 ```ini
-# Server (use port 80 inside the container; Compose exposes 8089 on host loopback only)
-PORT=80
+# Server (use port 8080 inside the container; Compose exposes 8089 on host loopback only)
+PORT=8080
 
 # Required: generate a strong value, for example with Node's crypto.randomBytes.
 SESSION_SECRET=replace-with-a-strong-secret

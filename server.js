@@ -116,7 +116,7 @@ import('./js/engine.js').then(engine => {
 
 
 const app = express();
-const PORT = process.env.PORT || 80;
+const PORT = process.env.PORT || 8080;
 // Production traffic reaches the container only through the host's local
 // Tailscale HTTPS proxy. Trust exactly that one proxy hop so Express can mark
 // session cookies Secure; direct HTTP requests can never establish a session.

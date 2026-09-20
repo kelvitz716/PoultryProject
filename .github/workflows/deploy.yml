@@ -92,10 +92,22 @@ jobs:
           key: ${{ secrets.OCI_SSH_KEY }}
           envs: IMAGE_REF
           script: |
+            set -eu
             cd ~/data/poultryproject
+            umask 077
+            mkdir -p data
+            export PUID="$(id -u)"
+            export PGID="$(id -g)"
 
             echo "Pulling immutable image digest from ghcr.io..."
             docker pull "$IMAGE_REF"
+
+            echo "Hardening the SQLite data mount for the non-root runtime..."
+            if docker inspect --format '{{.State.Running}}' poultry-dss 2>/dev/null | grep -qx true; then
+              docker stop poultry-dss
+            fi
+            docker run --rm --network none --user 0:0 -v "$PWD/data:/app/data:Z" "$IMAGE_REF" \
+              sh -ec "chown -R $PUID:$PGID /app/data && chmod -R go-rwx /app/data"
 
             echo "Restarting container with the verified image..."
             IMAGE_REF="$IMAGE_REF" docker compose up -d --pull never --no-build --force-recreate poultry-dss
