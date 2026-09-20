@@ -1,7 +1,7 @@
 # docker-compose.yml — PoultryDSS Stack Definition
 #
 # Usage:
-#   Production (OCI):  IMAGE_REF=ghcr.io/kelvitz716/poultryproject@sha256:<digest> docker compose up -d --pull never --no-build --force-recreate poultry-dss
+#   Production (OCI):  IMAGE_REF=ghcr.io/kelvitz716/poultryproject@sha256:<digest> bash deploy.sh
 #   Local source build: IMAGE_REF=poultry-dss:local docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 
 services:
@@ -75,3 +75,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8080
+      HOST: 0.0.0.0
+      # Server-side validation makes direct Compose invocations fail closed
+      # unless this is the exact immutable production reference.
+      IMAGE_REF: ${IMAGE_REF:?IMAGE_REF must be an immutable ghcr.io/kelvitz716/poultryproject@sha256 digest}

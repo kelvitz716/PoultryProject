@@ -71,9 +71,8 @@ See [`docs/`](./docs/) for full technical specifications.
 # 1. Copy .env.example to .env and set a strong, non-empty SESSION_SECRET.
 # 2. Copy the immutable image digest from a successful CI build.
 export IMAGE_REF='ghcr.io/kelvitz716/poultryproject@sha256:<digest>'
-# 3. Pull and run exactly that image; Compose rejects a missing reference.
-docker pull "$IMAGE_REF"
-docker compose up -d --pull never --no-build --force-recreate poultry-dss
+# 3. Deploy through the verified wrapper (do not invoke production Compose directly).
+bash deploy.sh
 ```
 
 Production access is private: use the host's **Tailscale HTTPS Serve URL**
@@ -81,7 +80,7 @@ from an authorised tailnet device. The Docker port is deliberately bound only
 to `127.0.0.1`; do not expose port 8089 through an OCI security list, reverse
 proxy, or Tailscale Funnel.
 
-> The production compose file requires an immutable `IMAGE_REF` digest, so it cannot silently deploy a moved tag. For a local source build, use `IMAGE_REF=poultry-dss:local docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d`.
+> Production requires an exact immutable `IMAGE_REF` digest in both Compose and the application runtime. `deploy.sh` verifies the actual Docker image ID, waits for health, and restores the prior healthy image if the replacement fails. For a local source build, use `IMAGE_REF=poultry-dss:local docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d`.
 
 ### Option 2 — Node.js (Local development)
 
@@ -205,10 +204,10 @@ git push master
   ├─ SCP docker-compose.yml → OCI
   └─ SSH into OCI:
        docker pull ghcr.io/kelvitz716/poultryproject@sha256:<digest>
-       IMAGE_REF=...@sha256:<digest> docker compose up -d --pull never --no-build --force-recreate poultry-dss
+       IMAGE_REF=...@sha256:<digest> bash deploy.sh
 ```
 
-Before replacing a running container, both deployment paths create a consistent SQLite backup under `data/backups/` using SQLite's online backup API. Keep the previously pulled image: if a verified release needs to be rolled back, rerun `deploy.sh` with that prior immutable image digest after confirming the backup is present.
+Before replacing a running container, both deployment paths create a consistent SQLite backup under `data/backups/` using SQLite's online backup API. If the new image fails its identity or Docker health check, `deploy.sh` restores the previous container image automatically. It does not automatically restore database files: review the backup and migration compatibility before any manual database restore.
 
 **Required GitHub Secrets:**
 

@@ -73,15 +73,15 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      # Copy docker-compose.yml over SSH so OCI always has the latest version
-      # without needing a git pull (OCI has no direct internet access to GitHub).
-      - name: Sync docker-compose.yml to OCI
+      # Copy the production Compose definition and its single deployment
+      # authority. OCI does not need a GitHub checkout or source build.
+      - name: Sync deployment files to OCI
         uses: appleboy/scp-action@v0.1.7
         with:
           host: 100.68.227.114
           username: opc
           key: ${{ secrets.OCI_SSH_KEY }}
-          source: docker-compose.yml
+          source: docker-compose.yml,deploy.sh
           target: /home/opc/data/poultryproject/
 
       - name: Deploy new image on OCI via SSH
@@ -92,33 +92,5 @@ jobs:
           key: ${{ secrets.OCI_SSH_KEY }}
           envs: IMAGE_REF
           script: |
-            set -eu
             cd ~/data/poultryproject
-            umask 077
-            mkdir -p data
-            export PUID="$(id -u)"
-            export PGID="$(id -g)"
-
-            echo "Pulling immutable image digest from ghcr.io..."
-            docker pull "$IMAGE_REF"
-
-            echo "Hardening the SQLite data mount for the non-root runtime..."
-            if docker inspect --format '{{.State.Running}}' poultry-dss 2>/dev/null | grep -qx true; then
-              echo "Creating a consistent pre-deploy SQLite backup..."
-              docker exec poultry-dss node scripts/admin.js db-backup
-              docker stop poultry-dss
-            fi
-            docker run --rm --network none --user 0:0 -v "$PWD/data:/app/data:Z" "$IMAGE_REF" \
-              sh -ec "chown -R $PUID:$PGID /app/data && chmod -R go-rwx /app/data"
-
-            echo "Restarting container with the verified image..."
-            IMAGE_REF="$IMAGE_REF" docker compose up -d --pull never --no-build --force-recreate poultry-dss
-
-            RUNNING_IMAGE=$(docker inspect --format '{{.Config.Image}}' poultry-dss)
-            if [ "$RUNNING_IMAGE" != "$IMAGE_REF" ]; then
-              echo "Deployment image mismatch: expected $IMAGE_REF, got $RUNNING_IMAGE"
-              exit 1
-            fi
-
-            echo "=== Deploy complete. Container status: ==="
-            docker ps --filter name=poultry-dss --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+            IMAGE_REF="$IMAGE_REF" bash deploy.sh

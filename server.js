@@ -121,6 +121,10 @@ const PORT = process.env.PORT || 8080;
 // Tailscale HTTPS proxy. Trust exactly that one proxy hop so Express can mark
 // session cookies Secure; direct HTTP requests can never establish a session.
 const isProduction = process.env.NODE_ENV === 'production';
+// A direct Node start is loopback-only by default. Docker explicitly supplies
+// HOST=0.0.0.0 so its private port mapping can reach the container.
+const HOST = process.env.HOST || '127.0.0.1';
+const PRODUCTION_IMAGE_REF = /^ghcr\.io\/kelvitz716\/poultryproject@sha256:[a-f0-9]{64}$/;
 if (isProduction) app.set('trust proxy', 1);
 
 // Must stay before the application-wide JSON parser so HMAC covers exact raw bytes.
@@ -1348,12 +1352,15 @@ async function seedE2ETester() {
 if (!process.env.SESSION_SECRET) {
     throw new Error('SESSION_SECRET environment variable is required.');
 }
+if (isProduction && !PRODUCTION_IMAGE_REF.test(process.env.IMAGE_REF || '')) {
+    throw new Error('Production requires IMAGE_REF=ghcr.io/kelvitz716/poultryproject@sha256:<64 lowercase hex characters>.');
+}
 
 // ── Server Boot ────────────────────────────────────────────────────────────────
 // Wait for schema init to complete before binding the port or running queries.
 dbReady.then(() => {
-    app.listen(PORT, async () => {
-        console.log(`Poultry DSS backend running on port ${PORT}`);
+    app.listen(PORT, HOST, async () => {
+        console.log(`Poultry DSS backend running on ${HOST}:${PORT}`);
         console.log(`EAT boot time: ${getEATDate()} ${getEATTime()}`);
 
         // Seed E2E test account

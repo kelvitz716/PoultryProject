@@ -31,6 +31,6 @@ test('security and data hygiene keep browser code local and operational material
     assert.match(gitignore, /^docs\/\*\.csv$/m);
     assert.match(admin, /database\.backup\(destination\)/);
     assert.match(deploy, /docker exec poultry-dss node scripts\/admin\.js db-backup/);
-    assert.match(workflow, /docker exec poultry-dss node scripts\/admin\.js db-backup/);
+    assert.match(workflow, /IMAGE_REF="\$IMAGE_REF" bash deploy\.sh/);
     assert.doesNotMatch(workflow, /docker image prune -f/);
 });

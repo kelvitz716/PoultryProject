@@ -23,7 +23,68 @@
 #   - IMAGE_REF set to the immutable manifest digest from a successful CI build
 #
 # Exit immediately on any error so a failed step doesn't silently continue.
-set -e
+set -eu
+
+IMAGE_REF_PATTERN='^ghcr.io/kelvitz716/poultryproject@sha256:[a-f0-9]{64}$'
+PREVIOUS_IMAGE_REF=''
+PREVIOUS_IMAGE_ID=''
+
+compose_up() {
+    if docker compose version &> /dev/null; then
+        docker compose up --no-build --pull never -d --force-recreate poultry-dss
+    else
+        docker-compose up --no-build -d --force-recreate poultry-dss
+    fi
+}
+
+wait_for_healthy() {
+    attempt=1
+    while [ "$attempt" -le 70 ]; do
+        health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' poultry-dss 2>/dev/null || true)
+        if [ "$health" = 'healthy' ]; then
+            return 0
+        fi
+        if [ "$health" = 'unhealthy' ]; then
+            echo "New container reported unhealthy."
+            return 1
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    echo "Timed out waiting for the new container to become healthy."
+    return 1
+}
+
+verify_running_image() {
+    expected_image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")
+    running_image_id=$(docker inspect --format '{{.Image}}' poultry-dss)
+    if [ "$running_image_id" != "$expected_image_id" ]; then
+        echo "Image identity mismatch: running $running_image_id, expected $expected_image_id."
+        return 1
+    fi
+}
+
+rollback_previous() {
+    if [ -z "$PREVIOUS_IMAGE_REF" ] || [ -z "$PREVIOUS_IMAGE_ID" ]; then
+        echo "No prior running image was available for rollback. The new deployment was not accepted."
+        return 1
+    fi
+    echo "Restoring the prior container image after failed deployment: $PREVIOUS_IMAGE_REF"
+    if ! IMAGE_REF="$PREVIOUS_IMAGE_REF" compose_up; then
+        echo "Automatic rollback could not start the prior image."
+        return 1
+    fi
+    restored_image_id=$(docker inspect --format '{{.Image}}' poultry-dss 2>/dev/null || true)
+    if [ "$restored_image_id" != "$PREVIOUS_IMAGE_ID" ]; then
+        echo "Automatic rollback started an unexpected image."
+        return 1
+    fi
+    if ! wait_for_healthy; then
+        echo "Automatic rollback did not become healthy."
+        return 1
+    fi
+    echo "Rollback complete; the prior service is healthy again."
+}
 
 echo "======================================"
 echo "    Poultry DSS Deployment Script     "
@@ -31,6 +92,16 @@ echo "======================================"
 
 # ── Step 1: Verify required and optional dependencies ──────────────────────
 echo "[1/4] Checking dependencies..."
+
+if [ -z "${IMAGE_REF:-}" ]; then
+    echo "Error: IMAGE_REF is required and must be an immutable image digest."
+    exit 1
+fi
+if ! printf '%s' "$IMAGE_REF" | grep -Eq "$IMAGE_REF_PATTERN"; then
+    echo "Error: IMAGE_REF must be ghcr.io/kelvitz716/poultryproject@sha256:<64 lowercase hex characters>."
+    exit 1
+fi
+export IMAGE_REF
 
 if ! command -v docker &> /dev/null; then
     echo "Error: docker is not installed. Please install Docker first."
@@ -42,19 +113,6 @@ if ! command -v tailscale &> /dev/null; then
     echo "Error: Tailscale is required for the private HTTPS deployment."
     exit 1
 fi
-
-if [ -z "${IMAGE_REF:-}" ]; then
-    echo "Error: IMAGE_REF is required and must be an immutable image digest."
-    exit 1
-fi
-case "$IMAGE_REF" in
-    ghcr.io/kelvitz716/poultryproject@sha256:[0-9a-fA-F]*) ;;
-    *)
-        echo "Error: IMAGE_REF must be ghcr.io/kelvitz716/poultryproject@sha256:<digest>."
-        exit 1
-        ;;
-esac
-export IMAGE_REF
 
 # ── Step 2: Prepare the SQLite data directory ──────────────────────────────
 # The ./data directory is bind-mounted into /app/data. It is private to the
@@ -75,21 +133,19 @@ docker pull "$IMAGE_REF"
 # This one-shot migration has no network access and touches only ./data. The
 # long-running application container remains non-root and capability-free.
 if docker inspect --format '{{.State.Running}}' poultry-dss 2>/dev/null | grep -qx true; then
+    PREVIOUS_IMAGE_REF=$(docker inspect --format '{{.Config.Image}}' poultry-dss)
+    PREVIOUS_IMAGE_ID=$(docker inspect --format '{{.Image}}' poultry-dss)
     echo "Creating a consistent pre-deploy SQLite backup..."
     docker exec poultry-dss node scripts/admin.js db-backup
     docker stop poultry-dss
 fi
-docker run --rm --network none --user 0:0 -v "$PWD/data:/app/data:Z" "$IMAGE_REF" \
-    sh -ec "chown -R $PUID:$PGID /app/data && chmod -R go-rwx /app/data"
-if docker compose version &> /dev/null; then
-    docker compose up --no-build --pull never -d --force-recreate poultry-dss
-else
-    docker-compose up --no-build -d --force-recreate poultry-dss
+if ! docker run --rm --network none --user 0:0 -v "$PWD/data:/app/data:Z" "$IMAGE_REF" \
+    sh -ec "chown -R $PUID:$PGID /app/data && chmod -R go-rwx /app/data"; then
+    rollback_previous || true
+    exit 1
 fi
-
-RUNNING_IMAGE=$(docker inspect --format '{{.Config.Image}}' poultry-dss)
-if [ "$RUNNING_IMAGE" != "$IMAGE_REF" ]; then
-    echo "Error: poultry-dss started with $RUNNING_IMAGE, expected $IMAGE_REF."
+if ! compose_up || ! verify_running_image || ! wait_for_healthy; then
+    rollback_previous || true
     exit 1
 fi
 
