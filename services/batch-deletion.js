@@ -1,5 +1,7 @@
 'use strict';
 
+const { ProductionInventoryConflictError } = require('./production-inventory');
+
 class BatchDeletionValidationError extends Error {}
 class BatchDeletionConflictError extends Error {}
 
@@ -14,6 +16,10 @@ function batchIdCandidates(value) {
 
 function defaultDependencies() {
     return { withDedicatedTransaction: require('../db').withDedicatedTransaction };
+}
+
+function defaultProductionInventory() {
+    return require('./production-inventory').createProductionInventoryService();
 }
 
 async function first(adapter, sql, params = []) {
@@ -46,15 +52,41 @@ async function protectedEvidenceForTransactions(adapter, transactionWhere, param
 }
 
 function createBatchDeletionService(overrides = {}) {
-    const defaults = overrides.withDedicatedTransaction === undefined ? defaultDependencies() : {};
+    const defaults = {};
+    if (overrides.withDedicatedTransaction === undefined) Object.assign(defaults, defaultDependencies());
+    if (overrides.productionInventory === undefined) defaults.productionInventory = defaultProductionInventory();
     const dependencies = { ...defaults, ...overrides };
-    if (typeof dependencies.withDedicatedTransaction !== 'function') {
-        throw new TypeError('batch deletion requires withDedicatedTransaction');
+    if (typeof dependencies.withDedicatedTransaction !== 'function'
+        || typeof dependencies.productionInventory?.assertBatchTransactionsDeletableWithAdapter !== 'function') {
+        throw new TypeError('batch deletion requires transaction and production inventory boundaries');
+    }
+
+    async function retainedBatchHistory(adapter, where, params) {
+        const batches = await adapter.allQuery(`SELECT id, data FROM batches WHERE ${where}`, params);
+        for (const row of batches) {
+            let batch;
+            try { batch = JSON.parse(row.data); } catch (_) { return true; }
+            if (batch?.status === 'completed' || batch?.closure_review) return true;
+        }
+        return false;
+    }
+
+    async function assertInventoryRetained(adapter, batchIds) {
+        if (batchIds.length === 0) return;
+        try {
+            await dependencies.productionInventory.assertBatchTransactionsDeletableWithAdapter(adapter, batchIds);
+        } catch (error) {
+            if (error instanceof ProductionInventoryConflictError) {
+                throw new BatchDeletionConflictError('batch has retained evidence');
+            }
+            throw error;
+        }
     }
 
     async function deleteBatch(batchIdValue) {
         const candidates = batchIdCandidates(batchIdValue);
         return dependencies.withDedicatedTransaction(async adapter => {
+            const closure = await retainedBatchHistory(adapter, 'id IN (?, ?)', candidates);
             const evidence = await protectedEvidenceForTransactions(
                 adapter,
                 't.batch_id IN (?, ?)',
@@ -75,9 +107,10 @@ function createBatchDeletionService(overrides = {}) {
                 'SELECT id FROM batch_transfers WHERE batch_id IN (?, ?)',
                 candidates
             );
-            if (evidence || paymentImport || staging || transfer) {
+            if (closure || evidence || paymentImport || staging || transfer) {
                 throw new BatchDeletionConflictError('batch has retained evidence');
             }
+            await assertInventoryRetained(adapter, candidates);
 
             await adapter.runQuery('DELETE FROM logs WHERE batch_id IN (?, ?)', candidates);
             await adapter.runQuery('DELETE FROM health_logs WHERE batch_id IN (?, ?)', candidates);
@@ -89,13 +122,16 @@ function createBatchDeletionService(overrides = {}) {
 
     async function deleteAllBatches() {
         return dependencies.withDedicatedTransaction(async adapter => {
+            const batches = await adapter.allQuery('SELECT id, data FROM batches');
+            const closure = await retainedBatchHistory(adapter, '1 = 1', []);
             const evidence = await protectedEvidenceForTransactions(adapter, '1 = 1', []);
             const paymentImport = await first(adapter, 'SELECT id FROM payment_imports WHERE batch_id IS NOT NULL');
             const staging = await first(adapter, 'SELECT id FROM staging');
             const transfer = await first(adapter, 'SELECT id FROM batch_transfers');
-            if (evidence || paymentImport || staging || transfer) {
+            if (closure || evidence || paymentImport || staging || transfer) {
                 throw new BatchDeletionConflictError('one or more batches have retained evidence');
             }
+            await assertInventoryRetained(adapter, batches.map(row => row.id));
 
             await adapter.runQuery('DELETE FROM logs');
             await adapter.runQuery('DELETE FROM health_logs');

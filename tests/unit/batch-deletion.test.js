@@ -7,7 +7,7 @@ const path = require('node:path');
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const { createDedicatedTransactionBoundary } = require('../../services/sqlite-transaction');
-const { createBatchDeletionService } = require('../../services/batch-deletion');
+const { BatchDeletionConflictError, createBatchDeletionService } = require('../../services/batch-deletion');
 const { registerBatchDeletionApi } = require('../../services/batch-deletion-http');
 
 function openDatabase(filename) {
@@ -80,7 +80,8 @@ async function initializeDatabase(filename) {
                 batch_id TEXT,
                 created_transaction_id TEXT
             )`,
-            'CREATE TABLE batch_transfers (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL)'
+            'CREATE TABLE batch_transfers (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL)',
+            'CREATE TABLE production_inventory_movements (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL)'
         ]) await run(database, sql);
 
         for (const id of [
@@ -126,6 +127,14 @@ async function initializeDatabase(filename) {
     } finally {
         await closeDatabase(database);
     }
+}
+
+async function clearDeletionFixtures(filename) {
+    for (const table of [
+        'customer_account_allocations', 'customer_account_events', 'ledger_entries', 'ledger_transactions',
+        'payment_imports', 'production_inventory_movements', 'transactions', 'staging', 'batch_transfers',
+        'logs', 'health_logs', 'batches'
+    ]) await execute(filename, `DELETE FROM ${table}`);
 }
 
 function request(server, method, pathname, { role, confirm } = {}) {
@@ -244,4 +253,36 @@ test('batch deletion transaction rolls back earlier operational deletes when a l
     assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM logs WHERE id = 'legacy-safe-log'"), 1);
     assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM health_logs WHERE id = 'legacy-safe-health'"), 1);
     assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM transactions WHERE id = 'legacy-safe-tx'"), 1);
+});
+
+test('batch deletion retains closed reviews and immutable inventory for individual and bulk deletion', async t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-batch-deletion-retention-'));
+    const filename = path.join(directory, 'test.db');
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    await initializeDatabase(filename);
+    await clearDeletionFixtures(filename);
+    const service = createBatchDeletionService({
+        withDedicatedTransaction: createDedicatedTransactionBoundary(filename).withDedicatedTransaction
+    });
+
+    await execute(filename, 'INSERT INTO batches (id, data) VALUES (?, ?)', [
+        'completed', JSON.stringify({ id: 'completed', status: 'completed' })
+    ]);
+    await execute(filename, 'INSERT INTO batches (id, data) VALUES (?, ?)', [
+        'reviewed', JSON.stringify({ id: 'reviewed', status: 'post_batch', closure_review: { status: 'exception_accepted' } })
+    ]);
+    await assert.rejects(service.deleteBatch('completed'), BatchDeletionConflictError);
+    await assert.rejects(service.deleteBatch('reviewed'), BatchDeletionConflictError);
+    await assert.rejects(service.deleteAllBatches(), BatchDeletionConflictError);
+    assert.equal(await scalar(filename, 'SELECT COUNT(*) AS value FROM batches'), 2);
+
+    await clearDeletionFixtures(filename);
+    await execute(filename, 'INSERT INTO batches (id, data) VALUES (?, ?)', [
+        'inventory', JSON.stringify({ id: 'inventory', status: 'active' })
+    ]);
+    await execute(filename, "INSERT INTO production_inventory_movements (id, batch_id) VALUES ('movement-1', 'inventory')");
+    await assert.rejects(service.deleteBatch('inventory'), BatchDeletionConflictError);
+    await assert.rejects(service.deleteAllBatches(), BatchDeletionConflictError);
+    assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM batches WHERE id = 'inventory'"), 1);
+    assert.equal(await scalar(filename, "SELECT COUNT(*) AS value FROM production_inventory_movements WHERE id = 'movement-1'"), 1);
 });
