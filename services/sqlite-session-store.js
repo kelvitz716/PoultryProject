@@ -36,10 +36,25 @@ class SqliteSessionStore extends session.Store {
         }
         this.db = new sqlite3.Database(databasePath);
         this.ready = new Promise((resolve, reject) => {
-            this.db.run(
-                'CREATE TABLE IF NOT EXISTS sessions (sid TEXT PRIMARY KEY, sess TEXT NOT NULL, expire INTEGER NOT NULL)',
-                error => error ? reject(error) : resolve()
-            );
+            this.db.serialize(() => {
+                this.db.run(
+                    'CREATE TABLE IF NOT EXISTS sessions (sid TEXT PRIMARY KEY, sess TEXT NOT NULL, expire INTEGER NOT NULL)',
+                    error => {
+                        if (error) return reject(error);
+                        this.db.all('PRAGMA table_info(sessions)', (columnError, columns) => {
+                            if (columnError) return reject(columnError);
+                            if (columns.some(column => column.name === 'expire')) return resolve();
+                            // Older connect-sqlite3 deployments used `expired` rather than
+                            // `expire`. Do not infer validity from legacy serialized rows:
+                            // adding the zero default safely requires a fresh login instead.
+                            this.db.run('ALTER TABLE sessions ADD COLUMN expire INTEGER NOT NULL DEFAULT 0', alterError => {
+                                if (alterError) reject(alterError);
+                                else resolve();
+                            });
+                        });
+                    }
+                );
+            });
         });
     }
 
