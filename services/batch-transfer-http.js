@@ -14,6 +14,18 @@ function listLimit(value) {
 }
 function registerBatchTransferApi(app, { batchTransferService, requireRole }) {
     const transferRole = requireRole('super_admin', 'admin');
+    const allocationReadRole = requireRole('super_admin', 'admin', 'farmer', 'viewer');
+    app.get('/api/batches/:id/house-balances', allocationReadRole, async (req, res) => {
+        try {
+            const result = await batchTransferService.getHouseBalances({ batch_id: req.params.id, as_of_date: req.query.date });
+            return res.json(result);
+        } catch (error) {
+            if (error instanceof BatchTransferNotFoundError) return res.status(404).json({ error: 'Batch not found' });
+            if (error instanceof BatchTransferConflictError) return res.status(409).json({ error: 'House allocation records require review' });
+            if (error instanceof BatchTransferValidationError || error instanceof TypeError || error instanceof RangeError) return res.status(400).json({ error: 'Invalid house allocation request' });
+            return res.status(500).json({ error: 'House allocation lookup failed' });
+        }
+    });
     app.get('/api/batches/:id/transfers', transferRole, async (req, res) => {
         const limit = listLimit(req.query.limit);
         if (limit === null) return res.status(400).json({ error: 'Invalid transfer history request' });

@@ -22,6 +22,8 @@ test('batch transfers are immutable, session-attributed, idempotent, and cannot 
     const db = await open(filename);
     try {
         await run(db, 'CREATE TABLE batches (id TEXT PRIMARY KEY, data TEXT NOT NULL)');
+        await run(db, 'CREATE TABLE logs (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, data TEXT NOT NULL, date TEXT NOT NULL)');
+        await run(db, 'CREATE TABLE staging (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, module TEXT NOT NULL, date TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL)');
         await migrateBatchTransfers(db);
         await run(db, 'INSERT INTO batches (id, data) VALUES (?, ?)', ['batch-1', JSON.stringify({ id: 'batch-1', status: 'active', cohort_id: 'cohort:1', location_id: 'house:a', size: 100, stats: { birdsAlive: 90 } })]);
         await run(db, 'INSERT INTO batches (id, data) VALUES (?, ?)', ['closed', JSON.stringify({ id: 'closed', status: 'completed', cohort_id: 'cohort:2', location_id: 'house:a', size: 100, stats: { birdsAlive: 100 } })]);
@@ -32,11 +34,12 @@ test('batch transfers are immutable, session-attributed, idempotent, and cannot 
     assert.deepEqual([created.idempotent, created.transfer.cohort_id, created.transfer.created_by_user_id], [false, 'cohort:1', 'admin-1']);
     assert.equal((await service.recordTransfer(input)).idempotent, true);
     await assert.rejects(service.recordTransfer({ ...input, quantity: 21 }), BatchTransferConflictError);
-    await assert.rejects(service.recordTransfer({ ...input, idempotency_key: 'batch-transfer-002', source_location_id: 'house:unknown' }), /source has no recorded cohort location/);
-    await assert.rejects(service.recordTransfer({ ...input, idempotency_key: 'batch-transfer-003', quantity: 91 }), /exceeds recorded live birds/);
+    await assert.rejects(service.recordTransfer({ ...input, idempotency_key: 'batch-transfer-002', source_location_id: 'house:unknown' }), /exceeds live birds at the source/);
+    await assert.rejects(service.recordTransfer({ ...input, idempotency_key: 'batch-transfer-003', quantity: 101 }), /exceeds live birds at the source/);
     await assert.rejects(service.recordTransfer({ ...input, idempotency_key: 'batch-transfer-003a', transfer_date: '2026-02-30' }), /invalid transfer date/);
     await assert.rejects(service.recordTransfer({ ...input, batch_id: 'closed', idempotency_key: 'batch-transfer-004' }), /closed batches/);
     const later = await service.recordTransfer({ ...input, source_location_id: 'house:b', destination_location_id: 'house:c', transfer_date: '2026-09-20', quantity: 10, idempotency_key: 'batch-transfer-005' });
+    await assert.rejects(service.recordTransfer({ ...input, source_location_id: 'house:b', destination_location_id: 'house:d', transfer_date: '2026-09-20', quantity: 11, idempotency_key: 'batch-transfer-006' }), /exceeds live birds at the source/);
     const history = await service.listTransfers({ batch_id: 'batch-1', limit: 10 });
     assert.deepEqual(history.transfers.map(row => [row.id, row.source_location_id, row.destination_location_id, row.transfer_date, row.created_by_user_id]), [
         [later.transfer.id, 'house:b', 'house:c', '2026-09-20', 'admin-1'],

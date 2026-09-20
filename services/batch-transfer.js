@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { getBatchHouseBalances } = require('./batch-house-balance');
 
 class BatchTransferValidationError extends Error {}
 class BatchTransferConflictError extends Error {}
@@ -76,13 +77,25 @@ function createBatchTransferService(overrides = {}) {
             try { batch = JSON.parse(row.data); } catch (_) { throw new BatchTransferConflictError('batch record is unreadable'); }
             if (batch.status === 'completed' || batch.closure_review) throw new BatchTransferConflictError('closed batches cannot be transferred');
             const cohortId = opaque(batch.cohort_id, 'batch cohort');
-            const openingLocation = opaque(batch.location_id, 'batch location');
-            const knownSource = request.source_location_id === openingLocation || await db.getQuery(
-                'SELECT id FROM batch_transfers WHERE batch_id = ? AND destination_location_id = ? LIMIT 1', [row.id, request.source_location_id]
-            );
-            if (!knownSource) throw new BatchTransferConflictError('transfer source has no recorded cohort location');
-            const birdsAlive = Number.isSafeInteger(batch.stats?.birdsAlive) ? batch.stats.birdsAlive : batch.size;
-            if (!Number.isSafeInteger(birdsAlive) || birdsAlive < request.quantity) throw new BatchTransferConflictError('transfer quantity exceeds recorded live birds');
+            // Project the entire immutable timeline, including this request.  A
+            // location may only send birds that are physically alive there on
+            // the stated date; aggregate batch totals cannot bypass this.
+            const allocation = await getBatchHouseBalances(db, {
+                batch_id: row.id,
+                as_of_date: request.transfer_date,
+                additional_transfers: [{
+                    id, source_location_id: request.source_location_id,
+                    destination_location_id: request.destination_location_id,
+                    transfer_date: request.transfer_date, quantity: request.quantity,
+                    created_at: '9999-12-31T23:59:59.999Z'
+                }]
+            });
+            if (allocation.conflict) {
+                if (allocation.conflict.reason === 'transfer_exceeds_source') {
+                    throw new BatchTransferConflictError('transfer quantity exceeds live birds at the source location');
+                }
+                throw new BatchTransferConflictError('recorded house mortality exceeds live birds');
+            }
             await db.runQuery(`INSERT INTO batch_transfers (
                 id, batch_id, cohort_id, source_location_id, destination_location_id, transfer_date, quantity,
                 reason, created_by_user_id, idempotency_key, request_fingerprint
@@ -108,7 +121,17 @@ function createBatchTransferService(overrides = {}) {
         });
     }
 
-    return { recordTransfer, listTransfers };
+    async function getHouseBalances({ batch_id, as_of_date } = {}) {
+        const requestedBatchId = batchId(batch_id);
+        return dependencies.withDedicatedReadTransaction(async db => {
+            const result = await getBatchHouseBalances(db, { batch_id: requestedBatchId, as_of_date });
+            if (!result) throw new BatchTransferNotFoundError('batch was not found');
+            if (result.conflict) throw new BatchTransferConflictError('house allocation records are inconsistent');
+            return { batch_id: result.batch_id, as_of_date: result.as_of_date, balances: result.balances };
+        });
+    }
+
+    return { recordTransfer, listTransfers, getHouseBalances };
 }
 
 function safe(row) {

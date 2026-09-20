@@ -1,5 +1,7 @@
 'use strict';
 
+const { getBatchHouseBalances } = require('./batch-house-balance');
+
 class BatchClosureValidationError extends Error {}
 class BatchClosureConflictError extends Error {}
 
@@ -57,6 +59,13 @@ function createBatchClosureService(overrides = {}) {
                 throw new BatchClosureConflictError('batch requires explicit cohort and location identity before closure');
             }
 
+            const allocation = await getBatchHouseBalances(adapter, {
+                batch_id: row.id,
+                as_of_date: closedAt.toISOString().slice(0, 10)
+            });
+            if (allocation.conflict) throw new BatchClosureConflictError('house allocation records are inconsistent and require review');
+            const finalLocations = allocation.balances.filter(item => item.live_birds > 0);
+
             const unresolved = await adapter.allQuery(`
                 SELECT l.id AS ledger_transaction_id
                   FROM ledger_transactions l
@@ -75,7 +84,10 @@ function createBatchClosureService(overrides = {}) {
             batch.closure_review = {
                 policy_version: 1,
                 cohort_id: batch.cohort_id,
-                final_location_id: batch.location_id,
+                // Kept for compatibility when the cohort ended in one house;
+                // final_locations is the authoritative split-cohort record.
+                final_location_id: finalLocations.length === 1 ? finalLocations[0].location_id : null,
+                final_locations: finalLocations,
                 status: unresolved.length > 0 ? 'exception_accepted' : 'exact',
                 unresolved_ledger_transaction_ids: unresolved.map(item => item.ledger_transaction_id),
                 reconciliation_exception: exception,

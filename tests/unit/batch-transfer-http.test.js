@@ -8,6 +8,7 @@ const { registerBatchTransferApi } = require('../../services/batch-transfer-http
 
 function request(server, role, userId, body) { return new Promise((resolve, reject) => { const req = http.request({ host: '127.0.0.1', port: server.address().port, method: 'POST', path: '/api/batches/batch-1/transfers', headers: { 'content-type': 'application/json', ...(role ? { 'x-role': role, 'x-user': userId } : {}) } }, res => { const chunks = []; res.on('data', chunk => chunks.push(chunk)); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString() || '{}') })); }); req.on('error', reject); if (body !== undefined) req.write(JSON.stringify(body)); req.end(); }); }
 function historyRequest(server, role, userId, path = '/api/batches/batch-1/transfers?limit=2') { return new Promise((resolve, reject) => { const req = http.request({ host: '127.0.0.1', port: server.address().port, method: 'GET', path, headers: role ? { 'x-role': role, 'x-user': userId } : {} }, res => { const chunks = []; res.on('data', chunk => chunks.push(chunk)); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString() || '{}') })); }); req.on('error', reject); req.end(); }); }
+function balancesRequest(server, role, userId) { return historyRequest(server, role, userId, '/api/batches/batch-1/house-balances?date=2026-09-19'); }
 
 test('batch transfer route allows only privileged sessions and ignores forged operator fields', async t => {
     const calls = [];
@@ -17,7 +18,8 @@ test('batch transfer route allows only privileged sessions and ignores forged op
         requireRole,
         batchTransferService: {
             recordTransfer: async input => { calls.push(input); return { idempotent: false, transfer: { id: 'transfer:1' } }; },
-            listTransfers: async input => ({ transfers: [{ id: 'transfer:1', quantity: input.limit }] })
+            listTransfers: async input => ({ transfers: [{ id: 'transfer:1', quantity: input.limit }] }),
+            getHouseBalances: async input => ({ batch_id: input.batch_id, as_of_date: input.as_of_date, balances: [{ location_id: 'house:a', live_birds: 10 }] })
         }
     });
     const server = await new Promise(resolve => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); }); t.after(() => server.close());
@@ -32,4 +34,6 @@ test('batch transfer route allows only privileged sessions and ignores forged op
     assert.equal((await historyRequest(server, 'farmer', 'farmer-1')).status, 403);
     assert.deepEqual(await historyRequest(server, 'admin', 'admin-1'), { status: 200, body: { transfers: [{ id: 'transfer:1', quantity: 2 }] } });
     assert.equal((await historyRequest(server, 'admin', 'admin-1', '/api/batches/batch-1/transfers?limit=101')).status, 400);
+    assert.equal((await balancesRequest(server, undefined, undefined)).status, 401);
+    assert.deepEqual(await balancesRequest(server, 'farmer', 'farmer-1'), { status: 200, body: { batch_id: 'batch-1', as_of_date: '2026-09-19', balances: [{ location_id: 'house:a', live_birds: 10 }] } });
 });

@@ -332,6 +332,15 @@ export const api = {
         return this._requestBatchTransfer(`/api/batches/${encodeURIComponent(id)}/transfers?limit=${limit}`);
     },
 
+    /** Reads the derived live-bird allocation for each house in a cohort. */
+    async getBatchHouseBalances(batchId, date = null) {
+        if (typeof batchId !== 'string' && typeof batchId !== 'number') return { ok: false, status: null, error: 'Invalid house allocation request' };
+        const id = String(batchId).trim();
+        if (!id || (date !== null && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)))) return { ok: false, status: null, error: 'Invalid house allocation request' };
+        const suffix = date ? `?date=${encodeURIComponent(date)}` : '';
+        return this._requestBatchTransfer(`/api/batches/${encodeURIComponent(id)}/house-balances${suffix}`);
+    },
+
     async _requestBatchTransfer(path, options = {}) {
         let response;
         try { response = await fetch(path, options); }

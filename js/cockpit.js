@@ -206,6 +206,11 @@ window.openBatchCockpit = async function(id) {
                     <input type="date" id="log-date" value="${new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0]}" max="${new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0]}" class="input-sm" style="width:auto;" onchange="window.handleLogDateChange()">
                 </div>
                 <div class="log-form-grid" style="flex:1;">
+                    <div class="log-field" id="log-house-field" style="grid-column:1/-1;">
+                        <label for="log-location">House</label>
+                        <select id="log-location" class="input-md" disabled aria-describedby="log-house-hint"></select>
+                        <span id="log-house-hint" class="field-hint">Loading live-bird allocation…</span>
+                    </div>
                     <div class="log-field" style="grid-column:1/-1;">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                             <label style="margin:0;">🥚 Egg Collections</label>
@@ -402,6 +407,7 @@ window.openBatchCockpit = async function(id) {
     })();
 
     window.switchView('batch-cockpit');
+    void window.refreshDailyHousePicker(batch, document.getElementById('log-date')?.value);
     void window.refreshCockpitSafely(batch, 'initial cockpit load');
 };
 
@@ -493,7 +499,7 @@ function _renderEggCollectionList() {
         <div class="egg-collection-row" style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border-radius:8px;padding:8px 12px;">
             <span style="font-size:1.1rem;font-weight:700;min-width:54px;display:inline-flex;align-items:center;">${parseInt(ev.count)||0} 🥚${brokenStr}</span>
             <span style="opacity:0.55;font-size:0.82rem;min-width:42px;">${ev.time || '—'}</span>
-            <span style="flex:1;display:flex;align-items:center;gap:4px;">${ev.label ? `<span class="pill" style="font-size:10px; font-weight:600; padding:2px 8px; border-radius:12px; background:var(--primary-soft); color:var(--primary); text-transform:capitalize; border:1px solid rgba(99,102,241,0.15); line-height:1; display:inline-block; font-style:normal;">${ev.label}</span>` : ''}</span>
+            <span style="flex:1;display:flex;align-items:center;gap:4px;">${ev.label ? `<span class="pill" style="font-size:10px; font-weight:600; padding:2px 8px; border-radius:12px; background:var(--primary-soft); color:var(--primary); text-transform:capitalize; border:1px solid rgba(99,102,241,0.15); line-height:1; display:inline-block; font-style:normal;">${ev.label}</span>` : ''}${ev.location_id ? `<span style="font-size:10px;color:var(--text-muted);">${ev.location_id}</span>` : ''}</span>
             <button type="button" onclick="window.editEggCollection(${idx})" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:0.75rem;">Edit</button>
             <button type="button" onclick="window.deleteEggCollection(${idx})" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:0.75rem;color:var(--danger);">✕</button>
         </div>`;
@@ -563,7 +569,9 @@ window.deleteStagingItem = async function(id, type) {
 window.addEggCollection = function() {
     const now = new Date(Date.now() + 3 * 3600 * 1000);
     const defaultTime = now.toISOString().substring(11, 16);
-    _showEggCollectionModal({ time: defaultTime, count: '', broken: 0, label: '' }, null);
+    const location_id = document.getElementById('log-location')?.value || '';
+    if (!location_id) { showToast('Wait for the house allocation before adding eggs.', 'warning'); return; }
+    _showEggCollectionModal({ time: defaultTime, count: '', broken: 0, label: '', location_id }, null);
 };
 
 window.editEggCollection = function(idx) {
@@ -642,7 +650,7 @@ function _showEggCollectionModal(data, editIdx) {
             return;
         }
         document.getElementById('ecm-save').textContent = 'Saving…';
-        const eventData = { count, broken, time, label };
+        const eventData = { count, broken, time, label, location_id: data.location_id || document.getElementById('log-location')?.value || '' };
 
         if (isEdit) {
             const existing = _eggCollections[editIdx];
@@ -676,6 +684,7 @@ window.submitDailyLog = async function(event) {
     const mortalityHens = parseInt($('log-mortality-hens')?.value) || 0;
     const mortalityRoosters = parseInt($('log-mortality-roosters')?.value) || 0;
     const mortality = mortalityHens + mortalityRoosters;
+    const locationId = $('log-location')?.value || '';
     const nh3       = parseFloat($('log-nh3').value) || null;
     const co2       = parseFloat($('log-co2').value) || null;
     const temperature = parseFloat($('log-temp').value) || null;
@@ -683,6 +692,7 @@ window.submitDailyLog = async function(event) {
     const notesVal    = $('log-notes').value.trim();
 
     if (!date) { window.showToast('Please select a date.', 'warning'); return; }
+    if (!locationId) { window.showToast('Choose a house before saving feed, eggs, or deaths.', 'warning'); return; }
 
     if (mortality > 0) {
         const currentBirds = parseInt($('log-birds')?.value) || batch.size || 1;
@@ -706,20 +716,21 @@ window.submitDailyLog = async function(event) {
 
     if (isBackfill && _eggCollections.length > 0) {
         for (const ev of _eggCollections) {
-            promises.push(api.addStagingEvent(batch.id, 'eggs', { count: ev.count, time: ev.time, label: ev.label }, amendDate));
+            promises.push(api.addStagingEvent(batch.id, 'eggs', { count: ev.count, broken: ev.broken || 0, time: ev.time, label: ev.label, location_id: ev.location_id || locationId }, amendDate));
         }
     }
 
     if (feedGiven || sacks) {
         promises.push(api.addStagingEvent(batch.id, 'feed',
-            { amount_kg: feedGiven || (sacks * (store.farmProfile.sackWeightKg || 50)), sacks_opened: sacks }, amendDate));
+            { amount_kg: feedGiven || (sacks * (store.farmProfile.sackWeightKg || 50)), sacks_opened: sacks, location_id: locationId }, amendDate));
     }
 
     if (mortality > 0) {
         promises.push(api.addStagingEvent(batch.id, 'mortality', { 
             count: mortality,
             hens: mortalityHens,
-            roosters: mortalityRoosters
+            roosters: mortalityRoosters,
+            location_id: locationId
         }, amendDate));
     }
 
@@ -814,6 +825,7 @@ window.refreshCockpitData = async function(batch) {
             broken: c.broken || 0,
             time: c.time,
             label: c.label || c.note || '',
+            location_id: c.location_id || '',
             _stagingId: c.id
         }));
         _renderEggCollectionList();
@@ -1120,6 +1132,41 @@ window.refreshCockpitSafely = async function(batch, source = 'unspecified') {
     }
 };
 
+window.refreshDailyHousePicker = async function(batch, date) {
+    const select = document.getElementById('log-location');
+    const hint = document.getElementById('log-house-hint');
+    const birds = document.getElementById('log-birds');
+    if (!select || !batch || !date) return;
+    select.disabled = true;
+    if (hint) hint.textContent = 'Loading live-bird allocation…';
+    const result = await api.getBatchHouseBalances(batch.id, date);
+    if (!result.ok || !Array.isArray(result.body?.balances)) {
+        select.replaceChildren();
+        if (hint) hint.textContent = 'House allocation is unavailable. Daily entries are paused until it can be checked.';
+        return;
+    }
+    const active = result.body.balances.filter(item => Number.isSafeInteger(item.live_birds) && item.live_birds > 0);
+    select.replaceChildren();
+    active.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.location_id;
+        option.textContent = `${item.location_id} — ${item.live_birds} live birds`;
+        select.appendChild(option);
+    });
+    const syncBirds = () => {
+        const chosen = active.find(item => item.location_id === select.value);
+        if (birds) birds.value = String(chosen?.live_birds || 0);
+    };
+    select.onchange = syncBirds;
+    syncBirds();
+    select.disabled = active.length === 0;
+    if (hint) hint.textContent = active.length === 0
+        ? 'No house has live birds allocated for this date.'
+        : active.length === 1
+            ? 'All daily records are assigned to this house.'
+            : 'Feed, eggs, and deaths are recorded against the selected house.';
+};
+
 window.handleLogDateChange = async function() {
     const dateInput = $('log-date');
     const tempInput = $('log-temp');
@@ -1136,6 +1183,9 @@ window.handleLogDateChange = async function() {
         if (humHint) humHint.style.display = 'none';
         return;
     }
+
+    const batch = window.getBatches().find(item => String(item.id) === String(store.currentBatchId));
+    if (batch) await window.refreshDailyHousePicker(batch, date);
 
     const today = new Date(Date.now() + 3 * 3600 * 1000).toISOString().split('T')[0];
 
@@ -2093,22 +2143,13 @@ window.openBatchTransferModal = async function(batchId) {
     const historyStatus = modal.querySelector('#transfer-history-status');
     const source = modal.querySelector('#transfer-source');
 
-    const setSources = transfers => {
+    const setSources = balances => {
         if (!source) return;
-        const sources = new Map();
-        if (typeof batch.location_id === 'string' && batch.location_id.trim()) {
-            sources.set(batch.location_id, batch.location_name ? `Opening location — ${batch.location_name}` : 'Opening location');
-        }
-        transfers.forEach(transfer => {
-            if (typeof transfer.destination_location_id === 'string' && transfer.destination_location_id) {
-                sources.set(transfer.destination_location_id, 'Previously recorded destination');
-            }
-        });
         source.replaceChildren();
-        sources.forEach((label, locationId) => {
+        balances.filter(item => Number.isSafeInteger(item.live_birds) && item.live_birds > 0).forEach(item => {
             const option = document.createElement('option');
-            option.value = locationId;
-            option.textContent = `${label}: ${locationId}`;
+            option.value = item.location_id;
+            option.textContent = `${item.location_id} — ${item.live_birds} live birds`;
             source.appendChild(option);
         });
     };
@@ -2145,21 +2186,32 @@ window.openBatchTransferModal = async function(batchId) {
             historyBody.appendChild(row);
         });
     };
+    const loadBalances = async () => {
+        const date = modal.querySelector('#transfer-date')?.value || undefined;
+        const result = await api.getBatchHouseBalances(batchId, date);
+        if (!result.ok || !Array.isArray(result.body?.balances)) {
+            setSources([]);
+            return false;
+        }
+        setSources(result.body.balances);
+        return true;
+    };
     const loadHistory = async () => {
         historyStatus.textContent = 'Loading transfer history…';
         const result = await api.getBatchTransfers(batchId);
         if (!result.ok || !Array.isArray(result.body?.transfers)) {
             historyStatus.textContent = 'Transfer history is unavailable. Refresh and try again.';
             renderHistory([]);
-            setSources([]);
+            await loadBalances();
             return;
         }
         const transfers = result.body.transfers;
         historyStatus.textContent = transfers.length ? `${transfers.length} recorded transfer${transfers.length === 1 ? '' : 's'}.` : 'No recorded transfers.';
         renderHistory(transfers);
-        setSources(transfers);
+        await loadBalances();
     };
     modal.querySelector('#refresh-transfer-history').addEventListener('click', () => { void loadHistory(); });
+    modal.querySelector('#transfer-date')?.addEventListener('change', () => { void loadBalances(); });
 
     const form = modal.querySelector('#batch-transfer-form');
     if (form) {

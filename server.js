@@ -69,6 +69,7 @@ const { createBatchClosureService } = require('./services/batch-closure');
 const { registerBatchClosureApi } = require('./services/batch-closure-http');
 const { createBatchTransferService } = require('./services/batch-transfer');
 const { registerBatchTransferApi } = require('./services/batch-transfer-http');
+const { OPAQUE_ID, getBatchHouseBalances } = require('./services/batch-house-balance');
 const { createProductionInventoryReportingService } = require('./services/production-inventory-reporting');
 const { registerProductionInventoryApi } = require('./services/production-inventory-http');
 const lifecycleSimulation = require('./services/lifecycle-simulation');
@@ -1070,6 +1071,29 @@ app.post('/api/auth/guest-token/regenerate', requireRole('super_admin', 'admin')
 // Valid modules and which fields require sanity bounds (sensors)
 const STAGING_MODULES = ['eggs', 'feed', 'mortality', 'sensors', 'gases', 'health', 'notes'];
 const SENSOR_BOUNDS = { temperature: [-5, 50], humidity: [0, 100], battery: [0, 100] };
+const HOUSE_SCOPED_MODULES = new Set(['eggs', 'feed', 'mortality']);
+
+class HouseAllocationError extends Error {
+    constructor(message, status = 400) { super(message); this.status = status; }
+}
+
+async function assignHouseLocation(batchId, module, targetDate, data) {
+    if (!HOUSE_SCOPED_MODULES.has(module)) return;
+    const allocation = await getBatchHouseBalances({ getQuery, allQuery }, { batch_id: batchId, as_of_date: targetDate });
+    if (!allocation) throw new HouseAllocationError('Batch not found.', 404);
+    if (allocation.conflict) throw new HouseAllocationError('House allocation records require review before logging.', 409);
+    const active = allocation.balances.filter(item => item.live_birds > 0);
+    if (active.length === 0) throw new HouseAllocationError('No live birds are allocated to a house for this date.', 409);
+    let locationId = typeof data.location_id === 'string' ? data.location_id.trim() : '';
+    if (!locationId && active.length === 1) locationId = active[0].location_id;
+    if (!OPAQUE_ID.test(locationId)) throw new HouseAllocationError('Choose the house for this daily record.');
+    const selected = active.find(item => item.location_id === locationId);
+    if (!selected) throw new HouseAllocationError('The selected house has no live birds on this date.', 409);
+    if (module === 'mortality' && Number(data.count) > selected.live_birds) {
+        throw new HouseAllocationError(`Deaths exceed the ${selected.live_birds} live birds at this house.`, 409);
+    }
+    data.location_id = locationId;
+}
 
 /**
  * POST /api/staging/:batchId/:module
@@ -1097,7 +1121,8 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
             return res.status(400).json({ error: 'Cannot stage events for future dates.' });
         }
 
-        const data = req.body;
+        if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) return res.status(400).json({ error: 'Invalid staging data.' });
+        const data = { ...req.body };
 
         // Sensor-specific: bounds check and suspect flagging
         if (module === 'sensors') {
@@ -1113,26 +1138,7 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
             data.suspect = suspect;
         }
 
-        // Mortality: prevent birdsAlive going below zero
-        if (module === 'mortality' && data.count) {
-            const batchRow = await getQuery('SELECT data FROM batches WHERE id = ?', [batchId]);
-            if (batchRow) {
-                const batch = JSON.parse(batchRow.data);
-                const initialBirds = batch.size || 0;
-                const committedMortality = await getQuery(
-                    'SELECT SUM(json_extract(data, \"$.mortality\")) as total FROM logs WHERE batch_id = ?',
-                    [batchId]
-                );
-                const pendingMortality = await getQuery(
-                    'SELECT SUM(json_extract(data, \"$.count\")) as total FROM staging WHERE batch_id = ? AND module = ? AND status = ?',
-                    [batchId, 'mortality', STAGING_STATUS.PENDING]
-                );
-                const totalMortality = (committedMortality?.total || 0) + (pendingMortality?.total || 0) + (data.count || 0);
-                if (totalMortality > initialBirds) {
-                    return res.status(400).json({ error: `Total mortality (${totalMortality}) exceeds initial flock size (${initialBirds}).` });
-                }
-            }
-        }
+        await assignHouseLocation(batchId, module, targetDate, data);
 
         const id = data.id || `stg_${Date.now()}_${crypto.randomUUID()}`;
         delete data.id; // remove from internal data payload to save space
@@ -1154,7 +1160,7 @@ app.post('/api/staging/:batchId/:module', requireRole('super_admin', 'admin', 'f
         }
 
         res.json({ success: true, id, date: targetDate, timestamp, status });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { res.status(e instanceof HouseAllocationError ? e.status : 500).json({ error: e.message }); }
 });
 
 /**
@@ -1167,12 +1173,20 @@ app.put('/api/staging/:batchId/:stagingId', requireRole('super_admin', 'admin', 
         const row = await getQuery('SELECT * FROM staging WHERE id = ? AND batch_id = ?', [stagingId, batchId]);
         if (!row) return res.status(404).json({ error: 'Staging event not found.' });
         if (row.status === STAGING_STATUS.COMMITTED) return res.status(409).json({ error: 'Cannot edit a committed event. Use amendment instead.' });
+        if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) return res.status(400).json({ error: 'Invalid staging data.' });
+        const data = { ...req.body };
+        if (HOUSE_SCOPED_MODULES.has(row.module)) {
+            const prior = JSON.parse(row.data);
+            // A house tag cannot be silently removed or reassigned by an edit.
+            if (typeof prior.location_id === 'string' && OPAQUE_ID.test(prior.location_id)) data.location_id = prior.location_id;
+            else await assignHouseLocation(batchId, row.module, row.date, data);
+        }
         await runQuery(
             'UPDATE staging SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [JSON.stringify(req.body), stagingId]
+            [JSON.stringify(data), stagingId]
         );
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { res.status(e instanceof HouseAllocationError ? e.status : 500).json({ error: e.message }); }
 });
 
 /**

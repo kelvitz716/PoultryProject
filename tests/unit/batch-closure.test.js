@@ -19,10 +19,13 @@ async function setup(filename) {
     try {
         await run(db, 'PRAGMA foreign_keys=ON');
         await run(db, 'CREATE TABLE batches (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT)');
+        await run(db, 'CREATE TABLE batch_transfers (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, source_location_id TEXT NOT NULL, destination_location_id TEXT NOT NULL, transfer_date TEXT NOT NULL, quantity INTEGER NOT NULL, created_at TEXT)');
+        await run(db, 'CREATE TABLE logs (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, data TEXT NOT NULL, date TEXT NOT NULL)');
+        await run(db, 'CREATE TABLE staging (id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, module TEXT NOT NULL, date TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL)');
         await run(db, 'CREATE TABLE ledger_transactions (id TEXT PRIMARY KEY, ref_id TEXT)');
         await run(db, 'CREATE TABLE ledger_entries (id TEXT PRIMARY KEY, transaction_id TEXT, reconciliation_status TEXT)');
         for (const [id, data] of [
-            ['exact', { id: 'exact', status: 'post_batch', cohort_id: 'cohort:one', location_id: 'house:a' }],
+            ['exact', { id: 'exact', status: 'post_batch', cohort_id: 'cohort:one', location_id: 'house:a', size: 100 }],
             ['review', { id: 'review', status: 'post_batch', cohort_id: 'cohort:two', location_id: 'house:b' }],
             ['unknown-status', { id: 'unknown-status', status: 'post_batch', cohort_id: 'cohort:three', location_id: 'house:c' }],
             ['missing-entry', { id: 'missing-entry', status: 'post_batch', cohort_id: 'cohort:four', location_id: 'house:d' }],
@@ -45,6 +48,7 @@ test('batch closure requires cohort/location identity and records an immutable r
 
     const exact = await service.closeBatch({ batch_id: 'exact', actor_user_id: 'admin-1', closed_at: '2026-09-19T12:00:00.000Z' });
     assert.deepEqual([exact.batch.status, exact.batch.closure_review.status, exact.unresolved_count], ['completed', 'exact', 0]);
+    assert.deepEqual(exact.batch.closure_review.final_locations, [{ location_id: 'house:a', live_birds: 100 }]);
     await assert.rejects(service.closeBatch({ batch_id: 'exact', actor_user_id: 'admin-1' }), BatchClosureConflictError);
     await assert.rejects(service.closeBatch({ batch_id: 'missing', actor_user_id: 'admin-1' }), /requires explicit cohort and location/);
     await assert.rejects(service.closeBatch({ batch_id: 'review', actor_user_id: 'admin-1' }), /unresolved reconciliation/);

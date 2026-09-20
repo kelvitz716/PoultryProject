@@ -212,10 +212,12 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         logData.mortality_roosters = (existingLogRow && !hasAmendment ? (logData.mortality_roosters || 0) : 0) + newRoosters;
         
         const newEvents = byModule.mortality.map(e => ({ 
+            _id: e._id,
             time: e.time, 
             count: e.count, 
             hens: e.hens || 0,
             roosters: e.roosters || 0,
+            location_id: e.location_id,
             cause: e.cause, 
             note: e.note 
         }));

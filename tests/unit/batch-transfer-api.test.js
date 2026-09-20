@@ -22,5 +22,7 @@ test('batch transfer API helpers use encoded bounded requests and never send act
     assert.equal(posted.actor_user_id, undefined);
     assert.deepEqual(await api.getBatchTransfers('batch / one', 2), { ok: true, status: 200, body: { transfers: [] } });
     assert.equal(calls[1].url, '/api/batches/batch%20%2F%20one/transfers?limit=2');
+    assert.deepEqual(await api.getBatchHouseBalances('batch / one', '2026-09-19'), { ok: true, status: 200, body: { transfers: [] } });
+    assert.equal(calls[2].url, '/api/batches/batch%20%2F%20one/house-balances?date=2026-09-19');
     assert.deepEqual(await api.getBatchTransfers('batch-1', 101), { ok: false, status: null, error: 'Invalid transfer history request' });
 });
