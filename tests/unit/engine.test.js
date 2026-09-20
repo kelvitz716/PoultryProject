@@ -81,4 +81,41 @@ test('engine.js & health.js unit tests', async (t) => {
         assert.deepEqual(olRes.eggClearDate, expectedOlEggClear);
         assert.deepEqual(olRes.meatClearDate, expectedOlMeatClear);
     });
+
+    await t.test('health record rendering keeps persisted markup inert', () => {
+        class FakeElement {
+            constructor(tagName) {
+                this.tagName = tagName;
+                this.children = [];
+                this.style = {};
+                this.textContent = '';
+                this.className = '';
+                this.attributes = {};
+            }
+            append(...children) { this.children.push(...children); }
+            replaceChildren(...children) { this.children = children; }
+            setAttribute(name, value) { this.attributes[name] = value; }
+        }
+        const dom = { createElement: tagName => new FakeElement(tagName) };
+        const container = new FakeElement('div');
+        const payload = '<img src=x onerror=alert(1)>';
+
+        health.renderHealthLogTable(container, [{
+            date: payload,
+            type: 'vaccine',
+            drug: payload,
+            dosage: payload,
+            route: payload,
+            admin: payload,
+            offLabel: true
+        }], dom);
+
+        assert.equal(Object.hasOwn(container, 'innerHTML'), false);
+        const row = container.children[0].children[1].children[0];
+        assert.equal(row.children[0].textContent, payload);
+        assert.equal(row.children[1].children[1].textContent, payload);
+        assert.equal(row.children[2].children[0].textContent, payload);
+        assert.equal(row.children[2].children[1].textContent, payload);
+        assert.equal(row.children[3].textContent, payload);
+    });
 });

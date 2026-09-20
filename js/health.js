@@ -218,41 +218,99 @@ window.openHealthModal = function(type) {
     });
 };
 
+const headerStyle = 'padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);';
+const cellStyle = 'padding:8px 12px;';
+
+function text(value) {
+    return String(value ?? '');
+}
+
+function appendCell(row, value, style = cellStyle, dom = document) {
+    const cell = dom.createElement('td');
+    cell.style.cssText = style;
+    cell.textContent = text(value);
+    row.append(cell);
+    return cell;
+}
+
+/**
+ * Render persisted health records exclusively through textContent. Health log
+ * fields are user-supplied and must never be parsed as HTML when revisited.
+ */
+export function renderHealthLogTable(container, logs, dom = document) {
+    const records = Array.isArray(logs) ? logs : [];
+    if (records.length === 0) {
+        const empty = dom.createElement('p');
+        empty.style.cssText = 'text-align:center; padding:20px; color:var(--text-muted);';
+        empty.textContent = 'No health records yet.';
+        container.replaceChildren(empty);
+        return;
+    }
+
+    const table = dom.createElement('table');
+    table.style.cssText = 'width:100%; border-collapse:collapse;';
+    const thead = dom.createElement('thead');
+    const headerRow = dom.createElement('tr');
+    for (const label of ['Date', 'Event', 'Dosage', 'Admin']) {
+        const header = dom.createElement('th');
+        header.style.cssText = headerStyle;
+        header.textContent = label;
+        headerRow.append(header);
+    }
+    thead.append(headerRow);
+
+    const tbody = dom.createElement('tbody');
+    for (const record of records) {
+        const row = dom.createElement('tr');
+        row.style.cssText = 'border-bottom:1px solid var(--border-color); font-size:13px;';
+        appendCell(row, record.date, `${cellStyle} color:var(--text-muted);`, dom);
+
+        const eventCell = dom.createElement('td');
+        eventCell.style.cssText = cellStyle;
+        const isVaccine = record.type === 'vaccine';
+        const pill = dom.createElement('span');
+        pill.className = 'pill';
+        pill.style.cssText = `background:${isVaccine ? 'var(--primary-soft)' : '#fef3c7'}; color:${isVaccine ? 'var(--primary)' : 'var(--accent)'}; margin-right:6px;`;
+        const icon = dom.createElement('i');
+        icon.setAttribute('data-lucide', isVaccine ? 'syringe' : 'pill');
+        icon.style.cssText = 'width:12px;height:12px;vertical-align:middle;margin-right:2px;';
+        const eventType = dom.createElement('span');
+        eventType.textContent = isVaccine ? 'VACCINE' : 'MEDS';
+        pill.append(icon, eventType);
+        const drug = dom.createElement('strong');
+        drug.textContent = text(record.drug);
+        eventCell.append(pill, drug);
+        if (record.offLabel) {
+            const offLabel = dom.createElement('span');
+            offLabel.style.cssText = 'color:#dc2626; font-size:10px; margin-left:4px;';
+            offLabel.textContent = '(Off-label)';
+            eventCell.append(offLabel);
+        }
+        row.append(eventCell);
+
+        const dosageCell = dom.createElement('td');
+        dosageCell.style.cssText = cellStyle;
+        const dosage = dom.createElement('div');
+        dosage.style.cssText = 'margin-bottom:4px;';
+        dosage.textContent = text(record.dosage);
+        const route = dom.createElement('span');
+        route.className = 'pill';
+        route.style.cssText = 'background:var(--border-color); color:var(--text-muted); font-size:10px;';
+        route.textContent = text(record.route || 'Unknown');
+        dosageCell.append(dosage, route);
+        row.append(dosageCell);
+
+        appendCell(row, record.admin, `${cellStyle} color:var(--text-muted);`, dom);
+        tbody.append(row);
+    }
+
+    table.append(thead, tbody);
+    container.replaceChildren(table);
+}
+
 window.renderHealthTable = async function(batchId) {
     const container = $('health-log-table');
     if (!container) return;
-    const logs = await api.getHealthLogs(batchId);
-    
-    container.innerHTML = logs.length === 0 ? '<p style="text-align:center; padding:20px; color:var(--text-muted);">No health records yet.</p>' : `
-        <table style="width:100%; border-collapse:collapse;">
-            <thead><tr>
-                <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Date</th>
-                <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Event</th>
-                <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Dosage</th>
-                <th style="padding:8px 12px; text-align:left; font-size:12px; color:var(--text-muted); font-weight:600; border-bottom:2px solid var(--border-color);">Admin</th>
-            </tr></thead>
-            <tbody>
-                ${logs.map(l => {
-                    const icon = l.type === 'vaccine' ? 'syringe' : 'pill';
-                    const color = l.type === 'vaccine' ? 'var(--primary)' : 'var(--accent)';
-                    const bg = l.type === 'vaccine' ? 'var(--primary-soft)' : '#fef3c7'; // amber-100
-                    return `
-                    <tr style="border-bottom:1px solid var(--border-color); font-size:13px;">
-                        <td style="padding:8px 12px; color:var(--text-muted);">${l.date}</td>
-                        <td style="padding:8px 12px;">
-                            <span class="pill" style="background:${bg}; color:${color}; margin-right:6px;"><i data-lucide="${icon}" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i>${l.type.toUpperCase()}</span>
-                            <strong>${l.drug}</strong>
-                            ${l.offLabel ? '<span style="color:#dc2626; font-size:10px; margin-left:4px;">(Off-label)</span>' : ''}
-                        </td>
-                        <td style="padding:8px 12px;">
-                            <div style="margin-bottom:4px;">${l.dosage}</div>
-                            <span class="pill" style="background:var(--border-color); color:var(--text-muted); font-size:10px;">${l.route || 'Unknown'}</span>
-                        </td>
-                        <td style="padding:8px 12px; color:var(--text-muted);">${l.admin}</td>
-                    </tr>`;
-                }).join('')}
-            </tbody>
-        </table>
-    `;
-    lucide.createIcons();
+    renderHealthLogTable(container, await api.getHealthLogs(batchId));
+    globalThis.lucide?.createIcons?.();
 };
