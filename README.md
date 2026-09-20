@@ -206,8 +206,9 @@ git push master
   └─ SSH into OCI:
        docker pull ghcr.io/kelvitz716/poultryproject@sha256:<digest>
        IMAGE_REF=...@sha256:<digest> docker compose up -d --pull never --no-build --force-recreate poultry-dss
-       docker image prune -f
 ```
+
+Before replacing a running container, both deployment paths create a consistent SQLite backup under `data/backups/` using SQLite's online backup API. Keep the previously pulled image: if a verified release needs to be rolled back, rerun `deploy.sh` with that prior immutable image digest after confirming the backup is present.
 
 **Required GitHub Secrets:**
 

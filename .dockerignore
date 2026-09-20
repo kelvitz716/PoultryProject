@@ -4,3 +4,6 @@ data
 .env
 .dockerignore
 tests
+scratch
+evidence
+docs

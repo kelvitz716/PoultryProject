@@ -104,6 +104,8 @@ jobs:
 
             echo "Hardening the SQLite data mount for the non-root runtime..."
             if docker inspect --format '{{.State.Running}}' poultry-dss 2>/dev/null | grep -qx true; then
+              echo "Creating a consistent pre-deploy SQLite backup..."
+              docker exec poultry-dss node scripts/admin.js db-backup
               docker stop poultry-dss
             fi
             docker run --rm --network none --user 0:0 -v "$PWD/data:/app/data:Z" "$IMAGE_REF" \
@@ -117,9 +119,6 @@ jobs:
               echo "Deployment image mismatch: expected $IMAGE_REF, got $RUNNING_IMAGE"
               exit 1
             fi
-
-            echo "Pruning dangling images to free disk space..."
-            docker image prune -f
 
             echo "=== Deploy complete. Container status: ==="
             docker ps --filter name=poultry-dss --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"

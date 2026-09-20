@@ -152,7 +152,11 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "unpkg.com", "cdn.jsdelivr.net", "cdnjs.cloudflare.com"],
+            // Browser dependencies are pinned in package-lock.json and exposed
+            // only through the two narrow local routes below.  Inline event
+            // attributes remain a compatibility exception until the legacy UI
+            // has been migrated to addEventListener.
+            scriptSrc: ["'self'"],
             scriptSrcAttr: ["'unsafe-inline'"],
             styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com", "cdnjs.cloudflare.com"],
             styleSrcAttr: ["'unsafe-inline'"],
@@ -228,6 +232,17 @@ app.get('/service-worker.js', (req, res) => {
 app.get('/js/:file', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     res.sendFile(path.join(__dirname, 'js', req.params.file));
+});
+
+// Do not expose all of node_modules. These are the only browser dependencies
+// used by the UI, installed at exact versions and served from the local image.
+app.get('/vendor/lucide.js', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.sendFile(path.join(__dirname, 'node_modules', 'lucide', 'dist', 'umd', 'lucide.min.js'));
+});
+app.get('/vendor/chart.js', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.sendFile(path.join(__dirname, 'node_modules', 'chart.js', 'dist', 'chart.umd.js'));
 });
 
 // Container orchestration needs an unauthenticated readiness response that is

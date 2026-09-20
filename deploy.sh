@@ -66,15 +66,17 @@ mkdir -p data
 export PUID="$(id -u)"
 export PGID="$(id -g)"
 
-# ── Step 3: Pull and start the pinned Docker Compose stack ─────────────────
+# ── Step 3: Back up, pull, and start the pinned Docker Compose stack ───────
 # Never build from whatever source happens to exist on the host. The exact
 # immutable image digest was selected before this script was invoked.
 # Supports both the new `docker compose` (plugin) and legacy `docker-compose` (standalone).
-echo "[3/4] Pulling and starting pinned Docker Compose stack..."
+echo "[3/4] Backing up, pulling, and starting pinned Docker Compose stack..."
 docker pull "$IMAGE_REF"
 # This one-shot migration has no network access and touches only ./data. The
 # long-running application container remains non-root and capability-free.
 if docker inspect --format '{{.State.Running}}' poultry-dss 2>/dev/null | grep -qx true; then
+    echo "Creating a consistent pre-deploy SQLite backup..."
+    docker exec poultry-dss node scripts/admin.js db-backup
     docker stop poultry-dss
 fi
 docker run --rm --network none --user 0:0 -v "$PWD/data:/app/data:Z" "$IMAGE_REF" \

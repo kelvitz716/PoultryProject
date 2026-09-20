@@ -32,3 +32,8 @@ data/
 *.sqlite
 *.db
 .aider*
+
+# Operational records and disposable review material stay local only.
+scratch/
+evidence/
+docs/*.csv

@@ -127,7 +127,20 @@ if (cmd === 'check-env') {
 
 // ── DB CONNECTED COMMANDS ─────────────────────────────────────────────────────
 
-const { dbReady, runQuery, allQuery, getQuery } = require('../db');
+const { dbReady, db, databasePath, runQuery, allQuery, getQuery } = require('../db');
+
+function createConsistentBackup(database, destination) {
+    return new Promise((resolve, reject) => {
+        const backup = database.backup(destination);
+        backup.step(-1, (stepError) => {
+            if (stepError) {
+                backup.finish(() => reject(stepError));
+                return;
+            }
+            backup.finish((finishError) => finishError ? reject(finishError) : resolve());
+        });
+    });
+}
 
 async function seedE2ETesterCli() {
     const isProduction = process.env.NODE_ENV === 'production';
@@ -321,7 +334,9 @@ dbReady.then(async () => {
             }
 
             case 'db-backup': {
-                const backupDir = path.join(rootDir, 'data', 'backups');
+                // SQLite's online backup API includes committed WAL content;
+                // copying only the main .db file can produce an incomplete backup.
+                const backupDir = path.join(path.dirname(databasePath), 'backups');
                 if (!fs.existsSync(backupDir)) {
                     fs.mkdirSync(backupDir, { recursive: true });
                 }
@@ -335,8 +350,8 @@ dbReady.then(async () => {
                 const dateStr = `${year}-${month}-${day}-${hours}${minutes}`;
                 const backupName = `poultry-${dateStr}.db`;
                 const backupPath = path.join(backupDir, backupName);
-                fs.copyFileSync(dbPath, backupPath);
-                console.log(`Database backup created successfully: data/backups/${backupName}`);
+                await createConsistentBackup(db, backupPath);
+                console.log(`Database backup created successfully: ${backupPath}`);
                 break;
             }
 

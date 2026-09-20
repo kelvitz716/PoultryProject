@@ -20,7 +20,7 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ \
 
 # ── Copy application source ──────────────────────────────────────────────────
 # Copies everything not excluded by .dockerignore (node_modules, data/, .env,
-# .git, tests/, docs/, and scratch/ are excluded to keep the image lean and
+# .git, tests/, docs/, scratch/, and evidence/ are excluded to keep the image lean and
 # to prevent secrets from being baked into the image).
 COPY --chown=node:node . .
 
