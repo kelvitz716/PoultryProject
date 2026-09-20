@@ -188,15 +188,32 @@ async function commitDayStaging(date, batchId, isRecovery = false) {
         logData.eggs_broken = broken;
     }
 
-    // ── Feed: sum ──
+    // ── Feed: sum + preserve house-scoped feed events ──
     if (byModule.feed) {
-        const prevKg = logData.feedGiven || 0;
-        const prevSacks = logData.sacks || 0;
         const hasAmendment = rows.some(r => r.status === STAGING_STATUS.AMENDMENT);
-        const kg = byModule.feed.reduce((s, e) => s + (parseFloat(e.amount_kg) || 0), 0);
-        const sacks = byModule.feed.reduce((s, e) => s + (parseInt(e.sacks_opened) || 0), 0);
-        logData.feedGiven = (existingLogRow && !hasAmendment ? prevKg : 0) + kg;
-        logData.sacks = (existingLogRow && !hasAmendment ? prevSacks : 0) + sacks;
+        const existingEvents = Array.isArray(logData.feed_events) ? logData.feed_events : [];
+        const incomingIds = new Set(byModule.feed.map(e => e._id));
+        const replacedEvents = existingEvents.filter(e => incomingIds.has(e._id));
+        const incomingKg = byModule.feed.reduce((s, e) => s + (parseFloat(e.amount_kg) || 0), 0);
+        const incomingSacks = byModule.feed.reduce((s, e) => s + (parseInt(e.sacks_opened) || 0), 0);
+
+        // A corrected historical day deliberately replaces its prior aggregate.
+        // Otherwise, replacing a repeated staging ID is idempotent and new events
+        // accumulate on top of any legacy aggregate that predates feed_events.
+        const merged = hasAmendment
+            ? byModule.feed.slice()
+            : existingEvents.filter(e => !incomingIds.has(e._id)).concat(byModule.feed);
+        merged.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+        logData.feed_events = merged;
+
+        const replacedKg = replacedEvents.reduce((s, e) => s + (parseFloat(e.amount_kg) || 0), 0);
+        const replacedSacks = replacedEvents.reduce((s, e) => s + (parseInt(e.sacks_opened) || 0), 0);
+        logData.feedGiven = hasAmendment
+            ? incomingKg
+            : (parseFloat(logData.feedGiven) || 0) - replacedKg + incomingKg;
+        logData.sacks = hasAmendment
+            ? incomingSacks
+            : (parseInt(logData.sacks) || 0) - replacedSacks + incomingSacks;
     }
 
     // ── Mortality: sum ──

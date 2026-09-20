@@ -236,4 +236,60 @@ test('staging compiler unit tests', async (t) => {
         assert.strictEqual(logDataCall2.eggs, 48, 'Should sum all intact + broken eggs: 12 + 15 + 1 + 20 = 48');
         assert.strictEqual(logDataCall2.eggs_broken, 1, 'Should count 1 broken egg');
     });
+
+    await t.test('feed events retain their house, dedupe retries, and replace a corrected day', async () => {
+        const date = '2026-06-19';
+        const batchId = 123;
+        const feedRows = (events, status = 'pending') => events.map(event => ({
+            batch_id: batchId,
+            date,
+            module: 'feed',
+            status,
+            timestamp: `2026-06-19T${event.time}:00+03:00`,
+            id: event.id,
+            data: JSON.stringify({
+                amount_kg: event.amount_kg,
+                sacks_opened: event.sacks_opened,
+                time: event.time,
+                location_id: event.location_id
+            })
+        }));
+        const firstRows = feedRows([
+            { id: 'feed-1', amount_kg: 50, sacks_opened: 1, time: '08:00', location_id: 'house-a' },
+            { id: 'feed-2', amount_kg: 25, sacks_opened: 0, time: '12:00', location_id: 'house-b' }
+        ]);
+        mockDb.allQueryMock = () => firstRows;
+        mockDb.getQueryMock = () => null;
+
+        await staging.commitDayStaging(date, batchId);
+        const firstWrite = mockDb.queriesRun.find(q => q.query.includes('INSERT INTO logs'));
+        const firstLog = JSON.parse(firstWrite.params[2]);
+        assert.strictEqual(firstLog.feedGiven, 75);
+        assert.strictEqual(firstLog.sacks, 1);
+        assert.deepStrictEqual(firstLog.feed_events.map(e => [e._id, e.location_id]), [
+            ['feed-1', 'house-a'],
+            ['feed-2', 'house-b']
+        ]);
+
+        // A retry with the same immutable event IDs must update rather than duplicate.
+        mockDb.queriesRun = [];
+        mockDb.getQueryMock = () => ({ data: JSON.stringify(firstLog) });
+        await staging.commitDayStaging(date, batchId);
+        const retriedLog = JSON.parse(mockDb.queriesRun.find(q => q.query.includes('INSERT INTO logs')).params[2]);
+        assert.strictEqual(retriedLog.feedGiven, 75);
+        assert.strictEqual(retriedLog.sacks, 1);
+        assert.strictEqual(retriedLog.feed_events.length, 2);
+
+        // A historical amendment keeps the existing overwrite policy but preserves its house.
+        mockDb.queriesRun = [];
+        mockDb.allQueryMock = () => feedRows([
+            { id: 'feed-3', amount_kg: 40, sacks_opened: 1, time: '15:00', location_id: 'house-b' }
+        ], 'amendment');
+        mockDb.getQueryMock = () => ({ data: JSON.stringify(retriedLog) });
+        await staging.commitDayStaging(date, batchId);
+        const amendedLog = JSON.parse(mockDb.queriesRun.find(q => q.query.includes('INSERT INTO logs')).params[2]);
+        assert.strictEqual(amendedLog.feedGiven, 40);
+        assert.strictEqual(amendedLog.sacks, 1);
+        assert.deepStrictEqual(amendedLog.feed_events.map(e => [e._id, e.location_id]), [['feed-3', 'house-b']]);
+    });
 });
