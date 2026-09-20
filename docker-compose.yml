@@ -20,10 +20,11 @@ services:
 
     # ── Port mapping ───────────────────────────────────────────────────────
     # The Express server binds to port 80 inside the container.
-    # Externally it is served on 8089 to avoid conflicts with other HTTP
-    # services (Nextcloud, Immich, etc.) sharing the same OCI host.
+    # Host access is loopback-only. Tailscale Serve terminates HTTPS on the
+    # host and proxies to this port; this container must never listen on the
+    # public OCI interface.
     ports:
-      - "8089:80"
+      - "127.0.0.1:8089:80"
 
     # ── Restart policy ─────────────────────────────────────────────────────
     # `always` ensures the container restarts automatically after an OCI
@@ -53,3 +54,5 @@ services:
     # See README.md for full variable reference.
     env_file:
       - .env
+    environment:
+      NODE_ENV: production

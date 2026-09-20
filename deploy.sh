@@ -36,12 +36,10 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Tailscale is optional — if absent, skip funnel setup but continue the deploy.
+# Tailscale Serve is mandatory: it provides the only HTTPS entry point.
 if ! command -v tailscale &> /dev/null; then
-    echo "Warning: tailscale is not installed. Funnel setup will be skipped."
-    TAILSCALE_INSTALLED=false
-else
-    TAILSCALE_INSTALLED=true
+    echo "Error: Tailscale is required for the private HTTPS deployment."
+    exit 1
 fi
 
 # ── Step 2: Prepare the SQLite data directory ──────────────────────────────
@@ -63,40 +61,20 @@ else
     docker-compose up --build -d
 fi
 
-# ── Step 4: Configure Tailscale Funnel (optional) ─────────────────────────
-# Tailscale Serve: exposes port 8089 on the tailnet (private VPN).
-# Tailscale Funnel: additionally exposes it on the public internet via a
-# stable *.ts.net HTTPS URL with automatic TLS — no reverse proxy needed.
-echo "[4/4] Configuring Tailscale Funnel..."
-if [ "$TAILSCALE_INSTALLED" = true ]; then
-    echo "Setting up Tailscale to proxy traffic to port 8089..."
-
-    # Only configure funnel if Tailscale is authenticated and connected.
-    if tailscale status &> /dev/null; then
-        # Serve the local port 8089 on the tailnet (background mode)
-        tailscale serve --bg --set-path / http://127.0.0.1:8089
-
-        # Expose the serve endpoint on the public internet
-        tailscale funnel --bg on
-
-        echo "Tailscale Funnel configured successfully."
-
-        # Extract and print the public HTTPS URL for convenience
-        HOSTNAME=$(tailscale status --json | grep -o '"Target": ".*"' | head -1 | cut -d'"' -f4)
-        if [ ! -z "$HOSTNAME" ]; then
-            echo ""
-            echo "Your Poultry DSS is now publicly available at:"
-            echo "https://$HOSTNAME"
-            echo ""
-        fi
-    else
-        echo "Warning: Tailscale is installed but not connected."
-        echo "Run 'sudo tailscale up' first, then re-run this script."
-    fi
-else
-    echo "Skipped Tailscale funnel configuration."
-    echo "Your application is running locally on http://127.0.0.1:8089"
+# ── Step 4: Configure private Tailscale HTTPS Serve ────────────────────────
+echo "[4/4] Configuring private Tailscale HTTPS Serve..."
+if ! tailscale status &> /dev/null; then
+    echo "Error: Tailscale is installed but not connected. Run 'sudo tailscale up' first."
+    exit 1
 fi
+
+# The production host is private-only: discard every prior public Funnel route
+# before creating the tailnet-only HTTPS proxy. The container remains
+# loopback-only.
+tailscale funnel reset
+tailscale serve --bg --https=443 --set-path=/ http://127.0.0.1:8089
+echo "Private Tailscale HTTPS Serve configured. This app is not publicly exposed."
+tailscale serve status
 
 echo "======================================"
 echo "        Deployment Complete!          "

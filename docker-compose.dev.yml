@@ -3,6 +3,8 @@
 services:
   poultry-dss:
     image: poultry-dss:local
+    environment:
+      NODE_ENV: development
     build:
       context: .
       dockerfile: Dockerfile

@@ -11,23 +11,25 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-async function request(baseUrl, pathname, { method = 'GET', body, cookie } = {}) {
+async function request(baseUrl, pathname, { method = 'GET', body, cookie, headers = {} } = {}) {
     const response = await fetch(`${baseUrl}${pathname}`, {
         method,
         headers: {
             ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-            ...(cookie ? { Cookie: cookie } : {})
+            ...(cookie ? { Cookie: cookie } : {}),
+            ...headers
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
     });
     let json = null;
     try { json = await response.json(); } catch (_) { json = null; }
-    return { status: response.status, json, cookie: response.headers.get('set-cookie')?.split(';')[0] || null };
+    const setCookie = response.headers.get('set-cookie') || '';
+    return { status: response.status, json, cookie: setCookie.split(';')[0] || null, setCookie };
 }
 
-async function waitForServer(baseUrl, child) {
+async function waitForServer(baseUrl, child, getOutput = () => '') {
     for (let attempt = 0; attempt < 80; attempt += 1) {
-        if (child.exitCode !== null) throw new Error('Disposable server stopped before accepting requests');
+        if (child.exitCode !== null) throw new Error(`Disposable server stopped before accepting requests: ${getOutput()}`);
         try {
             const result = await request(baseUrl, '/api/auth/me');
             if (result.status === 200) return result;
@@ -109,15 +111,27 @@ test('production server and browser wire every bounded payment and settlement su
     assert.match(timeline, /receiptPending/);
 });
 
+test('production deployment is private-by-default and accepts sessions only through its HTTPS proxy', () => {
+    const server = read('server.js');
+    const compose = read('docker-compose.yml');
+    const deploy = read('deploy.sh');
+    assert.match(compose, /127\.0\.0\.1:8089:80/);
+    assert.match(compose, /NODE_ENV:\s*production/);
+    assert.match(server, /app\.set\('trust proxy', 1\)/);
+    assert.match(server, /secure:\s*isProduction/);
+    assert.match(deploy, /tailscale funnel reset/);
+    assert.match(deploy, /tailscale serve --bg --https=443 --set-path=\/ http:\/\/127\.0\.0\.1:8089/);
+    assert.doesNotMatch(deploy, /tailscale funnel --bg on/);
+});
+
 test('disposable real-server smoke starts without E2E credentials and reaches authenticated release routes safely', async t => {
     const disposableRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-release-smoke-'));
     const appDir = path.join(disposableRoot, 'app');
     const port = 33000 + Math.floor(Math.random() * 2000);
     const baseUrl = `http://127.0.0.1:${port}`;
     copyDisposableProject(appDir);
-    const environment = { ...process.env, PORT: String(port), SESSION_SECRET: 'release-smoke-session-secret-0123456789' };
+    const environment = { ...process.env, PORT: String(port), NODE_ENV: 'production', SESSION_SECRET: 'release-smoke-session-secret-0123456789' };
     delete environment.E2E_TEST_PASSWORD;
-    delete environment.NODE_ENV;
     const child = spawn(process.execPath, ['server.js'], { cwd: appDir, env: environment, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', chunk => { output += chunk.toString(); });
@@ -132,7 +146,7 @@ test('disposable real-server smoke starts without E2E credentials and reaches au
         fs.rmSync(disposableRoot, { recursive: true, force: true });
     });
 
-    const health = await waitForServer(baseUrl, child);
+    const health = await waitForServer(baseUrl, child, () => output);
     assert.deepEqual(health.json, { setupRequired: true });
     const staticPage = await fetch(`${baseUrl}/`);
     assert.equal(staticPage.status, 200);
@@ -140,11 +154,17 @@ test('disposable real-server smoke starts without E2E credentials and reaches au
     assert.equal((await request(baseUrl, '/api/payment-imports?limit=1')).status, 401);
 
     const setup = await request(baseUrl, '/api/auth/setup', {
-        method: 'POST', body: { username: 'smoke-admin', password: 'SmokePass123!' }
+        method: 'POST', body: { username: 'smoke-admin', password: 'SmokePass123!' }, headers: { 'X-Forwarded-Proto': 'https' }
     });
     assert.equal(setup.status, 200);
     assert.equal(setup.json?.user?.role, 'super_admin');
     assert.ok(setup.cookie);
+    assert.match(setup.setCookie, /; Secure(?:;|$)/);
+    const directHttpLogin = await request(baseUrl, '/api/auth/login', {
+        method: 'POST', body: { username: 'smoke-admin', password: 'SmokePass123!' }
+    });
+    assert.equal(directHttpLogin.status, 200);
+    assert.equal(directHttpLogin.cookie, null, 'direct HTTP must not establish a production session');
     const cookie = setup.cookie;
     assert.equal((await request(baseUrl, '/api/auth/me', { cookie })).json?.user?.role, 'super_admin');
 

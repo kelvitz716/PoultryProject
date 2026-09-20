@@ -117,6 +117,11 @@ import('./js/engine.js').then(engine => {
 
 const app = express();
 const PORT = process.env.PORT || 80;
+// Production traffic reaches the container only through the host's local
+// Tailscale HTTPS proxy. Trust exactly that one proxy hop so Express can mark
+// session cookies Secure; direct HTTP requests can never establish a session.
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction) app.set('trust proxy', 1);
 
 // Must stay before the application-wide JSON parser so HMAC covers exact raw bytes.
 registerPaymentImportWebhook(app, { paymentService: paymentImportService });
@@ -164,7 +169,9 @@ app.use(helmet({
 /**
  * Session middleware — sessions persisted in the same SQLite database through
  * the project-owned store, with no nested legacy SQLite native dependency.
- * Secure cookie and rolling expiry; sameSite=lax is appropriate for same-origin LAN/Tailscale usage.
+ * Secure cookie and rolling expiry. Production is served through Tailscale
+ * HTTPS only; local development retains HTTP support for the disposable
+ * loopback harnesses.
  */
 app.use(session({
     store: new SqliteSessionStore({ databasePath }),
@@ -175,7 +182,8 @@ app.use(session({
     cookie: {
         maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
         httpOnly: true,
-        sameSite: 'lax'
+        sameSite: 'lax',
+        secure: isProduction
     }
 }));
 

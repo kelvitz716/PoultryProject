@@ -74,7 +74,10 @@ docker compose pull
 docker compose up -d
 ```
 
-Access the app at **http://localhost:8089**
+Production access is private: use the host's **Tailscale HTTPS Serve URL**
+from an authorised tailnet device. The Docker port is deliberately bound only
+to `127.0.0.1`; do not expose port 8089 through an OCI security list, reverse
+proxy, or Tailscale Funnel.
 
 > The production compose file references the pre-built `ghcr.io/kelvitz716/poultryproject:latest` image. For a local source build, use `docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d`.
 
@@ -97,7 +100,7 @@ Access the app at **http://localhost:80** (or set `PORT=8089` in your `.env`).
 Create a `.env` file in the project root (never commit this file):
 
 ```ini
-# Server (use port 80 inside the container; Compose exposes it on host port 8089)
+# Server (use port 80 inside the container; Compose exposes 8089 on host loopback only)
 PORT=80
 
 # Required: generate a strong value, for example with Node's crypto.randomBytes.
