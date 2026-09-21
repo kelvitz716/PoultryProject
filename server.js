@@ -207,8 +207,22 @@ app.use((req, res, next) => {
     ];
     const blockedDirs = ['/data', '/tests', '/.git', '/scripts', '/docs', '/scratch'];
     
-    // Normalize request path to prevent traversal bypass
-    const reqPath = path.normalize(req.path).replace(/^(\.\.(\/|\\|$))+/, '');
+    // Express leaves encoded separators in `req.path`. Decode a bounded number
+    // of times before normalizing so both `%2f` and double-encoded `%252f`
+    // cannot turn a seemingly safe URL into a traversal path downstream.
+    let decodedPath = req.path;
+    try {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const nextPath = decodeURIComponent(decodedPath);
+            if (nextPath === decodedPath) break;
+            decodedPath = nextPath;
+        }
+    } catch {
+        return res.status(400).json({ error: 'Malformed request path' });
+    }
+
+    // Normalize the decoded request path to prevent traversal bypass.
+    const reqPath = path.posix.normalize(decodedPath.replaceAll('\\', '/')).replace(/^(\.\.(\/|\\|$))+/, '');
     const filename = path.basename(reqPath);
     
     const isBlockedFile = blockedFiles.some(f => filename.toLowerCase() === f.toLowerCase());

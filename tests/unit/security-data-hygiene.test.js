@@ -28,6 +28,8 @@ test('security and data hygiene keep browser code local and operational material
     assert.match(server, /app\.use\('\/assets', express\.static\(path\.join\(__dirname, 'assets'\), staticAssetOptions\)\)/);
     assert.match(server, /app\.use\('\/css', express\.static\(path\.join\(__dirname, 'css'\), staticAssetOptions\)\)/);
     assert.doesNotMatch(server, /app\.use\(express\.static\(__dirname/);
+    assert.match(server, /const nextPath = decodeURIComponent\(decodedPath\)/);
+    assert.match(server, /path\.posix\.normalize\(decodedPath\.replaceAll\('\\\\', '\/'\)\)/);
 
     for (const ignore of [gitignore, dockerignore]) {
         assert.match(ignore, /^scratch\/?$/m);
