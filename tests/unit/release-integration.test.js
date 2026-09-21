@@ -166,6 +166,11 @@ test('production container and SQLite data mount run with least privilege', () =
     assert.match(compose, /read_only: true/);
     assert.match(compose, /cap_drop:\s*\n\s*- ALL/);
     assert.match(compose, /no-new-privileges:true/);
+    assert.match(compose, /cpus: "1\.0"/);
+    assert.match(compose, /mem_limit: 512m/);
+    assert.match(compose, /pids_limit: 128/);
+    assert.match(compose, /driver: local/);
+    assert.match(compose, /max-size: 10m/);
     assert.match(compose, /tmpfs:\s*\n\s*- \/tmp:mode=1777,noexec,nosuid,nodev,size=64m/);
     assert.match(compose, /\.\/data:\/app\/data:Z/);
     assert.match(compose, /PORT: 8080/);

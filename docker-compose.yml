@@ -48,6 +48,17 @@ services:
     # instance reboot or Docker daemon restart.
     restart: always
 
+    # Bound a compromised or malfunctioning process while leaving ample room
+    # for SQLite and the lightweight browser API on this private host.
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 128
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
     # A real JSON readiness endpoint, not the SPA fallback. The process only
     # binds after SQLite schema initialization has completed.
     healthcheck:
