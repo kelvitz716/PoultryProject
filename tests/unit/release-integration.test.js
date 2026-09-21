@@ -213,15 +213,18 @@ test('disposable real-server smoke starts without E2E credentials and reaches au
     assert.match(await staticPage.text(), /Poultry DSS/);
     assert.equal((await request(baseUrl, '/api/payment-imports?limit=1')).status, 401);
 
-    const setup = await request(baseUrl, '/api/auth/setup', {
-        method: 'POST', body: { username: 'smoke-admin', password: 'SmokePass123!' }, headers: { 'X-Forwarded-Proto': 'https' }
-    });
-    assert.equal(setup.status, 200);
+    const setupAttempts = await Promise.all(['smoke-admin', 'smoke-admin-other'].map(username => request(baseUrl, '/api/auth/setup', {
+        method: 'POST', body: { username, password: 'SmokePass123!' }, headers: { 'X-Forwarded-Proto': 'https' }
+    })));
+    const setup = setupAttempts.find(result => result.status === 200);
+    assert.ok(setup, 'exactly one concurrent setup attempt must succeed');
+    assert.equal(setupAttempts.filter(result => result.status === 200).length, 1);
+    assert.equal(setupAttempts.filter(result => result.status === 403).length, 1);
     assert.equal(setup.json?.user?.role, 'super_admin');
     assert.ok(setup.cookie);
     assert.match(setup.setCookie, /; Secure(?:;|$)/);
     const directHttpLogin = await request(baseUrl, '/api/auth/login', {
-        method: 'POST', body: { username: 'smoke-admin', password: 'SmokePass123!' }
+        method: 'POST', body: { username: setup.json.user.username, password: 'SmokePass123!' }
     });
     assert.equal(directHttpLogin.status, 200);
     assert.equal(directHttpLogin.cookie, null, 'direct HTTP must not establish a production session');

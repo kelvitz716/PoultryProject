@@ -963,10 +963,6 @@ app.get('/api/auth/me', async (req, res) => {
  */
 app.post('/api/auth/setup', async (req, res) => {
     try {
-        const userCount = await getQuery('SELECT COUNT(*) as cnt FROM users');
-        if (userCount && userCount.cnt > 0) {
-            return res.status(403).json({ error: 'Setup already complete. Use /api/auth/login.' });
-        }
         const { username, password } = req.body;
         const normalizedUsername = normalizeUsername(username);
         if (!normalizedUsername || typeof password !== 'string' || password.length < 8) {
@@ -974,10 +970,18 @@ app.post('/api/auth/setup', async (req, res) => {
         }
         const hash = await bcrypt.hash(password, 12);
         const id = `user_${Date.now()}`;
-        await runQuery(
-            'INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+        // A single conditional insert is atomic in SQLite. Do not rely on a
+        // preceding COUNT query: concurrent first-run requests could both see
+        // an empty table and each create an administrator.
+        const result = await runQuery(
+            `INSERT INTO users (id, username, password_hash, role, created_at, updated_at)
+             SELECT ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+             WHERE NOT EXISTS (SELECT 1 FROM users)`,
             [id, normalizedUsername, hash, 'super_admin']
         );
+        if (result.changes !== 1) {
+            return res.status(403).json({ error: 'Setup already complete. Use /api/auth/login.' });
+        }
 
         // Ensure dedicated E2E test account exists
         await seedE2ETester();
