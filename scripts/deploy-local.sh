@@ -100,6 +100,15 @@ validate_dotenv() {
     fi
 }
 
+harden_data_directory() {
+    local data_dir="$PROJECT_DIR/data"
+    mkdir -p "$data_dir"
+    # SQLite may create WAL/SHM files at runtime. The private directory prevents
+    # other local users reaching them; existing files are tightened as well.
+    chmod 700 "$data_dir"
+    find "$data_dir" -type f -exec chmod 600 {} +
+}
+
 wait_for_health() {
     local attempt health
     for attempt in $(seq 1 40); do
@@ -134,6 +143,7 @@ main() {
     for key in "${ordered_keys[@]}"; do prompt_value "$key"; done
     validate_dotenv
     write_dotenv
+    harden_data_directory
 
     if ss -ltn '( sport = :8089 )' | grep -q LISTEN && ! docker inspect poultry-dss >/dev/null 2>&1; then
         die 'port 8089 is already in use by something other than PoultryProject.'

@@ -12,6 +12,7 @@ test('security and data hygiene keep browser code local and operational material
     const gitignore = read('.gitignore');
     const dockerignore = read('.dockerignore');
     const deploy = read('deploy.sh');
+    const localDeploy = read('scripts/deploy-local.sh');
     const workflow = read('.github/workflows/deploy.yml');
     const admin = read('scripts/admin.js');
 
@@ -41,4 +42,7 @@ test('security and data hygiene keep browser code local and operational material
     assert.match(deploy, /docker exec poultry-dss node scripts\/admin\.js db-backup/);
     assert.match(workflow, /IMAGE_REF="\$IMAGE_REF" bash deploy\.sh/);
     assert.doesNotMatch(workflow, /docker image prune -f/);
+    assert.match(localDeploy, /harden_data_directory\(\)/);
+    assert.match(localDeploy, /chmod 700 "\$data_dir"/);
+    assert.match(localDeploy, /find "\$data_dir" -type f -exec chmod 600 \{\} \+/);
 });
