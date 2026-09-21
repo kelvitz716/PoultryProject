@@ -121,6 +121,9 @@ const PORT = process.env.PORT || 8080;
 // Tailscale HTTPS proxy. Trust exactly that one proxy hop so Express can mark
 // session cookies Secure; direct HTTP requests can never establish a session.
 const isProduction = process.env.NODE_ENV === 'production';
+// Local source deployments remain private behind Tailscale Serve. They need
+// the same HTTPS cookie behavior without relaxing production image pinning.
+const isPrivateDeployment = isProduction || process.env.LOCAL_PRIVATE_DEPLOYMENT === 'true';
 // A direct Node start is loopback-only by default. Docker explicitly supplies
 // HOST=0.0.0.0 so its private port mapping can reach the container.
 const HOST = process.env.HOST || '127.0.0.1';
@@ -133,7 +136,7 @@ function normalizeUsername(username) {
     return USERNAME_PATTERN.test(normalized) ? normalized : null;
 }
 
-if (isProduction) app.set('trust proxy', 1);
+if (isPrivateDeployment) app.set('trust proxy', 1);
 
 // Must stay before the application-wide JSON parser so HMAC covers exact raw bytes.
 registerPaymentImportWebhook(app, { paymentService: paymentImportService });
@@ -200,7 +203,7 @@ app.use(session({
         maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
         httpOnly: true,
         sameSite: 'lax',
-        secure: isProduction
+        secure: isPrivateDeployment
     }
 }));
 

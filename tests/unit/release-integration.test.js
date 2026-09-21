@@ -120,7 +120,8 @@ test('production deployment is private-by-default and accepts sessions only thro
     assert.match(compose, /HOST:\s*0\.0\.0\.0/);
     assert.match(compose, /IMAGE_REF: \$\{IMAGE_REF:\?IMAGE_REF must be an immutable/);
     assert.match(server, /app\.set\('trust proxy', 1\)/);
-    assert.match(server, /secure:\s*isProduction/);
+    assert.match(server, /const isPrivateDeployment = isProduction \|\| process\.env\.LOCAL_PRIVATE_DEPLOYMENT === 'true';/);
+    assert.match(server, /secure:\s*isPrivateDeployment/);
     assert.match(server, /const HOST = process\.env\.HOST \|\| '127\.0\.0\.1'/);
     assert.match(deploy, /tailscale funnel reset/);
     assert.match(deploy, /tailscale serve --bg --https=443 --set-path=\/ http:\/\/127\.0\.0\.1:8089/);

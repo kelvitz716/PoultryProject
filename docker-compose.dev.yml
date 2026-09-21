@@ -5,6 +5,7 @@ services:
     image: poultry-dss:local
     environment:
       NODE_ENV: development
+      LOCAL_PRIVATE_DEPLOYMENT: "true"
     build:
       context: .
       dockerfile: Dockerfile
