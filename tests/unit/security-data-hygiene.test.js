@@ -22,6 +22,9 @@ test('security and data hygiene keep browser code local and operational material
     assert.match(server, /app\.get\('\/vendor\/lucide\.js'/);
     assert.match(server, /app\.get\('\/vendor\/chart\.js'/);
     assert.doesNotMatch(server, /scriptSrc:.*(?:unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com)/);
+    assert.match(server, /typeof file !== 'string' \|\| !\/\^\[A-Za-z0-9\]\[A-Za-z0-9\._-\]\*\\\.m\?js\$\//);
+    assert.match(server, /res\.sendFile\(file, \{ root: path\.join\(__dirname, 'js'\), dotfiles: 'deny' \}/);
+    assert.doesNotMatch(server, /sendFile\(path\.join\(__dirname, 'js', req\.params\.file\)\)/);
 
     for (const ignore of [gitignore, dockerignore]) {
         assert.match(ignore, /^scratch\/?$/m);

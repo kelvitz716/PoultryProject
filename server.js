@@ -233,9 +233,19 @@ app.get('/service-worker.js', (req, res) => {
  * Route: Serves Javascript asset files with cache-control headers disabled.
  * Prevents clients caching stale script logic during updates.
  */
-app.get('/js/:file', (req, res) => {
+app.get('/js/:file', (req, res, next) => {
+    // `req.params.file` is decoded by Express.  Never join a decoded value into
+    // a filesystem path: `%2f` would otherwise turn into a path separator after
+    // the route-level traversal check has already run.
+    const file = req.params.file;
+    if (typeof file !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.m?js$/.test(file)) {
+        return res.status(404).json({ error: 'Script asset not found' });
+    }
+
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    res.sendFile(path.join(__dirname, 'js', req.params.file));
+    res.sendFile(file, { root: path.join(__dirname, 'js'), dotfiles: 'deny' }, (error) => {
+        if (error) next(error);
+    });
 });
 
 // Do not expose all of node_modules. These are the only browser dependencies
