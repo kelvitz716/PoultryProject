@@ -267,8 +267,16 @@ app.get('/api/healthz', (req, res) => {
     res.status(200).json({ status: 'ok' });
 });
 
-// Expose public folder static files with hidden dotfiles blocked
-app.use(express.static(__dirname, { index: 'index.html', dotfiles: 'deny' }));
+// Serve only browser assets. Mounting the project root made every non-dotfile
+// reachable when an encoded separator bypassed the request-path guard above.
+const staticAssetOptions = { index: false, dotfiles: 'deny', fallthrough: false };
+app.use('/assets', express.static(path.join(__dirname, 'assets'), staticAssetOptions));
+app.use('/css', express.static(path.join(__dirname, 'css'), staticAssetOptions));
+app.get('/manifest.json', (req, res, next) => {
+    res.sendFile('manifest.json', { root: __dirname, dotfiles: 'deny' }, (error) => {
+        if (error) next(error);
+    });
+});
 
 /**
  * In-memory rate limiter for brute-force prevention on login endpoints.
