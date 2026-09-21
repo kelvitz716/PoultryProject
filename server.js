@@ -470,6 +470,19 @@ async function setEntityValue(key, val) {
 
 // ===================== ENTITIES (Farm Profile, Aggregates) =====================
 
+// The entity table also contains operational secrets and historical migration
+// records. Browser clients may only address these explicit non-secret records;
+// application services use the internal helpers above for everything else.
+const BROWSER_READABLE_ENTITY_KEYS = new Set([
+    'poultryFarmProfile',
+    'poultryAggregates',
+    'farm_name'
+]);
+const BROWSER_WRITABLE_ENTITY_KEYS = new Set([
+    'poultryFarmProfile',
+    'poultryAggregates'
+]);
+
 /**
  * GET /api/entities/:key
  * Retrieves a key-value store entry from the entities table.
@@ -477,7 +490,7 @@ async function setEntityValue(key, val) {
  */
 app.get('/api/entities/:key', requireAuth, async (req, res) => {
     try {
-        if (isLegacyDarajaEntityKey(req.params.key)) {
+        if (!BROWSER_READABLE_ENTITY_KEYS.has(req.params.key) || isLegacyDarajaEntityKey(req.params.key)) {
             return res.status(404).json({ error: 'Entity key not available.' });
         }
         const row = await getQuery('SELECT value FROM entities WHERE key = ?', [req.params.key]);
@@ -496,10 +509,6 @@ app.get('/api/entities/:key', requireAuth, async (req, res) => {
                     data.telegramChatId = '••••••••••••••••';
                 }
             }
-        } else if (req.params.key === 'telegram_chat_id' && data) {
-            data = '••••••••••••••••';
-        } else if (req.params.key === 'telegram_bot_token' && data) {
-            data = '••••••••••••••••';
         }
         res.json(data);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -509,10 +518,16 @@ app.get('/api/entities/:key', requireAuth, async (req, res) => {
  * POST /api/entities/:key
  * Inserts or updates a key-value store entry.
  */
-app.post('/api/entities/:key', requireRole('super_admin', 'admin', 'farmer'), validateBody, async (req, res) => {
+app.post('/api/entities/:key', requireAuth, async (req, res) => {
     try {
-        if (isLegacyDarajaEntityKey(req.params.key)) {
+        if (!BROWSER_WRITABLE_ENTITY_KEYS.has(req.params.key) || isLegacyDarajaEntityKey(req.params.key)) {
             return res.status(404).json({ error: 'Entity key not available.' });
+        }
+        if (!['super_admin', 'admin'].includes(req.session.userRole)) {
+            return res.status(403).json({ error: 'Forbidden — farm settings require an admin role.' });
+        }
+        if (!req.body || typeof req.body !== 'object' || Object.keys(req.body).length === 0) {
+            return res.status(400).json({ error: 'Invalid or empty JSON body' });
         }
         let valueToSave = req.body.value;
 
@@ -527,16 +542,6 @@ app.post('/api/entities/:key', requireRole('super_admin', 'admin', 'farmer'), va
                 if (valueToSave.telegramChatId === '••••••••••••••••') {
                     valueToSave.telegramChatId = existing.telegramChatId || '';
                 }
-            }
-        } else if (req.params.key === 'telegram_chat_id') {
-            const existing = await getEntityValue('telegram_chat_id', null);
-            if (valueToSave === '••••••••••••••••') {
-                valueToSave = existing || '';
-            }
-        } else if (req.params.key === 'telegram_bot_token') {
-            const existing = await getEntityValue('telegram_bot_token', null);
-            if (valueToSave === '••••••••••••••••') {
-                valueToSave = existing || '';
             }
         }
 

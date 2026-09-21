@@ -264,19 +264,26 @@ test('legacy database upgrade purges Daraja credentials and generic APIs cannot 
         method: 'POST',
         cookie: sessions.get('viewer'),
         body: { value: 'replacement-from-viewer' }
-    })).status, 403);
+    })).status, 404);
 
     const preserved = await request(baseUrl, '/api/entities/farm_name', { cookie: sessions.get('viewer') });
     assert.equal(preserved.status, 200);
     assert.equal(preserved.json, 'Legacy Farm');
-    const updated = await request(baseUrl, '/api/entities/farm_name', {
+    const deniedLegacyWrite = await request(baseUrl, '/api/entities/farm_name', {
         method: 'POST',
         cookie: sessions.get('farmer'),
         body: { value: 'Upgraded Farm' }
     });
-    assert.equal(updated.status, 200);
-    assert.deepEqual(updated.json, { success: true });
-    assert.equal((await request(baseUrl, '/api/entities/farm_name', { cookie: sessions.get('viewer') })).json, 'Upgraded Farm');
+    assert.equal(deniedLegacyWrite.status, 404);
+    assert.equal((await request(baseUrl, '/api/entities/farm_name', { cookie: sessions.get('viewer') })).json, 'Legacy Farm');
+    for (const role of ['farmer', 'viewer']) {
+        assert.equal((await request(baseUrl, '/api/entities/poultryFarmProfile', {
+            method: 'POST', cookie: sessions.get(role), body: { value: { flockSize: 20 } }
+        })).status, 403, `${role} may not change farm-wide settings`);
+    }
+    assert.equal((await request(baseUrl, '/api/entities/arbitrary_browser_key', {
+        method: 'POST', cookie: sessions.get('super_admin'), body: { value: 'nope' }
+    })).status, 404);
 
     const finalDatabase = await openDatabase(databasePath);
     try {
