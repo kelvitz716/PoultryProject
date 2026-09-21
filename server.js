@@ -189,8 +189,9 @@ app.use(helmet({
  * HTTPS only; local development retains HTTP support for the disposable
  * loopback harnesses.
  */
+const sessionStore = new SqliteSessionStore({ databasePath });
 app.use(session({
-    store: new SqliteSessionStore({ databasePath }),
+    store: sessionStore,
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
@@ -1084,6 +1085,11 @@ app.put('/api/auth/users/:id/role', requireRole('super_admin'), async (req, res)
         const { role } = req.body;
         const validRoles = ['super_admin', 'admin', 'farmer', 'viewer'];
         if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role.' });
+        const target = await getQuery('SELECT id FROM users WHERE id = ?', [req.params.id]);
+        if (!target) return res.status(404).json({ error: 'User not found.' });
+        // Revocation occurs before the database mutation: if the store cannot
+        // revoke a privileged session, do not leave the role change half-safe.
+        await sessionStore.destroyByUserId(target.id);
         await runQuery('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [role, req.params.id]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1099,7 +1105,10 @@ app.put('/api/auth/users/:id/active', requireRole('super_admin', 'admin'), async
         if (isActive === undefined || (isActive !== 0 && isActive !== 1 && typeof isActive !== 'boolean')) {
             return res.status(400).json({ error: 'isActive must be 0, 1, or boolean.' });
         }
+        const target = await getQuery('SELECT id FROM users WHERE id = ?', [req.params.id]);
+        if (!target) return res.status(404).json({ error: 'User not found.' });
         const activeVal = isActive ? 1 : 0;
+        await sessionStore.destroyByUserId(target.id);
         await runQuery('UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [activeVal, req.params.id]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1116,7 +1125,10 @@ app.put('/api/auth/users/:id/password', requireAuth, async (req, res) => {
         if (!isSelf && !isAdmin) return res.status(403).json({ error: 'Forbidden.' });
         const { password } = req.body;
         if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+        const target = await getQuery('SELECT id FROM users WHERE id = ?', [req.params.id]);
+        if (!target) return res.status(404).json({ error: 'User not found.' });
         const hash = await bcrypt.hash(password, 12);
+        await sessionStore.destroyByUserId(target.id);
         await runQuery('UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [hash, req.params.id]);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }

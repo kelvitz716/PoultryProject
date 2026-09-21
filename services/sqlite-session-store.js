@@ -104,6 +104,30 @@ class SqliteSessionStore extends session.Store {
             .then(() => callbackOrThrow(callback)).catch(error => callbackOrThrow(callback, error));
     }
 
+    /**
+     * Removes every persisted session belonging to one application user.
+     * Session JSON is deliberately parsed in JavaScript instead of relying on
+     * SQLite JSON extensions, which are not guaranteed by every supported
+     * SQLite build.
+     */
+    async destroyByUserId(userId) {
+        if (typeof userId !== 'string' || !userId) {
+            throw new Error('destroyByUserId requires a user ID');
+        }
+        const rows = await this._all('SELECT sid, sess FROM sessions', []);
+        const sessionIds = rows.flatMap(({ sid, sess }) => {
+            try {
+                return JSON.parse(sess)?.userId === userId ? [sid] : [];
+            } catch {
+                // Leave malformed rows for the regular session read path to
+                // surface; they cannot safely be attributed to this user.
+                return [];
+            }
+        });
+        await Promise.all(sessionIds.map(sid => this._run('DELETE FROM sessions WHERE sid = ?', [sid])));
+        return sessionIds.length;
+    }
+
     clear(callback) {
         this._run('DELETE FROM sessions', [])
             .then(() => callbackOrThrow(callback)).catch(error => callbackOrThrow(callback, error));

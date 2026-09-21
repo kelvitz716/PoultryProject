@@ -34,6 +34,24 @@ test('SQLite session store persists signed-session JSON, expires stale rows, and
     }
 });
 
+test('SQLite session store revokes every active session for one user without affecting other users', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-session-revocation-'));
+    const store = new SqliteSessionStore({ databasePath: path.join(directory, 'sessions.sqlite') });
+    try {
+        await callbackResult(done => store.set('user-1-a', { userId: 'user-1' }, done));
+        await callbackResult(done => store.set('user-1-b', { userId: 'user-1' }, done));
+        await callbackResult(done => store.set('user-2-a', { userId: 'user-2' }, done));
+
+        assert.equal(await store.destroyByUserId('user-1'), 2);
+        assert.equal(await callbackResult(done => store.get('user-1-a', done)), null);
+        assert.equal(await callbackResult(done => store.get('user-1-b', done)), null);
+        assert.deepEqual(await callbackResult(done => store.get('user-2-a', done)), { userId: 'user-2' });
+    } finally {
+        await callbackResult(done => store.close(done));
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('SQLite session store upgrades the legacy expired-column schema by invalidating old sessions', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'poultry-session-store-legacy-'));
     const databasePath = path.join(directory, 'sessions.sqlite');

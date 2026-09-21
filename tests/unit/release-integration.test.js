@@ -227,6 +227,28 @@ test('disposable real-server smoke starts without E2E credentials and reaches au
     });
     assert.equal(unsafeUsername.status, 400, 'stored markup must not enter the user registry');
 
+    for (const [username, mutation] of [
+        ['session-password', { pathname: 'password', body: { password: 'UpdatedPass123!' } }],
+        ['session-role', { pathname: 'role', body: { role: 'farmer' } }],
+        ['session-active', { pathname: 'active', body: { isActive: false } }]
+    ]) {
+        const created = await request(baseUrl, '/api/auth/users', {
+            method: 'POST', cookie,
+            body: { username, password: 'SessionVictimPass123!', role: 'viewer' }
+        });
+        assert.equal(created.status, 200);
+        const victim = await request(baseUrl, '/api/auth/login', {
+            method: 'POST', body: { username, password: 'SessionVictimPass123!' }, headers: { 'X-Forwarded-Proto': 'https' }
+        });
+        assert.ok(victim.cookie);
+        assert.equal((await request(baseUrl, '/api/auth/me', { cookie: victim.cookie })).json?.user?.id, created.json?.user?.id);
+        const changed = await request(baseUrl, `/api/auth/users/${created.json.user.id}/${mutation.pathname}`, {
+            method: 'PUT', cookie, body: mutation.body
+        });
+        assert.equal(changed.status, 200);
+        assert.equal((await request(baseUrl, '/api/auth/me', { cookie: victim.cookie })).json?.user, null, `${mutation.pathname} must revoke the previous session`);
+    }
+
     assert.equal((await request(baseUrl, '/api/batches', {
         method: 'POST', cookie,
         body: { id: 'smoke-closed-bypass', status: 'completed', cohort_id: 'cohort:smoke', location_id: 'house:smoke' }
