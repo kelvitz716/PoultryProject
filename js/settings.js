@@ -323,49 +323,88 @@ async function _renderUserManagementPanel(container) {
                 <th style="padding:6px 10px;text-align:left;opacity:0.55;">Role</th>
                 <th style="padding:6px 10px;text-align:right;opacity:0.55;">Actions</th>
             </tr></thead>
-            <tbody>
-                ${users.map(u => `
-                <tr style="border-top:1px solid var(--border-color);">
-                    <td style="padding:8px 10px;font-weight:600;">${u.username}${u.id === window.CURRENT_USER?.id ? ' <span style="font-size:0.7rem;opacity:0.5;">(you)</span>' : ''}</td>
-                    <td style="padding:8px 10px;">
-                        ${isSuperAdmin && u.id !== window.CURRENT_USER?.id ? `
-                        <select data-uid="${u.id}" class="role-select input-sm" style="font-size:0.82rem;padding:3px 6px;">
-                            ${['farmer','viewer','admin','super_admin'].map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}
-                        </select>
-                        ` : `<span class="pill">${u.role}</span>`}
-                    </td>
-                    <td style="padding:8px 10px;text-align:right;">
-                        ${u.id !== window.CURRENT_USER?.id ? `
-                            <button class="btn btn-ghost btn-sm" style="color:${u.is_active ? 'var(--danger)' : 'var(--success)'};" onclick="window._toggleUserActive('${u.id}','${u.username}',${u.is_active})">
-                                ${u.is_active ? 'Deactivate' : 'Reactivate'}
-                            </button>
-                        ` : ''}
-                        <button class="btn btn-ghost btn-sm" onclick="window._changeUserPassword('${u.id}','${u.username}')">Reset PW</button>
-                    </td>
-                </tr>`).join('')}
-            </tbody>
+            <tbody id="user-management-table-body"></tbody>
         </table>
         <div id="guest-token-section" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-color);">
             <label style="font-size:0.82rem;opacity:0.65;">Guest Share Link</label>
             <div style="display:flex;gap:8px;margin-top:6px;">
                 <input id="guest-token-display" readonly style="flex:1;padding:7px 10px;border-radius:7px;border:1px solid var(--border-color);background:rgba(255,255,255,0.04);color:inherit;font-size:0.8rem;font-family:monospace;" placeholder="Regenerate to create a link">
-                <button class="btn btn-secondary btn-sm" onclick="window._regenGuestToken()">Regenerate</button>
+                <button class="btn btn-secondary btn-sm" id="btn-regen-guest-token">Regenerate</button>
             </div>
             <p style="font-size:0.75rem;opacity:0.45;margin:6px 0 0;">Share this URL with read-only viewers. Regenerating invalidates the old link.</p>
         </div>`;
+
+    const tableBody = container.querySelector('#user-management-table-body');
+    const currentUserId = window.CURRENT_USER?.id;
+    for (const user of users) {
+        const row = document.createElement('tr');
+        row.style.borderTop = '1px solid var(--border-color)';
+
+        const usernameCell = document.createElement('td');
+        usernameCell.style.cssText = 'padding:8px 10px;font-weight:600;';
+        usernameCell.textContent = String(user.username || '');
+        if (user.id === currentUserId) {
+            const currentUserLabel = document.createElement('span');
+            currentUserLabel.style.cssText = 'font-size:0.7rem;opacity:0.5;';
+            currentUserLabel.textContent = ' (you)';
+            usernameCell.appendChild(currentUserLabel);
+        }
+        row.appendChild(usernameCell);
+
+        const roleCell = document.createElement('td');
+        roleCell.style.cssText = 'padding:8px 10px;';
+        if (isSuperAdmin && user.id !== currentUserId) {
+            const roleSelect = document.createElement('select');
+            roleSelect.className = 'role-select input-sm';
+            roleSelect.style.cssText = 'font-size:0.82rem;padding:3px 6px;';
+            for (const role of ['farmer', 'viewer', 'admin', 'super_admin']) {
+                const option = document.createElement('option');
+                option.value = role;
+                option.textContent = role;
+                option.selected = role === user.role;
+                roleSelect.appendChild(option);
+            }
+            roleSelect.addEventListener('change', async (event) => {
+                const res = await api.updateUserRole(user.id, event.target.value);
+                if (!res.success) {
+                    showToast('Role update failed.', 'error');
+                    event.target.value = user.role;
+                } else {
+                    user.role = event.target.value;
+                    showToast('Role updated.', 'success');
+                }
+            });
+            roleCell.appendChild(roleSelect);
+        } else {
+            const roleLabel = document.createElement('span');
+            roleLabel.className = 'pill';
+            roleLabel.textContent = String(user.role || '');
+            roleCell.appendChild(roleLabel);
+        }
+        row.appendChild(roleCell);
+
+        const actionsCell = document.createElement('td');
+        actionsCell.style.cssText = 'padding:8px 10px;text-align:right;';
+        if (user.id !== currentUserId) {
+            const activeButton = document.createElement('button');
+            activeButton.className = 'btn btn-ghost btn-sm';
+            activeButton.style.color = user.is_active ? 'var(--danger)' : 'var(--success)';
+            activeButton.textContent = user.is_active ? 'Deactivate' : 'Reactivate';
+            activeButton.addEventListener('click', () => window._toggleUserActive(user.id, user.username, user.is_active));
+            actionsCell.appendChild(activeButton);
+        }
+        const passwordButton = document.createElement('button');
+        passwordButton.className = 'btn btn-ghost btn-sm';
+        passwordButton.textContent = 'Reset PW';
+        passwordButton.addEventListener('click', () => window._changeUserPassword(user.id, user.username));
+        actionsCell.appendChild(passwordButton);
+        row.appendChild(actionsCell);
+        tableBody.appendChild(row);
+    }
     lucide.createIcons();
 
-    // Role change handler
-    container.querySelectorAll('.role-select').forEach(sel => {
-        sel.addEventListener('change', async (e) => {
-            const uid = e.target.dataset.uid;
-            const res = await api.updateUserRole(uid, e.target.value);
-            if (!res.success) { showToast('Role update failed.', 'error'); e.target.value = users.find(u => u.id == uid)?.role; }
-            else showToast('Role updated.', 'success');
-        });
-    });
-
     document.getElementById('btn-add-user')?.addEventListener('click', () => _showAddUserModal(() => _renderUserManagementPanel(container)));
+    document.getElementById('btn-regen-guest-token')?.addEventListener('click', () => window._regenGuestToken());
 }
 
 function _showAddUserModal(onSuccess) {

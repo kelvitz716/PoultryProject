@@ -221,6 +221,11 @@ test('disposable real-server smoke starts without E2E credentials and reaches au
     assert.equal(directHttpLogin.cookie, null, 'direct HTTP must not establish a production session');
     const cookie = setup.cookie;
     assert.equal((await request(baseUrl, '/api/auth/me', { cookie })).json?.user?.role, 'super_admin');
+    const unsafeUsername = await request(baseUrl, '/api/auth/users', {
+        method: 'POST', cookie,
+        body: { username: '<img src=x onerror=alert(1)>', password: 'UnsafeUserPass123!', role: 'viewer' }
+    });
+    assert.equal(unsafeUsername.status, 400, 'stored markup must not enter the user registry');
 
     assert.equal((await request(baseUrl, '/api/batches', {
         method: 'POST', cookie,

@@ -125,6 +125,14 @@ const isProduction = process.env.NODE_ENV === 'production';
 // HOST=0.0.0.0 so its private port mapping can reach the container.
 const HOST = process.env.HOST || '127.0.0.1';
 const PRODUCTION_IMAGE_REF = /^ghcr\.io\/kelvitz716\/poultryproject@sha256:[a-f0-9]{64}$/;
+const USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/;
+
+function normalizeUsername(username) {
+    if (typeof username !== 'string') return null;
+    const normalized = username.trim();
+    return USERNAME_PATTERN.test(normalized) ? normalized : null;
+}
+
 if (isProduction) app.set('trust proxy', 1);
 
 // Must stay before the application-wide JSON parser so HMAC covers exact raw bytes.
@@ -951,23 +959,24 @@ app.post('/api/auth/setup', async (req, res) => {
             return res.status(403).json({ error: 'Setup already complete. Use /api/auth/login.' });
         }
         const { username, password } = req.body;
-        if (!username || !password || password.length < 8) {
-            return res.status(400).json({ error: 'Username required; password must be at least 8 characters.' });
+        const normalizedUsername = normalizeUsername(username);
+        if (!normalizedUsername || typeof password !== 'string' || password.length < 8) {
+            return res.status(400).json({ error: 'Username must be 3-64 letters, numbers, dots, dashes, or underscores; password must be at least 8 characters.' });
         }
         const hash = await bcrypt.hash(password, 12);
         const id = `user_${Date.now()}`;
         await runQuery(
             'INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
-            [id, username.trim(), hash, 'super_admin']
+            [id, normalizedUsername, hash, 'super_admin']
         );
 
         // Ensure dedicated E2E test account exists
         await seedE2ETester();
 
         req.session.userId = id;
-        req.session.username = username.trim();
+        req.session.username = normalizedUsername;
         req.session.userRole = 'super_admin';
-        res.json({ success: true, user: { id, username: username.trim(), role: 'super_admin' } });
+        res.json({ success: true, user: { id, username: normalizedUsername, role: 'super_admin' } });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1044,8 +1053,9 @@ app.get('/api/auth/users', requireRole('super_admin', 'admin'), async (req, res)
 app.post('/api/auth/users', requireRole('super_admin', 'admin'), async (req, res) => {
     try {
         const { username, password, role } = req.body;
-        if (!username || !password || !role) {
-            return res.status(400).json({ error: 'username, password, and role are required.' });
+        const normalizedUsername = normalizeUsername(username);
+        if (!normalizedUsername || typeof password !== 'string' || !role) {
+            return res.status(400).json({ error: 'Username must be 3-64 letters, numbers, dots, dashes, or underscores; password and role are required.' });
         }
         const allowedRoles = req.session.userRole === 'super_admin'
             ? ['super_admin', 'admin', 'farmer', 'viewer']
@@ -1053,15 +1063,15 @@ app.post('/api/auth/users', requireRole('super_admin', 'admin'), async (req, res
         if (!allowedRoles.includes(role)) {
             return res.status(403).json({ error: `You cannot assign role: ${role}` });
         }
-        const existing = await getQuery('SELECT id FROM users WHERE username = ?', [username.trim()]);
+        const existing = await getQuery('SELECT id FROM users WHERE username = ?', [normalizedUsername]);
         if (existing) return res.status(409).json({ error: 'Username already exists.' });
         const hash = await bcrypt.hash(password, 12);
         const id = `user_${Date.now()}`;
         await runQuery(
             'INSERT INTO users (id, username, password_hash, role, created_by, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
-            [id, username.trim(), hash, role, req.session.userId]
+            [id, normalizedUsername, hash, role, req.session.userId]
         );
-        res.json({ success: true, user: { id, username: username.trim(), role } });
+        res.json({ success: true, user: { id, username: normalizedUsername, role } });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
